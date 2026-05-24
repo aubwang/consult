@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+
+import { dispatch } from "../scripts/consult-companion.mjs";
+import { parseArgs } from "../scripts/lib/args.mjs";
+
+const [, , sub, ...rest] = process.argv;
+const parsed = parseArgs(rest ?? []);
+const { exitCode, stdout, stderr } = await dispatch(sub ?? "help", parsed);
+
+if (stdout) process.stdout.write(`${stdout}\n`);
+if (stderr) process.stderr.write(`${stderr}\n`);
+process.exit(exitCode);
