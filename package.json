@@ -1,0 +1,20 @@
+{
+  "name": "consult",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Host-neutral delegation plugin for ACP coding agents.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "consult": "bin/consult",
+    "consult-codex": "bin/consult-codex",
+    "consult-opencode": "bin/consult-opencode"
+  },
+  "scripts": {
+    "test": "node --test \"scripts/**/*.test.mjs\"",
+    "drill:companion-disconnect": "node scripts/live-companion-disconnect-drill.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "0.21.0"
+  }
+}

@@ -1,0 +1,34 @@
+# Local agent workspaces and personal instruction files, not plugin source.
+# Existing tracked files under `.agents/skills/` remain tracked; this suppresses
+# new repo-local skill installs such as Cruise.
+.agents/
+.claude/
+.codex/
+.cruise/
+.tmp/
+skills-lock.json
+
+# opencode skill symlinks are product entrypoints; generated config/deps are local.
+.opencode/.gitignore
+.opencode/node_modules/
+.opencode/package.json
+.opencode/package-lock.json
+.opencode/bun.lock
+
+# Firecrawl scrape cache used during design research
+.firecrawl/
+
+# Node
+node_modules/
+*.log
+
+# OS
+.DS_Store
+
+# Broker test leftovers (consult-broker.test.mjs mkdtemps under cwd)
+.consult-broker-*/
+
+# cruise-gitignore:start
+# Managed by cruise-setup. Cruise infrastructure — invisible to repo.
+.cruise/
+# cruise-gitignore:end

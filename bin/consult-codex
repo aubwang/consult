@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+
+import { spawn } from "node:child_process";
+
+const child = spawn("consult", process.argv.slice(2), {
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    CONSULT_HOST: "codex",
+    CONSULT_HOST_SESSION_ID:
+      process.env.CONSULT_HOST_SESSION_ID || process.env.CODEX_THREAD_ID || "default",
+  },
+});
+
+child.on("error", (error) => {
+  const detail =
+    error.code === "ENOENT"
+      ? "consult was not found on PATH; install or link the consult CLI first"
+      : error.message;
+  process.stderr.write(`consult-codex: ${detail}\n`);
+  process.exit(127);
+});
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+  process.exit(code ?? 1);
+});

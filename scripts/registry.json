@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "agents": [
+    {
+      "id": "codex",
+      "label": "OpenAI Codex (ACP shim: codex-acp)",
+      "notes": "Wraps the codex CLI. Run `codex login` first to authenticate with OpenAI (or set OPENAI_API_KEY).",
+      "binary": "codex-acp",
+      "args": [],
+      "install": {
+        "type": "github-release",
+        "repo": "zed-industries/codex-acp",
+        "version": "v0.14.0",
+        "assetTemplate": "codex-acp-{versionNoV}-{target}.{ext}",
+        "binaryInArchive": "codex-acp"
+      },
+      "advertisesReview": true,
+      "supports": { "resume": true, "load": true }
+    },
+    {
+      "id": "claude",
+      "label": "Claude Agent (ACP shim: claude-agent-acp)",
+      "notes": "Uses the Claude Code CLI's auth under the hood. Run `claude /login` first, or set ANTHROPIC_API_KEY.",
+      "binary": "claude-agent-acp",
+      "args": [],
+      "install": { "type": "npm", "cmd": "npm install -g @zed-industries/claude-agent-acp" },
+      "supports": { "resume": true, "load": true }
+    },
+    {
+      "id": "opencode",
+      "label": "OpenCode",
+      "notes": "Needs an LLM provider configured. Run `opencode auth login` to pick a provider (OpenRouter, OpenAI, etc.), or set the provider's API key env var.",
+      "binary": "opencode",
+      "args": ["acp"],
+      "install": { "type": "npm", "cmd": "npm install -g opencode-ai" },
+      "supports": { "resume": false, "load": true }
+    },
+    {
+      "id": "copilot",
+      "label": "GitHub Copilot CLI",
+      "notes": "Requires an active GitHub Copilot subscription. Run `copilot login`, use a supported GitHub CLI OAuth token, or set COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN to a supported token.",
+      "binary": "copilot",
+      "args": ["--acp"],
+      "install": { "type": "npm", "cmd": "npm install -g @github/copilot" },
+      "supports": { "resume": false, "load": true }
+    }
+  ]
+}
