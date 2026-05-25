@@ -24,11 +24,13 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the domain vocabulary used throughout t
 
 ## Host-neutral direction
 
-Architectural decisions for this direction are recorded in `docs/adr/0003` through `docs/adr/0016`. The short version:
+Architectural decisions for this direction are recorded in `docs/adr/0003` through `docs/adr/0017`. The short version:
 
 - **Consult Core** owns Profiles, Brokers, Jobs, state, permissions, setup, and the host-neutral CLI.
 - A **Host Adapter** only maps a Host's native UX and lifecycle into Consult Core.
-- **Host Identity** is `(host, hostSessionId)`. Host Adapters supply it through `CONSULT_HOST` and `CONSULT_HOST_SESSION_ID`; CLI flags may override those values for smoke tests and direct use.
+- **Host Identity** is `(host, hostSessionId)`. The `consult` CLI resolves it
+  from explicit flags/env, known Host session environment variables, or
+  `terminal/default`.
 - Hosts without a real session id use a synthetic `default` Host Session, e.g. `terminal/default` or `codex/default`, unless overridden.
 - Profiles are global to Consult, not scoped to a Host.
 - Default Profile precedence is: explicit `--agent` / `--profile`, Workspace override, Host default, global default.
@@ -50,11 +52,13 @@ Architectural decisions for this direction are recorded in `docs/adr/0003` throu
   writes `CONSULT_HOST=claude-code` and the current Host Session id into the
   Claude env file; `SessionEnd` performs best-effort cleanup for still-running
   Brokers for that Host Session.
-- The direct `consult` CLI uses `terminal/default` unless `CONSULT_HOST`,
-  `CONSULT_HOST_SESSION_ID`, or CLI overrides supply another Host Identity.
-- `consult-codex` and `consult-opencode` are thin Host Adapter wrappers around
-  the host-neutral CLI. They only supply Host Identity and then let Consult Core
-  do the work.
+- The single `consult` CLI resolves Host Identity from explicit Host flags,
+  explicit `CONSULT_HOST` / `CONSULT_HOST_SESSION_ID` environment variables,
+  known Host session variables (`OPENCODE_SESSION_ID`, `OPENCODE_RUN_ID`,
+  `CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`), or `terminal/default`.
+- Consult does not ship Host-specific wrapper binaries. Host-specific command
+  surfaces should call the same `consult` CLI or the same companion subcommands
+  while keeping Host Adapters thin.
 - Delegation Chains are implemented with `chainId`, `parentJobId`, and
   `delegationDepth` fields on Jobs.
 
@@ -248,7 +252,7 @@ Required keys per profile: `registryId`, `binary`, `args`, `env`, `installedAt`.
 
 `override.json` per workspace is one line: `{ "profile": "claude" }`. Validated against the global profile list — pinning to a non-existent profile errors out.
 
-The Claude Host Adapter's `SessionStart` hook injects `CONSULT_HOST=claude-code` and `CONSULT_HOST_SESSION_ID=<session>` into the env file (codex pattern); every companion invocation reads Host Identity from env or CLI flags. `SessionEnd` enumerates broker state files, reads their Host Identity, and tears down only brokers for `claude-code/<this-session-id>`. Brokers for other Host sessions in the same repo are untouched.
+The Claude Host Adapter's `SessionStart` hook injects `CONSULT_HOST=claude-code` and `CONSULT_HOST_SESSION_ID=<session>` into the env file; every companion invocation reads Host Identity through the shared resolver. `SessionEnd` enumerates broker state files, reads their Host Identity, and tears down only brokers for `claude-code/<this-session-id>`. Brokers for other Host sessions in the same repo are untouched.
 
 **Atomic writes.** Every JSON write under `workspaces/<hash>/` goes through `state.mjs#atomicWriteJson`, which:
 
@@ -268,7 +272,9 @@ A unit test fakes a cross-device rename by symlinking the data dir onto `/tmp`; 
 
 The broker is a separate daemon process per active Job, reachable via a Unix-domain socket keyed by `jobId`. The companion CLI is short-lived; it connects to the daemon for the Job command and sends RPC over the socket.
 
-1. Resolve workspace root, selected profile, and Host Identity (`CONSULT_HOST` / `CONSULT_HOST_SESSION_ID`, CLI flags, or `terminal/default`).
+1. Resolve workspace root, selected profile, and Host Identity (CLI flags,
+   explicit Consult env vars, known Host session env vars, or
+   `terminal/default`).
 2. **Get-or-spawn broker** (`broker-lifecycle.mjs#ensureBrokerSession`): read the Job-scoped broker state file; ping endpoint for 150 ms; if alive, reuse for that same Job; if absent or unreachable, clean up stale files, then spawn `node consult-broker.mjs serve --endpoint <socket> --cwd <ws> --profile <id> --job-id <job-id> --registry-id <registry-id> --host <host> --host-session-id <id> --pid-file <path>` detached. Wait up to 2 s for the endpoint to listen.
 3. The daemon (`consult-broker.mjs`) is what actually owns the ACP agent child and the `ClientSideConnection` from `@agentclientprotocol/sdk`. It sends `initialize` once on startup and caches capabilities. It listens on the Unix socket and routes each client's RPC into the agent.
 4. Companion connects to the socket; sends a `consult/run` RPC envelope (see [Companion ↔ daemon RPC envelope](#companion--daemon-rpc-envelope) below).
@@ -410,7 +416,7 @@ commentary.
 
 `hooks/hooks.json` registers a session-lifecycle hook that:
 
-- On `SessionStart`: writes `CONSULT_HOST=claude-code` and `CONSULT_HOST_SESSION_ID=<session>` into `$CLAUDE_ENV_FILE` (the codex `appendEnvVar` pattern). Every subsequent companion invocation reads this from env.
+- On `SessionStart`: writes `CONSULT_HOST=claude-code` and `CONSULT_HOST_SESSION_ID=<session>` into `$CLAUDE_ENV_FILE`. Every subsequent companion invocation reads this through the shared Host identity resolver.
 - On `SessionEnd`: enumerates `workspaces/<hash>/brokers/*.json`, reads each broker's stored Host Identity, and tears down only still-running brokers for `claude-code/<this-session-id>`. Brokers belonging to other Host sessions in the same workspace are never touched.
 
 Host Session scoping is primarily a resume/grouping identity. Job-scoped

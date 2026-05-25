@@ -53,16 +53,16 @@ On 2026-05-19, release-readiness probes reran and passed direct CLI,
 unsandboxed Consult delegation, and `CONSULT_AGENT_SANDBOX=bwrap` Consult
 delegation for `claude`, `codex`, and `opencode`.
 
-On 2026-05-22, the thin Host Adapter path was live-verified for the primary
-supporter goal: `consult-codex delegate --agent opencode` returned
-`ok-codex-to-opencode-20260521`, and `consult-codex delegate --agent claude`
-returned `ok-codex-to-claude-20260521`. The reciprocal opencode wrapper also
-passed with `consult-opencode delegate --agent opencode` returning
+On 2026-05-22, the Host Adapter path was live-verified for the primary
+supporter goal: `consult delegate --agent opencode` returned
+`ok-codex-to-opencode-20260521`, and `consult delegate --agent claude`
+returned `ok-codex-to-claude-20260521`. The reciprocal opencode Host path also
+passed with `consult delegate --agent opencode` returning
 `ok-opencode-host-to-opencode-20260521`.
 
 On 2026-05-22, Copilot auth was refreshed through the installed Copilot CLI and
 the Copilot Profile was live-verified unsandboxed: direct `copilot -p` returned
-`ok-copilot-direct-20260522`, `consult-codex delegate --agent copilot` returned
+`ok-copilot-direct-20260522`, `consult delegate --agent copilot` returned
 `ok-codex-to-copilot-rerun-20260522`, and background delegate/result returned
 `ok-codex-to-copilot-bg-20260522`. Copilot sandbox comparison remains deferred
 until a Linux/bubblewrap environment is available.

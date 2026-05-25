@@ -12,19 +12,19 @@ Use this skill when the user wants a separate Codex Profile opinion through
 Consult. This is useful as an independent reviewer even when the current host is
 also Codex, because Consult runs it through the configured `codex` Profile.
 
-Run the separate Codex Profile through the Codex Host Adapter in read-only mode
+Run the separate Codex Profile through Consult in read-only mode
 by default:
 
 ```sh
-consult-codex delegate --agent codex --read-only -- "<prompt for Codex>"
+consult delegate --agent codex --read-only -- "<prompt for Codex>"
 ```
 
 Use background mode for longer reviews:
 
 ```sh
-consult-codex delegate --agent codex --read-only --background -- "<prompt for Codex>"
-consult-codex status <job-id> --wait
-consult-codex result <job-id>
+consult delegate --agent codex --read-only --background -- "<prompt for Codex>"
+consult status <job-id> --wait
+consult result <job-id>
 ```
 
 ## Model And Effort
@@ -35,7 +35,7 @@ its default.
 If the user asks for a specific Codex model or reasoning effort, preserve it:
 
 ```sh
-consult-codex delegate --agent codex --read-only --model gpt-5.3-codex --effort high -- "<prompt for Codex>"
+consult delegate --agent codex --read-only --model gpt-5.3-codex --effort high -- "<prompt for Codex>"
 ```
 
 Useful variants are whatever the installed Codex Profile accepts. Do not invent
