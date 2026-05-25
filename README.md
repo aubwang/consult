@@ -26,9 +26,9 @@ $ consult result job-R4x
 Added the regression test and verified the focused suite.
 ```
 
-The same `consult` command works from a terminal, Codex, and opencode. It
-autodetects the calling **Host** and delegates to the **Profile** you choose
-with `--agent`.
+The same `consult` command works from a terminal, Codex, opencode, and Claude
+Code. It autodetects the calling **Host** and delegates to the **Profile** you
+choose with `--agent`.
 
 ## Why Consult?
 

@@ -5,10 +5,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { brokersDir as defaultBrokersDir } from "./lib/broker-endpoint.mjs";
-import { teardownBrokerSession as defaultTeardownBrokerSession } from "./lib/broker-lifecycle.mjs";
-import { HOST_ENV, HOST_SESSION_ENV } from "./lib/host-identity.mjs";
-import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "./lib/workspace.mjs";
+import { brokersDir as defaultBrokersDir } from "../../../scripts/lib/broker-endpoint.mjs";
+import { teardownBrokerSession as defaultTeardownBrokerSession } from "../../../scripts/lib/broker-lifecycle.mjs";
+import { HOST_ENV, HOST_SESSION_ENV } from "../../../scripts/lib/host-identity.mjs";
+import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../../../scripts/lib/workspace.mjs";
 
 const CLAUDE_HOST = "claude-code";
 

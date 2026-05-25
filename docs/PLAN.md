@@ -24,7 +24,7 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the domain vocabulary used throughout t
 
 ## Host-neutral direction
 
-Architectural decisions for this direction are recorded in `docs/adr/0003` through `docs/adr/0017`. The short version:
+Architectural decisions for this direction are recorded in `docs/adr/0003` through `docs/adr/0018`. The short version:
 
 - **Consult Core** owns Profiles, Brokers, Jobs, state, permissions, setup, and the host-neutral CLI.
 - A **Host Adapter** only maps a Host's native UX and lifecycle into Consult Core.
@@ -89,26 +89,24 @@ consult/
 │   └── adr/
 │       ├── 0001-broker-per-profile-per-workspace.md
 │       ├── 0002-per-profile-session-resume.md
-│       └── 0016-job-scoped-brokers.md
-├── .claude-plugin/plugin.json
+│       ├── 0016-job-scoped-brokers.md
+│       └── 0018-host-adapter-entrypoints-under-hosts.md
 ├── package.json                          # @agentclientprotocol/sdk dep
-├── commands/
-│   ├── setup.md                         # /consult:setup — install/select backends
-│   ├── agents.md                        # /consult:agents — list installed profiles, set default
-│   ├── delegate.md                      # /consult:delegate — codex:rescue equivalent
-│   ├── review.md                        # /consult:review — proxy backend's review slash
-│   ├── status.md                        # /consult:status
-│   ├── result.md                        # /consult:result
-│   ├── cancel.md                        # /consult:cancel
-│   └── brokers.md                       # /consult:brokers
-├── agents/
-│   └── delegate.md                      # consult:delegate subagent (proactive forwarder)
-├── hooks/
-│   └── hooks.json                       # session lifecycle cleanup
+├── .claude-plugin -> hosts/claude-code/.claude-plugin
+├── commands -> hosts/claude-code/commands
+├── agents -> hosts/claude-code/agents
+├── hooks -> hosts/claude-code/hooks
+├── hosts/
+│   └── claude-code/
+│       ├── .claude-plugin/plugin.json   # Claude Code plugin manifest
+│       ├── commands/                    # /consult:* slash commands
+│       ├── agents/delegate.md           # consult:delegate subagent
+│       ├── hooks/hooks.json             # Claude Code lifecycle hooks
+│       └── scripts/
+│           └── session-lifecycle-hook.mjs
 ├── scripts/
 │   ├── consult-companion.mjs            # CLI entrypoint; every slash command shells here
 │   ├── consult-broker.mjs               # broker daemon entrypoint (`serve` subcommand)
-│   ├── session-lifecycle-hook.mjs       # SessionStart/SessionEnd handlers
 │   ├── registry.json                    # known backends catalog
 │   └── lib/
 │       ├── acp-client.mjs               # @agentclientprotocol/sdk wrapper
@@ -134,7 +132,7 @@ consult/
 
 ## Command surface
 
-All commands are markdown files that shell into `node scripts/consult-companion.mjs <subcommand>` with raw `$ARGUMENTS`. Markdown handles user-facing UX (Ask prompts, recommendations); the companion handles execution.
+Claude Code slash commands live under `hosts/claude-code/commands/`, with the root `commands/` symlink preserved as the Claude Code plugin entrypoint. Each command shells into `node scripts/consult-companion.mjs <subcommand>` with raw `$ARGUMENTS`. Markdown handles user-facing UX (Ask prompts, recommendations); the companion handles execution.
 
 | Slash command | Companion subcommand | Notes |
 |---|---|---|
@@ -406,15 +404,17 @@ Future: add per-backend adapters in `adapters/` as we verify their review surfac
 
 ## Subagent
 
-`agents/delegate.md` defines a `consult:delegate` subagent. It is a thin
-forwarder used by the main Claude Code thread when it wants to hand a chunky
-task to another agent. Single Bash call into
+`hosts/claude-code/agents/delegate.md` defines a `consult:delegate` subagent,
+with the root `agents/` symlink preserved as the Claude Code plugin entrypoint.
+It is a thin forwarder used by the main Claude Code thread when it wants to hand
+a chunky task to another agent. Single Bash call into
 `node scripts/consult-companion.mjs delegate ...`, returns stdout verbatim, no
 commentary.
 
 ## Hooks
 
-`hooks/hooks.json` registers a session-lifecycle hook that:
+`hosts/claude-code/hooks/hooks.json` registers a session-lifecycle hook that
+invokes `hosts/claude-code/scripts/session-lifecycle-hook.mjs`:
 
 - On `SessionStart`: writes `CONSULT_HOST=claude-code` and `CONSULT_HOST_SESSION_ID=<session>` into `$CLAUDE_ENV_FILE`. Every subsequent companion invocation reads this through the shared Host identity resolver.
 - On `SessionEnd`: enumerates `workspaces/<hash>/brokers/*.json`, reads each broker's stored Host Identity, and tears down only still-running brokers for `claude-code/<this-session-id>`. Brokers belonging to other Host sessions in the same workspace are never touched.

@@ -7,7 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { brokerFilePath, brokersDir } from "./lib/broker-endpoint.mjs";
+import { brokerFilePath, brokersDir } from "../../../scripts/lib/broker-endpoint.mjs";
 import { handleSessionLifecycleHook } from "./session-lifecycle-hook.mjs";
 
 const hookScriptPath = fileURLToPath(new URL("./session-lifecycle-hook.mjs", import.meta.url));

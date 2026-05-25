@@ -9,7 +9,7 @@
     "consult": "bin/consult"
   },
   "scripts": {
-    "test": "node --test \"scripts/**/*.test.mjs\"",
+    "test": "node --test \"scripts/**/*.test.mjs\" \"hosts/**/*.test.mjs\"",
     "drill:companion-disconnect": "node scripts/live-companion-disconnect-drill.mjs"
   },
   "dependencies": {
