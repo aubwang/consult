@@ -6,9 +6,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "consult": "bin/consult",
-    "consult-codex": "bin/consult-codex",
-    "consult-opencode": "bin/consult-opencode"
+    "consult": "bin/consult"
   },
   "scripts": {
     "test": "node --test \"scripts/**/*.test.mjs\"",

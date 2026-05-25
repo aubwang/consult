@@ -73,11 +73,11 @@ opencode GitHub Copilot OAuth credential also passed:
 - Direct `opencode run "respond with exactly: ok-opencode-run-20260521"`
   returned `ok-opencode-run-20260521`.
 - `consult setup --install opencode` returned `verified opencode`.
-- Codex Host Adapter to opencode Profile passed:
-  `PATH="$PWD/bin:$PATH" CONSULT_HOST_SESSION_ID=codex-to-opencode-live-20260521 consult-codex delegate --agent opencode --read-only --json -- "respond with exactly: ok-codex-to-opencode-20260521"`
+- Codex Host autodetection to opencode Profile passed:
+  `PATH="$PWD/bin:$PATH" CONSULT_HOST_SESSION_ID=codex-to-opencode-live-20260521 consult delegate --agent opencode --read-only --json -- "respond with exactly: ok-codex-to-opencode-20260521"`
   returned `ok-codex-to-opencode-20260521` with Job `job-hrWMfcG-avzR`.
-- opencode Host Adapter to opencode Profile passed:
-  `PATH="$PWD/bin:$PATH" consult-opencode delegate --agent opencode --read-only --json -- "respond with exactly: ok-opencode-host-to-opencode-20260521"`
+- opencode Host autodetection to opencode Profile passed:
+  `PATH="$PWD/bin:$PATH" consult delegate --agent opencode --read-only --json -- "respond with exactly: ok-opencode-host-to-opencode-20260521"`
   returned `ok-opencode-host-to-opencode-20260521` with Job
   `job-BBzHL3lsTRQu`.
 

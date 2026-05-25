@@ -23,8 +23,8 @@ be run against a working unsandboxed path.
 | `copilot --acp` initialize | **PASS** — raw ACP initialize returned protocol version 1, `agentInfo.name: "Copilot"`, version `1.0.51`, and `agentCapabilities.loadSession: true`. |
 | `/consult:setup --install copilot` | **PASS** — `npm install -g @github/copilot` installed/found `copilot`, the ACP initialize smoke probe passed, and the Profile was persisted in `~/.consult/profiles.json`. |
 | Direct Copilot prompt | **PASS** — `copilot -p "respond with exactly: ok-copilot-direct-20260522" --allow-all-tools --silent` returned `ok-copilot-direct-20260522`. |
-| Codex Host Adapter to Copilot Profile | **PASS** — `consult-codex delegate --agent copilot --read-only --json -- "respond with exactly: ok-codex-to-copilot-rerun-20260522"` returned `ok-codex-to-copilot-rerun-20260522` with Job `job-dGx0SiQskU_k`. |
-| `delegate --background` + `result` round-trip | **PASS** — background Job `job-OQ44QDBM-c8-` completed and `consult-codex result job-OQ44QDBM-c8-` returned `ok-codex-to-copilot-bg-20260522`. |
+| Codex Host autodetection to Copilot Profile | **PASS** — `consult delegate --agent copilot --read-only --json -- "respond with exactly: ok-codex-to-copilot-rerun-20260522"` returned `ok-codex-to-copilot-rerun-20260522` with Job `job-dGx0SiQskU_k`. |
+| `delegate --background` + `result` round-trip | **PASS** — background Job `job-OQ44QDBM-c8-` completed and `consult result job-OQ44QDBM-c8-` returned `ok-codex-to-copilot-bg-20260522`. |
 
 ## Not run live
 

@@ -36,3 +36,94 @@ test("resolveHostIdentity lets flags override env", () => {
     },
   );
 });
+
+test("resolveHostIdentity lets consult env override host autodetection", () => {
+  assert.deepEqual(
+    resolveHostIdentity({
+      env: {
+        [HOST_ENV]: "manual-host",
+        [HOST_SESSION_ENV]: "manual-session",
+        OPENCODE_RUN_ID: "opencode-run",
+        CODEX_THREAD_ID: "codex-thread",
+        CLAUDE_SESSION_ID: "claude-session",
+      },
+    }),
+    {
+      host: "manual-host",
+      hostSessionId: "manual-session",
+    },
+  );
+});
+
+test("resolveHostIdentity detects opencode from session env", () => {
+  assert.deepEqual(
+    resolveHostIdentity({
+      env: {
+        OPENCODE_SESSION_ID: "opencode-session",
+        OPENCODE_RUN_ID: "opencode-run",
+      },
+    }),
+    {
+      host: "opencode",
+      hostSessionId: "opencode-session",
+    },
+  );
+});
+
+test("resolveHostIdentity detects opencode from run env", () => {
+  assert.deepEqual(
+    resolveHostIdentity({
+      env: {
+        OPENCODE_RUN_ID: "opencode-run",
+      },
+    }),
+    {
+      host: "opencode",
+      hostSessionId: "opencode-run",
+    },
+  );
+});
+
+test("resolveHostIdentity detects codex from thread env", () => {
+  assert.deepEqual(
+    resolveHostIdentity({
+      env: {
+        CODEX_THREAD_ID: "codex-thread",
+      },
+    }),
+    {
+      host: "codex",
+      hostSessionId: "codex-thread",
+    },
+  );
+});
+
+test("resolveHostIdentity detects Claude Code from session env", () => {
+  assert.deepEqual(
+    resolveHostIdentity({
+      env: {
+        CLAUDE_SESSION_ID: "claude-session",
+      },
+    }),
+    {
+      host: "claude-code",
+      hostSessionId: "claude-session",
+    },
+  );
+});
+
+test("resolveHostIdentity prefers the most local known host signal", () => {
+  assert.deepEqual(
+    resolveHostIdentity({
+      env: {
+        OPENCODE_RUN_ID: "opencode-run",
+        CODEX_THREAD_ID: "codex-thread",
+        CLAUDE_SESSION_ID: "claude-session",
+      },
+    }),
+    {
+      host: "opencode",
+      hostSessionId: "opencode-run",
+    },
+  );
+});

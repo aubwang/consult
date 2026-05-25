@@ -20,11 +20,12 @@ The companion CLI is `node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs"
 - `task-worker`: detached background worker entrypoint.
 - `task-resume-candidate`: resolve the latest resumable Job for a Host Session, Profile, and Workspace.
 
-Host Adapters supply `CONSULT_HOST` and `CONSULT_HOST_SESSION_ID`. The Claude
-Code `SessionStart` hook writes `CONSULT_HOST=claude-code` and
-`CONSULT_HOST_SESSION_ID=<CLAUDE_SESSION_ID>` into `$CLAUDE_ENV_FILE`. Thin CLI
-wrappers such as `consult-codex` and `consult-opencode` set the same Host
-Identity environment variables before invoking the host-neutral `consult` CLI.
+The `consult` CLI resolves Host identity from explicit flags, explicit
+`CONSULT_HOST` / `CONSULT_HOST_SESSION_ID` environment variables, or known Host
+session variables such as `OPENCODE_SESSION_ID`, `OPENCODE_RUN_ID`,
+`CODEX_THREAD_ID`, and `CLAUDE_SESSION_ID`. The Claude Code `SessionStart` hook
+still writes explicit Consult Host identity into `$CLAUDE_ENV_FILE` so slash
+commands have stable cleanup and resume scoping.
 
 Jobs move through `queued -> running -> completed`, `cancelled`, or `failed`. Job records live under `workspaces/<hash>/jobs/`.
 
