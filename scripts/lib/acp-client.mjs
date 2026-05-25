@@ -11,6 +11,8 @@ import {
 import { buildAgentLaunch } from "./process-sandbox.mjs";
 
 const sessionUpdateStates = new WeakMap();
+// Some ACP agents flush the final session/update just after session/prompt resolves.
+const POST_PROMPT_UPDATE_DRAIN_IDLE_MS = 100;
 
 export async function newSession(connection, { cwd, mcpServers = [] }) {
   return await connection.newSession({ cwd, mcpServers });
@@ -88,7 +90,7 @@ export async function* promptTurn(connection, { sessionId, prompt }) {
     while (
       await Promise.race([
         queue.waitForValue().then(() => true),
-        delay(10).then(() => false),
+        delay(POST_PROMPT_UPDATE_DRAIN_IDLE_MS).then(() => false),
       ])
     ) {
       while (queue.hasValues()) {

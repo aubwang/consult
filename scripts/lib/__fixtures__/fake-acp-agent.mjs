@@ -310,6 +310,10 @@ function handleMessage(message) {
         stopReason: "end_turn",
       },
     });
+    if (scenario === "prompt-delayed-post-resolve-update") {
+      sleep(25);
+      writeUpdate(message.params.sessionId, "delayed-response");
+    }
     if (scenario === "prompt-post-resolve-update") {
       writeUpdate(message.params.sessionId, "after-response");
     }

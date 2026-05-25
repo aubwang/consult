@@ -468,6 +468,39 @@ test("foreground delegate persists a complete finalized job record", async (t) =
   assert.ok(Date.parse(record.completedAt) >= Date.parse(record.startedAt));
 });
 
+test("foreground delegate captures a response chunk delayed after prompt completion", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-delayed-post-resolve-update"],
+  });
+  let delegateClient;
+
+  const result = await runDelegate({
+    args: { positional: ["delayed", "response"], flags: { "read-only": true } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: {
+      resolveWorkspaceRoot: async () => harness.workspace,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => {
+        delegateClient = await connectBroker(harness.endpoint);
+        return { client: delegateClient };
+      },
+      now: fixedClock(["2026-05-14T10:00:00.000Z"]),
+      generateJobId: () => "job-delayed-response",
+      stdoutWrite: () => {},
+      stderrWrite: () => {},
+    },
+  });
+  await delegateClient?.close();
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /delayed-response/);
+  const record = await waitForJobRecord(harness, "job-delayed-response", (value) => {
+    return value.status === "completed";
+  });
+  assert.equal(record.finalText, "delayed-response");
+});
+
 test("consult/run allows an in-workspace edit permission request in write mode", async (t) => {
   const harness = await startBroker(t, {
     agentArgs: ["sessions", "prompt-permission-edit"],
