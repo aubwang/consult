@@ -1,18 +1,18 @@
-# opencode Host Adapter
+# opencode Host Autodetection
 
-The opencode Host Adapter is a thin manual wrapper over the host-neutral
-`consult` CLI. It does not import broker or state modules.
+opencode uses the single `consult` CLI. There is no separate opencode wrapper
+binary.
 
-It supplies this Host Identity:
+When `OPENCODE_SESSION_ID` or `OPENCODE_RUN_ID` is present and no explicit Host
+override is supplied, Consult records this Host Identity:
 
 ```text
-CONSULT_HOST=opencode
-CONSULT_HOST_SESSION_ID=<CONSULT_HOST_SESSION_ID || OPENCODE_SESSION_ID || OPENCODE_RUN_ID || default>
+host=opencode
+hostSessionId=<OPENCODE_SESSION_ID || OPENCODE_RUN_ID>
 ```
 
-`default` is a synthetic Host Session id. When opencode exposes
-`OPENCODE_RUN_ID`, the wrapper uses it if no explicit
-`CONSULT_HOST_SESSION_ID` or future `OPENCODE_SESSION_ID` is set.
+Use `--host` / `--host-session` or `CONSULT_HOST` /
+`CONSULT_HOST_SESSION_ID` only for smoke tests and manual overrides.
 
 ## Manual setup
 
@@ -23,21 +23,12 @@ npm install
 npm link
 ```
 
-Then use the package-provided opencode wrapper:
-
-```sh
-consult-opencode help
-```
-
-`consult-opencode` shells into the host-neutral `consult` CLI and sets the
-opencode Host Identity first.
-
 Install and select at least one Profile separately. Profile setup is shared
 across Hosts:
 
 ```text
-consult-opencode setup
-consult-opencode agents --set opencode --host opencode
+consult setup
+consult agents --set opencode --host opencode
 ```
 
 ## Use
@@ -45,21 +36,21 @@ consult-opencode agents --set opencode --host opencode
 Delegate work:
 
 ```text
-consult-opencode delegate --agent claude --read-only -- "review this diff"
+consult delegate --agent claude --read-only -- "review this diff"
 ```
 
-Run a background job:
+Run a background Job:
 
 ```text
-consult-opencode delegate --agent opencode --read-only --background -- "audit the permissions code"
+consult delegate --agent opencode --read-only --background -- "audit the permissions code"
 ```
 
 Check status, read results, or cancel:
 
 ```text
-consult-opencode status
-consult-opencode result <job-id>
-consult-opencode cancel <job-id>
+consult status
+consult result <job-id>
+consult cancel <job-id>
 ```
 
 The first opencode adapter scope is delegate, status, result, and cancel. Setup

@@ -11,18 +11,18 @@ metadata:
 Use this skill when the user wants an opencode Profile second opinion through
 Consult.
 
-Run opencode through the Codex Host Adapter in read-only mode by default:
+Run opencode through Consult in read-only mode by default:
 
 ```sh
-consult-codex delegate --agent opencode --read-only -- "<prompt for opencode>"
+consult delegate --agent opencode --read-only -- "<prompt for opencode>"
 ```
 
 Use background mode for longer reviews:
 
 ```sh
-consult-codex delegate --agent opencode --read-only --background -- "<prompt for opencode>"
-consult-codex status <job-id> --wait
-consult-codex result <job-id>
+consult delegate --agent opencode --read-only --background -- "<prompt for opencode>"
+consult status <job-id> --wait
+consult result <job-id>
 ```
 
 ## Model And Effort
@@ -33,7 +33,7 @@ uses its default.
 If the user asks for a specific provider/model or effort, preserve it:
 
 ```sh
-consult-codex delegate --agent opencode --read-only --model openrouter/anthropic/claude-sonnet-4.5 --effort high -- "<prompt for opencode>"
+consult delegate --agent opencode --read-only --model openrouter/anthropic/claude-sonnet-4.5 --effort high -- "<prompt for opencode>"
 ```
 
 Use model names accepted by the installed opencode Profile. Do not invent model

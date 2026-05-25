@@ -1,18 +1,18 @@
-# Codex Host Adapter
+# Codex Host Autodetection
 
-The Codex Host Adapter is currently a thin manual wrapper over the
-host-neutral `consult` CLI. It does not import broker or state modules.
+Codex uses the single `consult` CLI. There is no separate Codex wrapper
+binary.
 
-It supplies this Host Identity:
+When `CODEX_THREAD_ID` is present and no explicit Host override is supplied,
+Consult records this Host Identity:
 
 ```text
-CONSULT_HOST=codex
-CONSULT_HOST_SESSION_ID=<CONSULT_HOST_SESSION_ID || CODEX_THREAD_ID || default>
+host=codex
+hostSessionId=<CODEX_THREAD_ID>
 ```
 
-`default` is a synthetic Host Session id. Use a more specific value when Codex
-exposes a stable session id to the wrapper. In current Codex sessions, the
-wrapper uses `CODEX_THREAD_ID` when it is present.
+Use `--host` / `--host-session` or `CONSULT_HOST` /
+`CONSULT_HOST_SESSION_ID` only for smoke tests and manual overrides.
 
 ## Manual setup
 
@@ -23,21 +23,12 @@ npm install
 npm link
 ```
 
-Then use the package-provided Codex wrapper:
-
-```sh
-consult-codex help
-```
-
-`consult-codex` shells into the host-neutral `consult` CLI and sets the Codex
-Host Identity first.
-
 Install and select at least one Profile separately. Profile setup is shared
 across Hosts:
 
 ```text
-consult-codex setup
-consult-codex agents --set codex --host codex
+consult setup
+consult agents --set codex --host codex
 ```
 
 ## Use
@@ -45,21 +36,21 @@ consult-codex agents --set codex --host codex
 Delegate work:
 
 ```text
-consult-codex delegate "summarize this repo"
+consult delegate "summarize this repo"
 ```
 
-Run a background job:
+Run a background Job:
 
 ```text
-consult-codex delegate --background "audit the permissions code"
+consult delegate --background "audit the permissions code"
 ```
 
 Check status, read results, or cancel:
 
 ```text
-consult-codex status
-consult-codex result <job-id>
-consult-codex cancel <job-id>
+consult status
+consult result <job-id>
+consult cancel <job-id>
 ```
 
 The first Codex adapter scope is delegate, status, result, and cancel. Setup

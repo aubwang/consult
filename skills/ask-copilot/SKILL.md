@@ -11,18 +11,18 @@ metadata:
 Use this skill when the user wants a GitHub Copilot Profile second opinion
 through Consult.
 
-Run Copilot through the Codex Host Adapter in read-only mode by default:
+Run Copilot through Consult in read-only mode by default:
 
 ```sh
-consult-codex delegate --agent copilot --read-only -- "<prompt for Copilot>"
+consult delegate --agent copilot --read-only -- "<prompt for Copilot>"
 ```
 
 Use background mode for longer reviews:
 
 ```sh
-consult-codex delegate --agent copilot --read-only --background -- "<prompt for Copilot>"
-consult-codex status <job-id> --wait
-consult-codex result <job-id>
+consult delegate --agent copilot --read-only --background -- "<prompt for Copilot>"
+consult status <job-id> --wait
+consult result <job-id>
 ```
 
 ## Model And Effort
@@ -33,7 +33,7 @@ uses its default.
 If the user asks for a specific Copilot model or reasoning effort, preserve it:
 
 ```sh
-consult-codex delegate --agent copilot --read-only --model <copilot-model> --effort high -- "<prompt for Copilot>"
+consult delegate --agent copilot --read-only --model <copilot-model> --effort high -- "<prompt for Copilot>"
 ```
 
 Use model names accepted by the installed Copilot CLI. Do not invent model

@@ -71,8 +71,8 @@ Release-readiness rerun on 2026-05-19 also passed:
 Host-adapter rerun on 2026-05-22 also passed:
 
 - `consult setup --install claude` returned `verified claude`.
-- Codex Host Adapter to Claude Profile passed:
-  `PATH="$PWD/bin:$PATH" CONSULT_HOST_SESSION_ID=codex-to-claude-live-20260521 consult-codex delegate --agent claude --read-only --model sonnet --json -- "respond with exactly: ok-codex-to-claude-20260521"`
+- Codex Host autodetection to Claude Profile passed:
+  `PATH="$PWD/bin:$PATH" CONSULT_HOST_SESSION_ID=codex-to-claude-live-20260521 consult delegate --agent claude --read-only --model sonnet --json -- "respond with exactly: ok-codex-to-claude-20260521"`
   returned `ok-codex-to-claude-20260521` with Job `job-XRpt13ihf_V-`.
 
 The persisted Codex-to-Claude Job records `host: "codex"`,
