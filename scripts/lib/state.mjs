@@ -2,8 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { isRecord } from "./objects.mjs";
+import { safeSegment } from "./path-segments.mjs";
+
 export async function readJobRecord(jobsDir, jobId) {
-  return await readJsonFile(path.join(jobsDir, `${jobId}.json`));
+  return await readJsonFile(path.join(jobsDir, `${safeSegment(jobId)}.json`));
 }
 
 export async function listJobRecords(jobsDir) {
@@ -51,10 +54,6 @@ function malformedJobRecord(filePath) {
   malformed.code = "JOB_RECORD_MALFORMED";
   malformed.path = filePath;
   return malformed;
-}
-
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export async function atomicWriteJson(destPath, value) {

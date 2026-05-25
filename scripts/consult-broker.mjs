@@ -14,7 +14,9 @@ import {
 import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mjs";
 import { createBrokerJobRuntime } from "./lib/broker-job-runtime.mjs";
 import { createFsHandlers } from "./lib/fs-handlers.mjs";
+import { readJsonlMessages } from "./lib/jsonl-framing.mjs";
 import { decidePermission } from "./lib/permissions.mjs";
+import { processStartTime } from "./lib/process-identity.mjs";
 import { normalizeAgentSandbox } from "./lib/process-sandbox.mjs";
 import {
   applySessionControls,
@@ -43,6 +45,7 @@ export async function serveBroker(options, { listen = listenOnSocket } = {}) {
   const brokerState = {
     endpoint: config.endpoint,
     pid: process.pid,
+    pidStartTime: await processStartTime(process.pid).catch(() => null),
     jobId: config.jobId,
     host: config.host,
     hostSessionId: config.hostSessionId,
@@ -254,14 +257,28 @@ export async function serveBroker(options, { listen = listenOnSocket } = {}) {
 }
 
 function handleSocket(socket, broker) {
-  let buffer = "";
+  let buffer = Buffer.alloc(0);
+  let closing = false;
   socket.on("data", (chunk) => {
+    if (closing) {
+      return;
+    }
     broker.touchActivity?.();
-    buffer += chunk.toString("utf8");
-    let newlineIndex;
-    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newlineIndex);
-      buffer = buffer.slice(newlineIndex + 1);
+    const framed = readJsonlMessages(buffer, chunk);
+    buffer = framed.buffer;
+    if (framed.error) {
+      closing = true;
+      socket.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: "MESSAGE_TOO_LARGE", message: framed.error.message },
+        })}\n`,
+        () => socket.end(),
+      );
+      return;
+    }
+    for (const line of framed.lines) {
       if (line === "") {
         continue;
       }
@@ -269,6 +286,7 @@ function handleSocket(socket, broker) {
       try {
         message = JSON.parse(line);
       } catch {
+        closing = true;
         socket.write(
           `${JSON.stringify({
             jsonrpc: "2.0",
@@ -420,26 +438,24 @@ async function handleRunMessage(socket, message, broker) {
     return;
   }
 
-  if (message.params.resume) {
-    const agent = await broker.ensureAgent();
-    if (!supportsResume(agent.capabilities) && !supportsLoad(agent.capabilities)) {
-      writeError(socket, message.id, {
-        code: "RESUME_UNSUPPORTED",
-        message: `profile '${message.params.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
-      });
-      return;
-    }
-  }
-
-  if (broker.isBusy()) {
-    writeError(socket, message.id, {
-      code: "BROKER_BUSY",
-      message: "broker already has an in-flight prompt turn",
-    });
-    return;
-  }
-
   broker.setBusy(true);
+  try {
+    if (message.params.resume) {
+      const agent = await broker.ensureAgent();
+      if (!supportsResume(agent.capabilities) && !supportsLoad(agent.capabilities)) {
+        writeError(socket, message.id, {
+          code: "RESUME_UNSUPPORTED",
+          message: `profile '${message.params.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
+        });
+        broker.setBusy(false);
+        return;
+      }
+    }
+  } catch (error) {
+    broker.setBusy(false);
+    throw error;
+  }
+
   const job = broker.createJob(message.params, socket);
   broker.attachJob(job, socket);
   writeResult(socket, message.id, {

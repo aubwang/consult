@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isRecord } from "./objects.mjs";
+
 const DEFAULT_REGISTRY_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../registry.json",
@@ -76,10 +78,6 @@ function registryError(message, code, registryPath) {
   error.code = code;
   error.path = registryPath;
   return error;
-}
-
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isValidInstall(install) {

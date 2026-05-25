@@ -11,6 +11,8 @@ import {
   failJobRecord,
   finalizeJobRecord,
   isFinalStatus,
+  jobLogPath,
+  jobRecordPath,
   listWorkspaceJobRecords,
   markJobRunning,
   readWorkspaceJobRecord,
@@ -143,6 +145,29 @@ test("workspace job persistence reads, writes, lists, and appends logs", async (
     `${JSON.stringify({ method: "consult/update", params: { jobId: "job-new" } })}\n`,
   );
   assert.ok(await fs.stat(path.join(jobsDir(workspaceRoot), "job-new.json")));
+});
+
+test("workspace job persistence confines unsafe job ids to safe filenames", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const unsafeJobId = "../../../../escape/pwn";
+  const escapedDir = path.join(path.dirname(dataDir), "escape");
+  await fs.mkdir(escapedDir);
+
+  await writeJobRecord(workspaceRoot, unsafeJobId, {
+    jobId: unsafeJobId,
+    submittedAt: "2026-05-21T10:02:00.000Z",
+  });
+  await appendJobLogLine(workspaceRoot, unsafeJobId, { method: "consult/update" });
+
+  assert.deepEqual(await readWorkspaceJobRecord(workspaceRoot, unsafeJobId), {
+    jobId: unsafeJobId,
+    submittedAt: "2026-05-21T10:02:00.000Z",
+  });
+  assert.equal(path.dirname(jobRecordPath(workspaceRoot, unsafeJobId)), jobsDir(workspaceRoot));
+  assert.equal(path.dirname(jobLogPath(workspaceRoot, unsafeJobId)), logsDir(workspaceRoot));
+  await assert.rejects(fs.stat(path.join(escapedDir, "pwn.json")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(path.join(escapedDir, "pwn.log")), { code: "ENOENT" });
 });
 
 async function makeWorkspace() {

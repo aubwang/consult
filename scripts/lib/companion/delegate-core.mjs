@@ -1,15 +1,15 @@
-import path from "node:path";
-
-import { logsDir } from "../broker-endpoint.mjs";
-import { statusFromStopReason } from "../job-records.mjs";
+import { jobLogPath, statusFromStopReason } from "../job-records.mjs";
+import { createNullOutput } from "../null-output.mjs";
 import {
   brokerErrorMessage,
   exitCodeForBrokerError,
   runPromptTurn,
 } from "../prompt-turn-runner.mjs";
+import { renderSessionUpdate } from "../session-update-renderer.mjs";
 
 export { statusFromStopReason } from "../job-records.mjs";
 export { brokerErrorMessage, exitCodeForBrokerError } from "../prompt-turn-runner.mjs";
+export { renderSessionUpdate as renderUpdate } from "../session-update-renderer.mjs";
 
 export async function runDelegateOnce({
   workspaceRoot,
@@ -38,7 +38,7 @@ export async function runDelegateOnce({
     },
     deps,
     output,
-    renderUpdate,
+    renderUpdate: renderSessionUpdate,
     markFailedOnBrokerError,
   });
   if (Number.isInteger(result?.exitCode)) {
@@ -55,7 +55,7 @@ export async function runDelegateOnce({
           sessionId: finalNotification.sessionId,
           stopReason: finalNotification.stopReason,
           finalTextLength: finalText.length,
-          logPath: path.join(logsDir(workspaceRoot), `${jobRecord.jobId}.log`),
+          logPath: jobLogPath(workspaceRoot, jobRecord.jobId),
         })}\n`,
       );
     } else {
@@ -67,38 +67,4 @@ export async function runDelegateOnce({
     }
   }
   return output.result(0);
-}
-
-export function renderUpdate(notification) {
-  const update = notification.update ?? notification;
-  if (
-    update.sessionUpdate === "agent_message_chunk" &&
-    update.content?.type === "text" &&
-    typeof update.content.text === "string"
-  ) {
-    return update.content.text;
-  }
-  if (update.sessionUpdate === "tool_call") {
-    if (update.kind != null || update.title != null) {
-      return `[tool_call ${update.kind ?? ""}${update.kind && update.title ? ": " : ""}${
-        update.title ?? ""
-      }]\n`;
-    }
-    return `[tool_call ${update.toolCall?.name ?? update.name ?? "unknown"}]\n`;
-  }
-  if (update.sessionUpdate === "tool_call_update") {
-    // These are status-change events for ongoing tool calls, not actionable display info.
-    return "";
-  }
-  return "";
-}
-
-function createNullOutput() {
-  return {
-    stdout() {},
-    stderr() {},
-    result(exitCode) {
-      return { exitCode, stdout: "", stderr: "" };
-    },
-  };
 }

@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { createBrokerJobRuntime } from "./broker-job-runtime.mjs";
+import { TEXT_TRUNCATED_MARKER } from "./bounded-text.mjs";
 
 test("broker job runtime buffers updates and notifies subscribers on finalize", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
@@ -59,6 +60,47 @@ test("broker job runtime buffers updates and notifies subscribers on finalize", 
   assert.equal(notifications.at(0).params.update.content.text, "hello");
   assert.equal(notifications.at(1).params.stopReason, "end_turn");
   assert.equal(job.finalText, "hello");
+});
+
+test("broker job runtime caps accumulated final text", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => {
+      throw new Error("agent should not be needed");
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+    maxFinalTextChars: 40,
+  });
+  const job = runtime.createJob(
+    {
+      jobId: "job-runtime-long",
+      kind: "delegate",
+      profile: "codex",
+      mode: "write",
+      prompt: "fix",
+    },
+    fakeSocket("originator"),
+  );
+  runtime.trackSession("session-1", job, "write");
+
+  await runtime.handleSessionUpdate({
+    sessionId: "session-1",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" },
+    },
+  });
+
+  assert.equal(job.finalText.length, 40);
+  assert.equal(job.finalText, `abcdefg${TEXT_TRUNCATED_MARKER}`);
 });
 
 function fakeSocket(name) {

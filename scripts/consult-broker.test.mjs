@@ -10,6 +10,7 @@ import { test } from "node:test";
 
 import { connectBroker } from "./lib/broker-client.mjs";
 import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mjs";
+import { DEFAULT_MAX_JSONL_MESSAGE_BYTES } from "./lib/jsonl-framing.mjs";
 import { listenWithFallback } from "./lib/__fixtures__/socket-transport.mjs";
 import { runDelegate } from "./lib/companion/delegate.mjs";
 import { serveBroker } from "./consult-broker.mjs";
@@ -1009,6 +1010,33 @@ test("malformed socket messages return a parse error without crashing the broker
   }
 });
 
+test("oversized socket messages return an error without unbounded buffering", async (t) => {
+  const harness = await startBroker(t);
+  const socket = net.createConnection(harness.endpoint);
+  await once(socket, "connect");
+
+  try {
+    socket.write("x".repeat(DEFAULT_MAX_JSONL_MESSAGE_BYTES + 1));
+    const response = JSON.parse(await readSocketLine(socket));
+    assert.equal(response.jsonrpc, "2.0");
+    assert.equal(response.id, null);
+    assert.deepEqual(response.error, {
+      code: "MESSAGE_TOO_LARGE",
+      message: `JSON-RPC message exceeds ${DEFAULT_MAX_JSONL_MESSAGE_BYTES} bytes`,
+    });
+    await once(socket, "close");
+
+    const client = await connectBroker(harness.endpoint);
+    try {
+      assert.equal((await client.request("consult/ping", {})).ok, true);
+    } finally {
+      await client.close();
+    }
+  } finally {
+    socket.destroy();
+  }
+});
+
 test("invalid RPC params return invalid params without crashing the broker", async (t) => {
   const harness = await startBroker(t);
   const socket = net.createConnection(harness.endpoint);
@@ -1245,7 +1273,7 @@ test("consult/attach to a running job receives buffered and live updates while b
   }
 });
 
-test("consult/attach receives only the last 500 buffered updates after overflow", async (t) => {
+test("consult/attach reports dropped buffered updates after overflow", async (t) => {
   const updateCount = 550;
   const harness = await startBroker(t, {
     agentArgs: ["sessions", `prompt-many-updates-${updateCount}`],
@@ -1270,9 +1298,13 @@ test("consult/attach receives only the last 500 buffered updates after overflow"
       jobId: "job-1",
     });
 
-    await waitFor(() => attachUpdates.length === 500);
-    assert.equal(attachUpdates.length, 500);
-    assert.equal(attachUpdates[0].update.content.text, `update-${updateCount - 500}`);
+    await waitFor(() => attachUpdates.length === 501);
+    assert.equal(attachUpdates.length, 501);
+    assert.deepEqual(attachUpdates[0].update, {
+      sessionUpdate: "consult_update_gap",
+      droppedUpdateCount: updateCount - 500,
+    });
+    assert.equal(attachUpdates[1].update.content.text, `update-${updateCount - 500}`);
     assert.equal(attachUpdates.at(-1).update.content.text, `update-${updateCount - 1}`);
     assert.equal((await attachFinalized).jobId, "job-1");
   } finally {

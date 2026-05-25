@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 import { connectBroker } from "./broker-client.mjs";
 import { listenWithFallback } from "./__fixtures__/socket-transport.mjs";
+import { DEFAULT_MAX_JSONL_MESSAGE_BYTES } from "./jsonl-framing.mjs";
 
 async function withBrokerServer(t, onMessage) {
   const dir = fs.mkdtempSync(path.join(process.cwd(), ".broker-client-"));
@@ -122,6 +123,20 @@ test("request rejects with BROKER_PROTOCOL_ERROR when the server sends malformed
   await assert.rejects(client.request("bad-json", {}), (error) => {
     assert.equal(error.code, "BROKER_PROTOCOL_ERROR");
     assert.match(error.message, /malformed JSON/);
+    return true;
+  });
+  assert.equal(client.closed, true);
+});
+
+test("request rejects with BROKER_PROTOCOL_ERROR when the server sends an oversized message", async (t) => {
+  const socketPath = await withBrokerServer(t, (_message, socket) => {
+    socket.write("x".repeat(DEFAULT_MAX_JSONL_MESSAGE_BYTES + 1));
+  });
+  const client = await connectBroker(socketPath);
+
+  await assert.rejects(client.request("too-large", {}), (error) => {
+    assert.equal(error.code, "BROKER_PROTOCOL_ERROR");
+    assert.match(error.message, /exceeds/);
     return true;
   });
   assert.equal(client.closed, true);

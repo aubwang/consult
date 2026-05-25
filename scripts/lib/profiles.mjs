@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 
+import { isRecord } from "./objects.mjs";
 import { atomicWriteJson } from "./state.mjs";
 
 export const PROFILES_SCHEMA_VERSION = 1;
@@ -22,14 +23,14 @@ export async function loadProfiles(profilesPath) {
     throw profilesError("Profiles file is malformed", "PROFILES_MALFORMED", profilesPath);
   }
 
-  if (!isPlainObject(data)) {
+  if (!isRecord(data)) {
     throw profilesError("Profiles file is malformed", "PROFILES_MALFORMED", profilesPath);
   }
   if (data.schemaVersion !== PROFILES_SCHEMA_VERSION) {
     throw profilesError("Profiles schema mismatch", "PROFILES_SCHEMA_MISMATCH", profilesPath);
   }
   data.hostDefaults ??= {};
-  if (!isPlainObject(data.profiles)) {
+  if (!isRecord(data.profiles)) {
     throw profilesError("Profiles file is malformed", "PROFILES_MALFORMED", profilesPath);
   }
   if (
@@ -38,7 +39,7 @@ export async function loadProfiles(profilesPath) {
   ) {
     throw profilesError("Profiles file is malformed", "PROFILES_MALFORMED", profilesPath);
   }
-  if (!isPlainObject(data.hostDefaults)) {
+  if (!isRecord(data.hostDefaults)) {
     throw profilesError("Profiles file is malformed", "PROFILES_MALFORMED", profilesPath);
   }
   validateProfiles(data.profiles, profilesPath);
@@ -91,11 +92,11 @@ function emptyProfiles() {
 function validateProfiles(profiles, profilesPath) {
   for (const [profileName, profile] of Object.entries(profiles)) {
     if (
-      !isPlainObject(profile) ||
+      !isRecord(profile) ||
       typeof profile.registryId !== "string" ||
       typeof profile.binary !== "string" ||
       !Array.isArray(profile.args) ||
-      !isPlainObject(profile.env) ||
+      !isRecord(profile.env) ||
       typeof profile.installedAt !== "string"
     ) {
       const error = profilesError("Profiles file is malformed", "PROFILES_MALFORMED", profilesPath);
@@ -104,10 +105,6 @@ function validateProfiles(profiles, profilesPath) {
     }
     profile.installedVia ??= "registry";
   }
-}
-
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function profilesError(message, code, profilesPath) {

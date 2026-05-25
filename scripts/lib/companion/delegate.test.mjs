@@ -45,13 +45,48 @@ test("delegate streams agent text and finalizes the job record", async (t) => {
   assert.equal(record.host, "claude-code");
   assert.equal(record.hostSessionId, "claude-1");
   assert.equal(record.sessionId, "session-1");
+  assert.equal(record.mode, "read-only");
   assert.equal(record.chainId, "job-happy");
   assert.equal(record.parentJobId, null);
   assert.equal(record.delegationDepth, 0);
   assert.equal(record.finalText, "hello world");
+  assert.equal(request.params.mode, "read-only");
   assert.equal(request.params.chainId, "job-happy");
   assert.equal(request.params.parentJobId, null);
   assert.equal(request.params.delegationDepth, 0);
+});
+
+test("delegate honors explicit write mode", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+
+  const resultPromise = runDelegate({
+    args: { positional: ["edit", "the", "bug"], flags: { write: true } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-write",
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-write",
+    stopReason: "end_turn",
+    sessionId: "session-write",
+  });
+  const result = await resultPromise;
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-write.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.mode, "write");
+  assert.equal(request.params.mode, "write");
 });
 
 test("delegate resume uses the latest finalized session for the selected profile", async (t) => {
@@ -387,7 +422,7 @@ test("delegate background writes a queued record and spawns the task worker", as
   assert.match(result.stdout, /\/consult:status job-bg/);
   assert.equal(record.status, "queued");
   assert.equal(record.prompt, "fix later");
-  assert.equal(record.mode, "write");
+  assert.equal(record.mode, "read-only");
   assert.equal(record.host, "claude-code");
   assert.equal(record.profile, "codex");
   assert.equal(record.hostSessionId, "claude-1");
@@ -401,6 +436,40 @@ test("delegate background writes a queued record and spawns the task worker", as
   assert.equal(spawns[0].options.stdio, "ignore");
   assert.equal(spawns[0].options.cwd, workspaceRoot);
   assert.equal(unrefCalled, true);
+});
+
+test("delegate truncates stored prompts on a UTF-8 boundary", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+  const prompt = `${"a".repeat(4095)}€ after`;
+
+  const resultPromise = runDelegate({
+    args: { positional: [], flags: { prompt } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-utf8",
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-utf8",
+    stopReason: "end_turn",
+    sessionId: "session-utf8",
+  });
+  const result = await resultPromise;
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-utf8.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.prompt, `${"a".repeat(4095)}...`);
+  assert.equal(record.prompt.includes("\uFFFD"), false);
 });
 
 test("delegate child job inherits lineage and read-only permission ceiling from parent", async (t) => {

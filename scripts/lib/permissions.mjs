@@ -23,6 +23,8 @@ const TOOL_KINDS = new Set([
   "switch_mode",
   "other",
 ]);
+
+const DENIED_ALL_MODES = new Set(["execute"]);
 const PATH_FIELD_NAMES = new Set([
   "path",
   "paths",
@@ -71,15 +73,19 @@ export async function decidePermission({ request, mode, workspaceRoot }) {
     }
   }
 
-  if (mode === "write") {
-    return { allowed: true };
-  }
-
   if (kind === "fetch") {
     return {
       allowed: false,
-      reason: "fetch denied in read-only mode (exfil vector)",
+      reason: `fetch denied in ${mode} mode (exfil vector)`,
     };
+  }
+
+  if (DENIED_ALL_MODES.has(kind)) {
+    return { allowed: false, reason: `${kind} denied in ${mode} mode` };
+  }
+
+  if (mode === "write") {
+    return { allowed: true };
   }
 
   if (READ_ONLY_DENIED_KINDS.has(kind)) {

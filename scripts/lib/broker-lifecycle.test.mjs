@@ -14,6 +14,7 @@ import {
   teardownBrokerSession,
 } from "./broker-lifecycle.mjs";
 import { brokerFilePath, brokerSocketPath } from "./broker-endpoint.mjs";
+import { processStartTime } from "./process-identity.mjs";
 import { atomicWriteJson } from "./state.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -174,6 +175,7 @@ test("teardownBrokerSession falls back to SIGTERM when shutdown RPC is unreachab
   await atomicWriteJson(harness.brokerFile, {
     endpoint: path.join(harness.dir, "missing.sock"),
     pid: sleeper.pid,
+    pidStartTime: await processStartTime(sleeper.pid),
     jobId: harness.input.jobId,
     host: harness.input.host,
     profile: harness.input.profile,
@@ -192,6 +194,43 @@ test("teardownBrokerSession falls back to SIGTERM when shutdown RPC is unreachab
 
   await sleeperExited;
   assert.equal(isPidAlive(sleeper.pid), false);
+  assert.equal(await brokerSessionFilePresent(harness.input), false);
+  assert.equal(await fileExists(pidFile), false);
+});
+
+test("teardownBrokerSession does not signal a mismatched reused pid", async (t) => {
+  const harness = await createHarness(t);
+  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  const pidFile = `${harness.brokerFile.slice(0, -".json".length)}.pid.json`;
+  t.after(() => {
+    if (isPidAlive(sleeper.pid)) {
+      sleeper.kill("SIGKILL");
+    }
+  });
+  await fsp.mkdir(path.dirname(harness.brokerFile), { recursive: true });
+  await atomicWriteJson(harness.brokerFile, {
+    endpoint: path.join(harness.dir, "missing.sock"),
+    pid: sleeper.pid,
+    pidStartTime: "not-this-process",
+    jobId: harness.input.jobId,
+    host: harness.input.host,
+    profile: harness.input.profile,
+    hostSessionId: harness.input.hostSessionId,
+    startedAt: new Date(0).toISOString(),
+  });
+  await atomicWriteJson(pidFile, { pid: sleeper.pid });
+
+  assert.deepEqual(
+    await teardownBrokerSession({
+      ...harness.input,
+      options: { shutdownTimeoutMs: 50, sigtermTimeoutMs: 50 },
+    }),
+    { teardown: "stale", brokerFile: harness.brokerFile },
+  );
+
+  assert.equal(isPidAlive(sleeper.pid), true);
   assert.equal(await brokerSessionFilePresent(harness.input), false);
   assert.equal(await fileExists(pidFile), false);
 });

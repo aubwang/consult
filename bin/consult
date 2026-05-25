@@ -7,6 +7,6 @@ const [, , sub, ...rest] = process.argv;
 const parsed = parseArgs(rest ?? []);
 const { exitCode, stdout, stderr } = await dispatch(sub ?? "help", parsed);
 
-if (stdout) process.stdout.write(`${stdout}\n`);
-if (stderr) process.stderr.write(`${stderr}\n`);
+if (stdout) process.stdout.write(stdout);
+if (stderr) process.stderr.write(stderr);
 process.exit(exitCode);

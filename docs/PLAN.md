@@ -136,7 +136,7 @@ All commands are markdown files that shell into `node scripts/consult-companion.
 |---|---|---|
 | `/consult:setup` | `setup --json` | Two-phase: probe registry → menu with install / set-default actions. |
 | `/consult:agents` | `agents [--set <name>]` | Lists profiles + status; can set default. |
-| `/consult:delegate [args]` | `delegate ...` | Foreground/background, `--agent <name>`, `--write` (default), `--read-only`, `--resume`/`--resume-job <id>`/`--fresh`, `--parent-job <id>`, `--model`, `--effort`. |
+| `/consult:delegate [args]` | `delegate ...` | Foreground/background, `--agent <name>`, `--write`, `--read-only` (default), `--resume`/`--resume-job <id>`/`--fresh`, `--parent-job <id>`, `--model`, `--effort`. |
 | `/consult:review [args]` | `review ...` | Proxies to backend's `review` slash if advertised. |
 | `/consult:status [id]` | `status ...` | Table of jobs; `--wait` blocks on one job. |
 | `/consult:result [id]` | `result ...` | Final stored output for a job. |
@@ -327,17 +327,20 @@ Two layers: ACP `session/request_permission` for agent-initiated tool calls, and
 
 ### `session/request_permission` (in `permissions.mjs`)
 
-| `kind` | `--write` (default) | `--read-only` |
+| `kind` | `--write` | `--read-only` (default) |
 |---|---|---|
 | `read`, `search`, `think` | ✅ allow (path-confined) | ✅ allow (path-confined) |
-| `fetch` | ✅ allow | ❌ deny (exfil vector) |
+| `fetch` | ❌ deny (exfil vector) | ❌ deny (exfil vector) |
 | `edit`, `delete`, `move` | ✅ allow (path-confined) | ❌ deny |
-| `execute` | ✅ allow (cwd-confined) | ❌ deny |
+| `execute` | ❌ deny | ❌ deny |
 | `switch_mode`, `other` | ✅ allow | ❌ deny |
 
 **Path/cwd confinement for backend-native tool calls.** Approval for `read`, `search`, `edit`, `delete`, `move`, `execute` is conditional on the request payload's paths/cwd resolving inside the workspace via `path-safety.mjs`. If the agent asks to read `/etc/passwd` or to execute `bash` with `cwd: /tmp`, we deny it even in `--write` mode. The same realpath-confine logic that protects `fs/*` handlers applies to permission requests carrying paths or cwd — without it, the fs sandbox is illusory because the agent can route around it via `kind: read` permission grants.
 
-`fetch` in read-only is denied because combined with `read` it's a clean read-then-exfiltrate path; we want read-only to mean genuinely-local.
+`fetch` is denied in both modes because combined with workspace reads it is a
+clean read-then-exfiltrate path. `execute` is also denied in both modes because
+ACP execute requests expose a raw command string that Consult cannot safely
+constrain by cwd inspection alone.
 
 No mid-task user prompts. The decision is made at command start.
 

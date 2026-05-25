@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { safeSegment } from "./path-segments.mjs";
+
 const SOCKET_PATH_MAX_LENGTH = 100;
 
 export function workspaceHash(workspaceRoot) {
@@ -98,10 +100,4 @@ function identityHash(host, hostSessionId) {
     .update(`${host ?? ""}\0${hostSessionId ?? ""}`)
     .digest("hex")
     .slice(0, 16);
-}
-
-function safeSegment(value) {
-  return String(value ?? "unknown")
-    .replace(/[^A-Za-z0-9._-]+/g, "_")
-    .slice(0, 40) || "unknown";
 }

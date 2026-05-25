@@ -17,7 +17,7 @@ Forwarding rules:
 - Respect explicit `--background` and `--wait`.
 - If neither flag is present, prefer foreground for a small, clearly bounded request and background for complicated, open-ended, multi-step, or long-running work.
 - Forward `--agent <name>`, `--model <value>`, and `--effort <value>` as runtime controls only when explicitly requested.
-- Forward `--read-only` when explicitly requested; otherwise default to write-capable execution by passing `--write`.
+- Forward `--write` only when explicitly requested; otherwise pass `--read-only`.
 - Respect `--resume` and `--fresh` as routing controls.
 - If the user is clearly asking to continue prior Consult work in this Workspace, add `--resume` unless `--fresh` is present.
 - Strip routing flags from the natural-language task text before passing it to the companion.

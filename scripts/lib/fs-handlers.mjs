@@ -2,31 +2,31 @@ import fs from "node:fs/promises";
 
 import { RequestError } from "@agentclientprotocol/sdk";
 
-import { isInsideWorkspace } from "./path-safety.mjs";
+import { resolveInsideWorkspace } from "./path-safety.mjs";
 
 export function createFsHandlers({ workspaceRoot, mode }) {
   if (mode !== "write" && mode !== "read-only") {
     throw new Error(`unknown fs handler mode: ${mode}`);
   }
 
-  return {
-    async readTextFile(params) {
-      await assertInsideWorkspace(params.path, workspaceRoot);
-      const content = await fs.readFile(params.path, "utf8");
-      return { content: applyLineWindow(content, params) };
-    },
-    async writeTextFile(params) {
-      await assertInsideWorkspace(params.path, workspaceRoot);
-      if (mode === "read-only") {
-        throw RequestError.invalidParams(
-          { path: params.path },
-          "write denied in read-only mode",
-        );
-      }
-      await fs.writeFile(params.path, params.content, "utf8");
-      return {};
-    },
-  };
+    return {
+      async readTextFile(params) {
+        const safePath = await resolveWorkspacePath(params.path, workspaceRoot);
+        const content = await fs.readFile(safePath, "utf8");
+        return { content: applyLineWindow(content, params) };
+      },
+      async writeTextFile(params) {
+        const safePath = await resolveWorkspacePath(params.path, workspaceRoot);
+        if (mode === "read-only") {
+          throw RequestError.invalidParams(
+            { path: params.path },
+            "write denied in read-only mode",
+          );
+        }
+        await fs.writeFile(safePath, params.content, "utf8");
+        return {};
+      },
+    };
 }
 
 function applyLineWindow(content, { line, limit }) {
@@ -44,11 +44,13 @@ function splitLinesPreservingTerminators(content) {
   return content.match(/[^\n]*\n|[^\n]+$/g) ?? [];
 }
 
-async function assertInsideWorkspace(targetPath, workspaceRoot) {
-  if (!(await isInsideWorkspace(targetPath, workspaceRoot))) {
+async function resolveWorkspacePath(targetPath, workspaceRoot) {
+  const resolvedPath = await resolveInsideWorkspace(targetPath, workspaceRoot);
+  if (!resolvedPath) {
     throw RequestError.invalidParams(
       { path: targetPath },
       `path outside workspace: ${targetPath}`,
     );
   }
+  return resolvedPath;
 }

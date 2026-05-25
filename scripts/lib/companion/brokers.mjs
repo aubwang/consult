@@ -8,6 +8,7 @@ import {
   pidAlive as defaultPidAlive,
   teardownBrokerSession as defaultTeardownBrokerSession,
 } from "../broker-lifecycle.mjs";
+import { isRecord } from "../objects.mjs";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mjs";
 
 export async function run(subcommand, parsedArgs) {
@@ -175,8 +176,4 @@ function malformedBrokerRow(filePath) {
 
 function jobIdFromFile(filePath) {
   return path.basename(filePath, ".json");
-}
-
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

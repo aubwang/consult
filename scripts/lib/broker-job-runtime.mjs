@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { appendBoundedText, DEFAULT_MAX_FINAL_TEXT_CHARS } from "./bounded-text.mjs";
 import { cancelPrompt } from "./acp-client.mjs";
 import { cancelCascadeJobTargets } from "./delegation-chain.mjs";
 import {
@@ -9,6 +10,7 @@ import {
   writeJobRecord as persistJobRecord,
 } from "./job-records.mjs";
 import { isInsideWorkspaceSync } from "./path-safety.mjs";
+import { renderSessionUpdate } from "./session-update-renderer.mjs";
 
 export function createBrokerJobRuntime({
   config,
@@ -17,6 +19,7 @@ export function createBrokerJobRuntime({
   writeNotification,
   onActivity = () => {},
   onTerminal = () => {},
+  maxFinalTextChars = DEFAULT_MAX_FINAL_TEXT_CHARS,
 }) {
   const sessionJobs = new Map();
   const sessionModes = new Map();
@@ -61,7 +64,8 @@ export function createBrokerJobRuntime({
         status: "running",
         payloadHash: hashRunPayload(params),
         sessionId: null,
-        pendingUpdates: [],
+          pendingUpdates: [],
+          droppedUpdateCount: 0,
         subscribers: new Set(),
         finalized: null,
         originatorSocket,
@@ -78,10 +82,19 @@ export function createBrokerJobRuntime({
       onActivity();
       return job;
     },
-    attachJob(job, targetSocket) {
-      for (const update of job.pendingUpdates) {
-        writeNotification(targetSocket, "consult/update", update);
-      }
+      attachJob(job, targetSocket) {
+        if (job.droppedUpdateCount > 0) {
+          writeNotification(targetSocket, "consult/update", {
+            jobId: job.jobId,
+            update: {
+              sessionUpdate: "consult_update_gap",
+              droppedUpdateCount: job.droppedUpdateCount,
+            },
+          });
+        }
+        for (const update of job.pendingUpdates) {
+          writeNotification(targetSocket, "consult/update", update);
+        }
       if (job.status === "finalized") {
         writeNotification(targetSocket, "consult/finalized", {
           jobId: job.jobId,
@@ -188,11 +201,14 @@ export function createBrokerJobRuntime({
 
   function writeJobUpdate(job, update) {
     const notification = { jobId: job.jobId, update };
-    job.finalText += renderUpdate(update);
-    job.pendingUpdates.push(notification);
-    if (job.pendingUpdates.length > 500) {
-      job.pendingUpdates.shift();
-    }
+      job.finalText = appendBoundedText(job.finalText, renderSessionUpdate(update), {
+        maxChars: maxFinalTextChars,
+      });
+      job.pendingUpdates.push(notification);
+      if (job.pendingUpdates.length > 500) {
+        job.pendingUpdates.shift();
+        job.droppedUpdateCount += 1;
+      }
     for (const subscriber of job.subscribers) {
       writeNotification(subscriber, "consult/update", notification);
     }
@@ -361,18 +377,4 @@ function isTouchedPathInsideWorkspace(touchedPath, workspaceRoot) {
   } catch {
     return false;
   }
-}
-
-function renderUpdate(update) {
-  if (
-    update.sessionUpdate === "agent_message_chunk" &&
-    update.content?.type === "text" &&
-    typeof update.content.text === "string"
-  ) {
-    return update.content.text;
-  }
-  if (update.sessionUpdate === "tool_call") {
-    return `[tool_call ${update.toolCall?.name ?? update.name ?? "unknown"}]\n`;
-  }
-  return "";
 }
