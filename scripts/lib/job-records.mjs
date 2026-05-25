@@ -7,6 +7,8 @@ import {
   listJobRecords as listJobRecordsFromDir,
   readJobRecord as readJobRecordFromDir,
 } from "./state.mjs";
+import { omitUndefined } from "./objects.mjs";
+import { safeSegment } from "./path-segments.mjs";
 
 export const JOB_STATUS = Object.freeze({
   QUEUED: "queued",
@@ -97,16 +99,24 @@ export async function listWorkspaceJobRecords(workspaceRoot) {
   return await listJobRecordsFromDir(jobsDir(workspaceRoot));
 }
 
+export function jobRecordPath(workspaceRoot, jobId) {
+  return path.join(jobsDir(workspaceRoot), `${safeSegment(jobId)}.json`);
+}
+
+export function jobLogPath(workspaceRoot, jobId) {
+  return path.join(logsDir(workspaceRoot), `${safeSegment(jobId)}.log`);
+}
+
 export async function writeJobRecord(workspaceRoot, jobId, record) {
   const dir = jobsDir(workspaceRoot);
   await fs.mkdir(dir, { recursive: true });
-  await atomicWriteJson(path.join(dir, `${jobId}.json`), record);
+  await atomicWriteJson(jobRecordPath(workspaceRoot, jobId), record);
 }
 
 export async function appendJobLogLine(workspaceRoot, jobId, notification) {
   const dir = logsDir(workspaceRoot);
   await fs.mkdir(dir, { recursive: true });
-  await fs.appendFile(path.join(dir, `${jobId}.log`), `${JSON.stringify(notification)}\n`);
+  await fs.appendFile(jobLogPath(workspaceRoot, jobId), `${JSON.stringify(notification)}\n`);
 }
 
 export function brokerJobMetadata(job) {
@@ -160,8 +170,4 @@ export function failedBrokerJobRecord(existing, job) {
 
 function defaultNow() {
   return new Date().toISOString();
-}
-
-function omitUndefined(fields) {
-  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }

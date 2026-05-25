@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { brokersDir, jobsDir, profilesPath } from "./lib/broker-endpoint.mjs";
+import { readWorkspaceJobRecord } from "./lib/job-records.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.join(__dirname, "consult-companion.mjs");
@@ -123,9 +124,7 @@ async function waitForJobId() {
 
 async function waitForJobRecord(jobId, predicate) {
   return await waitFor(async () => {
-    const record = JSON.parse(
-      await fs.readFile(path.join(jobsDir(workspaceRoot), `${jobId}.json`), "utf8"),
-    );
+    const record = await readWorkspaceJobRecord(workspaceRoot, jobId);
     return predicate(record) ? record : null;
   }, `job ${jobId} did not reach expected status`);
 }

@@ -288,8 +288,9 @@ function runCommand(argv) {
 }
 
 function defaultSpawnInstall(command) {
+  const argv = parseInstallCommand(command);
   return new Promise((resolve, reject) => {
-    const child = spawn("sh", ["-lc", command], {
+    const child = spawn(argv[0], argv.slice(1), {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -307,4 +308,15 @@ function defaultSpawnInstall(command) {
       resolve({ stdout, stderr, exitCode });
     });
   });
+}
+
+export function parseInstallCommand(command) {
+  const trimmed = String(command ?? "").trim();
+  if (!trimmed) {
+    throw new Error("install command is empty");
+  }
+  if (/[;&|<>$`\\]/.test(trimmed)) {
+    throw new Error("install command contains unsupported shell syntax");
+  }
+  return trimmed.split(/\s+/);
 }

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { brokerFilePath, brokerSocketPath } from "./broker-endpoint.mjs";
 import { connectBroker } from "./broker-client.mjs";
+import { pidMatchesStartTime } from "./process-identity.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const brokerScriptPath = path.resolve(__dirname, "../consult-broker.mjs");
@@ -144,11 +145,18 @@ export async function teardownBrokerSession({
     }
   }
 
+  let teardown = "stale";
   if (state.pid) {
-    await terminatePid(state.pid, options.sigtermTimeoutMs ?? 500);
+    const result = await terminatePid(state.pid, options.sigtermTimeoutMs ?? 500, {
+      pidStartTime: state.pidStartTime,
+      requireIdentity: true,
+    });
+    if (result.signaled) {
+      teardown = "sigterm-tree";
+    }
   }
   await cleanupBrokerFiles(brokerFile, pidFile);
-  return { teardown: "sigterm-tree", brokerFile };
+  return { teardown, brokerFile };
 }
 
 export async function connectBrokerSession({
@@ -252,9 +260,12 @@ function ignoreMissing(error) {
   }
 }
 
-async function terminatePid(pid, timeoutMs) {
+async function terminatePid(pid, timeoutMs, { pidStartTime, requireIdentity = false } = {}) {
   if (!pid || !(await pidAlive(pid))) {
-    return;
+    return { signaled: false };
+  }
+  if (requireIdentity && !(await pidMatchesStartTime(pid, pidStartTime))) {
+    return { signaled: false };
   }
   signalPidTree(pid, "SIGTERM");
   await waitForPidExit(pid, timeoutMs);
@@ -262,6 +273,7 @@ async function terminatePid(pid, timeoutMs) {
     signalPidTree(pid, "SIGKILL");
     await waitForPidExit(pid, timeoutMs);
   }
+  return { signaled: true };
 }
 
 function signalPidTree(pid, signal) {
@@ -269,12 +281,15 @@ function signalPidTree(pid, signal) {
     process.kill(-pid, signal);
     return;
   } catch (error) {
-    try {
-      process.kill(pid, signal);
-    } catch (innerError) {
-      if (innerError.code !== "ESRCH") {
-        throw innerError;
-      }
+    if (error.code !== "ESRCH") {
+      throw error;
+    }
+  }
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      throw error;
     }
   }
 }

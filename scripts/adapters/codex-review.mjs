@@ -1,13 +1,13 @@
-import crypto from "node:crypto";
-
 import { getDiff as defaultGetDiff } from "../lib/git.mjs";
 import {
   createQueuedJobRecord,
   writeJobRecord as defaultWriteJobRecord,
 } from "../lib/job-records.mjs";
+import { defaultGenerateJobId } from "../lib/job-ids.mjs";
 import { runPromptTurn } from "../lib/prompt-turn-runner.mjs";
 import { createOutput } from "../lib/companion/output.mjs";
 import { brokerErrorMessage } from "../lib/prompt-turn-runner.mjs";
+import { renderSessionUpdate } from "../lib/session-update-renderer.mjs";
 
 export async function runCodexReview({
   profile,
@@ -59,7 +59,7 @@ export async function runCodexReview({
       payloadFields: { baseRef },
       deps,
       output,
-      renderUpdate,
+      renderUpdate: renderSessionUpdate,
       onUpdate(notification) {
         const update = notification.update ?? notification;
         if (update.sessionUpdate === "available_commands_update") {
@@ -109,23 +109,4 @@ function waitForAvailableCommands(advertised, timeoutMs) {
       timeout = setTimeout(() => resolve([]), timeoutMs);
     }),
   ]).finally(() => clearTimeout(timeout));
-}
-
-function renderUpdate(notification) {
-  const update = notification.update ?? notification;
-  if (
-    update.sessionUpdate === "agent_message_chunk" &&
-    update.content?.type === "text" &&
-    typeof update.content.text === "string"
-  ) {
-    return update.content.text;
-  }
-  if (update.sessionUpdate === "tool_call") {
-    return `[tool_call ${update.toolCall?.name ?? update.name ?? "unknown"}]\n`;
-  }
-  return "";
-}
-
-function defaultGenerateJobId() {
-  return `job-${crypto.randomBytes(9).toString("base64url").slice(0, 12)}`;
 }

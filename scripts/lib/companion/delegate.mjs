@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { spawn as defaultSpawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -8,6 +7,7 @@ import {
   createQueuedJobRecord,
   writeJobRecord as defaultWriteJobRecord,
 } from "../job-records.mjs";
+import { defaultGenerateJobId } from "../job-ids.mjs";
 import { runDelegateOnce } from "./delegate-core.mjs";
 import { resolveInvocationContext } from "./invocation-context.mjs";
 import { jobRecordErrorResult } from "./job-record-errors.mjs";
@@ -205,7 +205,7 @@ function validateArgs(args) {
   }
 
   return {
-    mode: flags["read-only"] !== undefined ? "read-only" : "write",
+    mode: flags.write !== undefined ? "write" : "read-only",
     writeExplicit: flags.write !== undefined,
     parentJobId:
       stringFlag(flags["parent-job"]) ?? stringFlag(flags["parent-job-id"]) ?? null,
@@ -223,11 +223,21 @@ function truncatePrompt(prompt) {
   if (Buffer.byteLength(prompt) <= PROMPT_TRUNCATE_BYTES) {
     return prompt;
   }
-  return `${Buffer.from(prompt).subarray(0, PROMPT_TRUNCATE_BYTES).toString()}...`;
+  return `${truncateUtf8(prompt, PROMPT_TRUNCATE_BYTES)}...`;
 }
 
-function defaultGenerateJobId() {
-  return `job-${crypto.randomBytes(9).toString("base64url").slice(0, 12)}`;
+function truncateUtf8(value, maxBytes) {
+  let bytes = 0;
+  let result = "";
+  for (const codePoint of value) {
+    const codePointBytes = Buffer.byteLength(codePoint);
+    if (bytes + codePointBytes > maxBytes) {
+      break;
+    }
+    result += codePoint;
+    bytes += codePointBytes;
+  }
+  return result;
 }
 
 function companionCliPath() {

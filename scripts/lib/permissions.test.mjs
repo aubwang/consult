@@ -89,6 +89,20 @@ test("read-only denies fetch", async () => {
   );
 });
 
+test("write-mode denies fetch", async () => {
+  assert.deepEqual(
+    await decidePermission({
+      request: request("fetch", { url: "https://example.invalid" }),
+      mode: "write",
+      workspaceRoot: makeRoot(),
+    }),
+    {
+      allowed: false,
+      reason: "fetch denied in write mode (exfil vector)",
+    },
+  );
+});
+
 test("read-only denies edit even inside workspace", async () => {
   const workspaceRoot = makeRoot();
   const targetPath = path.join(workspaceRoot, "notes.txt");
@@ -127,7 +141,7 @@ test("write-mode allows edit inside workspace and denies edit outside workspace"
   );
 });
 
-test("write-mode allows execute with cwd inside workspace", async () => {
+test("write-mode denies execute even with cwd inside workspace", async () => {
   const workspaceRoot = makeRoot();
 
   assert.deepEqual(
@@ -136,7 +150,7 @@ test("write-mode allows execute with cwd inside workspace", async () => {
       mode: "write",
       workspaceRoot,
     }),
-    { allowed: true },
+    { allowed: false, reason: "execute denied in write mode" },
   );
 });
 
@@ -151,14 +165,14 @@ test("write-mode denies execute with cwd outside workspace", async () => {
   );
 });
 
-test("write-mode allows execute with no cwd", async () => {
+test("write-mode denies execute with no cwd", async () => {
   assert.deepEqual(
     await decidePermission({
       request: request("execute", { command: "pwd" }),
       mode: "write",
       workspaceRoot: makeRoot(),
     }),
-    { allowed: true },
+    { allowed: false, reason: "execute denied in write mode" },
   );
 });
 

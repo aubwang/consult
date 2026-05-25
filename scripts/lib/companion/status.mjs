@@ -1,10 +1,9 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 
-import { logsDir } from "../broker-endpoint.mjs";
 import { addJobRelationships } from "../delegation-chain.mjs";
 import {
   isFinalStatus,
+  jobLogPath,
   listWorkspaceJobRecords,
   readWorkspaceJobRecord,
 } from "../job-records.mjs";
@@ -110,7 +109,7 @@ async function waitForFinalRecord(workspaceRoot, jobId, deps) {
 async function readLogTail(workspaceRoot, jobId) {
   let contents;
   try {
-    contents = await fs.readFile(path.join(logsDir(workspaceRoot), `${jobId}.log`), "utf8");
+    contents = await fs.readFile(jobLogPath(workspaceRoot, jobId), "utf8");
   } catch (error) {
     if (error.code === "ENOENT") {
       return [];

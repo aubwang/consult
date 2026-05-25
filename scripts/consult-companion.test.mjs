@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { dispatch } from "./consult-companion.mjs";
 
 const companionPath = fileURLToPath(new URL("./consult-companion.mjs", import.meta.url));
+const stableCliPath = fileURLToPath(new URL("../bin/consult", import.meta.url));
 
 test("dispatch routes delegate to its handler", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-companion-delegate-"));
@@ -123,6 +124,41 @@ test("direct CLI preserves handler stdout exactly", async (t) => {
   let child;
   try {
     child = spawn(process.execPath, [companionPath, "setup", "--json"], {
+      env: { ...process.env, CONSULT_DATA_DIR: root },
+      stdio: ["ignore", stdoutFd, "pipe"],
+    });
+  } catch (error) {
+    fs.closeSync(stdoutFd);
+    t.skip(`spawn failed: ${error.message}`);
+    return;
+  }
+  fs.closeSync(stdoutFd);
+
+  child.stderr.resume();
+
+  const result = await waitForChild(child);
+  if (result.error) {
+    t.skip(`spawn failed: ${result.error.message}`);
+    return;
+  }
+  const stdout = await fsp.readFile(stdoutPath, "utf8");
+
+  assert.equal(result.code, 0);
+  assert.equal(stdout.endsWith("\n\n"), false);
+  assert.equal(JSON.parse(stdout).schemaVersion, 1);
+});
+
+test("stable consult CLI preserves handler stdout exactly", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-cli-json-"));
+  const stdoutPath = path.join(root, "stdout.txt");
+  t.after(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  const stdoutFd = fs.openSync(stdoutPath, "w");
+  let child;
+  try {
+    child = spawn(process.execPath, [stableCliPath, "setup", "--json"], {
       env: { ...process.env, CONSULT_DATA_DIR: root },
       stdio: ["ignore", stdoutFd, "pipe"],
     });

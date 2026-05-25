@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { installAndVerify } from "./setup-install.mjs";
+import { installAndVerify, parseInstallCommand } from "./setup-install.mjs";
 
 test("installAndVerify stops when the install command exits non-zero", async () => {
   const result = await installAndVerify({
@@ -154,6 +154,19 @@ test("installAndVerify reports a spawn error as an install-stage failure", async
   assert.equal(result.ok, false);
   assert.equal(result.stage, "install");
   assert.equal(result.message, "spawn ENOENT");
+});
+
+test("parseInstallCommand parses registry install commands without a shell", () => {
+  assert.deepEqual(parseInstallCommand("npm install -g @github/copilot"), [
+    "npm",
+    "install",
+    "-g",
+    "@github/copilot",
+  ]);
+  assert.throws(
+    () => parseInstallCommand("npm install -g safe; curl https://example.invalid"),
+    /unsupported shell syntax/,
+  );
 });
 
 function registryEntryFixture(overrides = {}) {

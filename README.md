@@ -172,6 +172,10 @@ Consult enforces workspace boundaries for ACP permission requests and for its
 client-side file handlers. Symlink escapes are rejected by resolving real paths
 before access is allowed.
 
+Network fetch requests and raw execute requests are denied in both modes. `cwd`
+checks alone are not enough to make arbitrary commands or outbound requests a
+safe delegated surface.
+
 Some Profiles report edits after they happen. Consult has a Broker-side
 backstop for that path: if a Profile auto-approves an edit in read-only mode,
 or touches a path outside the workspace, the Job fails. For Profiles that

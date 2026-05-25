@@ -1,5 +1,7 @@
 import net from "node:net";
 
+import { readJsonlMessages } from "./jsonl-framing.mjs";
+
 export async function connectBroker(socketPath, { connectTimeoutMs = 200 } = {}) {
   const socket = net.createConnection(socketPath);
   await new Promise((resolve, reject) => {
@@ -37,7 +39,7 @@ export async function connectBroker(socketPath, { connectTimeoutMs = 200 } = {})
 export class BrokerClient {
   closed = false;
 
-  #buffer = "";
+  #buffer = Buffer.alloc(0);
   #closeHandlers = new Set();
   #handlers = new Map();
   #nextId = 1;
@@ -100,12 +102,17 @@ export class BrokerClient {
   }
 
   #receive(chunk) {
-    this.#buffer += chunk.toString("utf8");
+    const framed = readJsonlMessages(this.#buffer, chunk);
+    this.#buffer = framed.buffer;
+    if (framed.error) {
+      const error = brokerError("BROKER_PROTOCOL_ERROR", framed.error.message);
+      this.closed = true;
+      this.#rejectPending(error);
+      this.#socket.destroy();
+      return;
+    }
 
-    let newlineIndex;
-    while ((newlineIndex = this.#buffer.indexOf("\n")) !== -1) {
-      const line = this.#buffer.slice(0, newlineIndex);
-      this.#buffer = this.#buffer.slice(newlineIndex + 1);
+    for (const line of framed.lines) {
       if (line === "") {
         continue;
       }

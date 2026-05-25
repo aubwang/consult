@@ -5,7 +5,10 @@ import {
   markJobRunning,
   writeJobRecord as defaultWriteJobRecord,
 } from "./job-records.mjs";
+import { appendBoundedText, DEFAULT_MAX_FINAL_TEXT_CHARS } from "./bounded-text.mjs";
 import { ensureBrokerSession as defaultEnsureBrokerSession } from "./broker-lifecycle.mjs";
+import { createNullOutput } from "./null-output.mjs";
+import { omitUndefined } from "./objects.mjs";
 
 export async function runPromptTurn({
   workspaceRoot,
@@ -23,6 +26,7 @@ export async function runPromptTurn({
   const now = deps.now ?? (() => new Date().toISOString());
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
   const appendLogLine = deps.appendLogLine ?? defaultAppendLogLine;
+  const maxFinalTextChars = deps.maxFinalTextChars ?? DEFAULT_MAX_FINAL_TEXT_CHARS;
 
   const { client } = await (deps.ensureBrokerSession ?? defaultEnsureBrokerSession)({
     workspaceRoot,
@@ -74,7 +78,7 @@ export async function runPromptTurn({
       }
       const rendered = renderUpdate(notification);
       if (rendered) {
-        finalText += rendered;
+        finalText = appendBoundedText(finalText, rendered, { maxChars: maxFinalTextChars });
         output.stdout(rendered);
       }
     });
@@ -188,18 +192,4 @@ export function brokerErrorMessage(error) {
     return base;
   }
   return base;
-}
-
-function createNullOutput() {
-  return {
-    stdout() {},
-    stderr() {},
-    result(exitCode) {
-      return { exitCode, stdout: "", stderr: "" };
-    },
-  };
-}
-
-function omitUndefined(fields) {
-  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
