@@ -25,7 +25,7 @@ background while you stay in your current Host.
    cd consult
    ```
 
-2. Install dependencies and expose the local CLIs:
+2. Install dependencies and expose the local CLI:
 
    ```sh
    npm install
@@ -33,8 +33,7 @@ background while you stay in your current Host.
    ```
 
    This repo is not published as an npm package. `npm link` exposes the local
-   `consult`, `consult-codex`, and `consult-opencode` binaries from this
-   checkout.
+   `consult` binary from this checkout.
 
 3. Set up at least one Profile:
 
@@ -88,16 +87,16 @@ background while you stay in your current Host.
    consult result <job-id>
    ```
 
-8. Delegate from Codex without losing Codex Host identity:
+8. Use the same command from Codex without losing Codex Host identity:
 
    ```sh
-   consult-codex delegate --agent claude --read-only -- "review the current diff"
+   consult delegate --agent claude --read-only -- "review the current diff"
    ```
 
-9. Delegate from opencode without losing opencode Host identity:
+9. Use the same command from opencode without losing opencode Host identity:
 
    ```sh
-   consult-opencode delegate --agent codex --read-only -- "check this implementation"
+   consult delegate --agent codex --read-only -- "check this implementation"
    ```
 
 10. If a Job gets stuck or a Broker locator looks stale, inspect Broker state:
@@ -116,12 +115,13 @@ background while you stay in your current Host.
 | Job | One delegated prompt turn with status, logs, result text, and cancellation state. |
 | Broker | A short-lived Consult-owned process that connects one Job to one Profile. |
 
-If you run `consult-codex delegate --agent claude ...`, Codex is the Host,
-Claude is the Profile, and the delegated prompt is the Job.
+If you run `consult delegate --agent claude ...` from Codex, Codex is the Host,
+Claude is the Profile, and the delegated prompt is the Job. The same command
+from opencode records opencode as the Host.
 
 ## Commands
 
-Direct CLI:
+CLI:
 
 ```sh
 consult setup
@@ -145,12 +145,10 @@ Claude Code plugin commands:
 /consult:brokers
 ```
 
-Host Adapter wrappers:
-
-```sh
-consult-codex delegate --agent claude --read-only -- "review this diff"
-consult-opencode delegate --agent codex --read-only -- "inspect this change"
-```
+The same `consult` binary is used from terminal, Codex, and opencode. Consult
+autodetects Codex, opencode, and Claude Code Host identity from the environment;
+explicit `--host` / `--host-session` flags remain available for smoke tests and
+manual overrides.
 
 There is also a Codex-only review proxy:
 
@@ -214,11 +212,17 @@ Profile setup. Host Adapters and optional sandboxing use these variables:
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `CONSULT_DATA_DIR` | No | `~/.consult` | Global Consult data root. Stores Profiles and per-workspace Job state. |
-| `CONSULT_HOST` | No | `terminal` | Host name for direct CLI use. Host Adapters set this automatically. |
-| `CONSULT_HOST_SESSION_ID` | No | `default` | Host Session id for direct CLI use. Host Adapters set this when a stable session id is available. |
+| `CONSULT_HOST` | No | autodetected, then `terminal` | Explicit Host name override. |
+| `CONSULT_HOST_SESSION_ID` | No | autodetected, then `default` | Explicit Host Session id override. |
 | `CONSULT_AGENT_SANDBOX` | No | `off` | Set to `bwrap` to launch ACP agents through bubblewrap. |
 | `CONSULT_BROKER_IDLE_TIMEOUT_MS` | No | `1800000` | Idle Broker shutdown timeout. |
 | `CONSULT_AVAILABLE_COMMANDS_TIMEOUT_MS` | No | `2000` | Timeout used by the Codex review proxy when checking available commands. |
+
+Known Host session variables are detected in this order:
+
+- `OPENCODE_SESSION_ID` or `OPENCODE_RUN_ID` -> `opencode`
+- `CODEX_THREAD_ID` -> `codex`
+- `CLAUDE_SESSION_ID` -> `claude-code`
 
 Global Profile config lives at:
 
@@ -237,8 +241,8 @@ Broker pidfiles, and optional workspace default Profile overrides.
 
 ## Agent skills
 
-Tracked Codex skills live in [skills/](skills/). They provide short delegation
-entrypoints through `consult-codex`:
+Tracked skills live in [skills/](skills/). They provide short delegation
+entrypoints through the `consult` CLI:
 
 ```text
 $consult:ask-claude
@@ -250,8 +254,8 @@ $consult:ask-copilot
 They default to read-only delegation and preserve user-supplied options such as
 `--model` and `--effort`.
 
-The tracked [.opencode/skills/consult-opencode](.opencode/skills/consult-opencode)
-symlink makes the opencode Host Adapter skill visible from this checkout.
+The tracked [.opencode/skills/consult](.opencode/skills/consult)
+symlink makes the generic Consult skill visible to opencode from this checkout.
 Generated `.opencode` dependency and config files are local state and ignored.
 
 ## Architecture and deeper docs

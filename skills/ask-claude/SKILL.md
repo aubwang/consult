@@ -11,18 +11,18 @@ metadata:
 Use this skill when the user wants Codex to ask Claude Code for an independent
 second opinion while staying inside the current Codex conversation.
 
-Run Claude through the Codex Host Adapter in read-only mode by default:
+Run Claude through Consult in read-only mode by default:
 
 ```sh
-consult-codex delegate --agent claude --read-only --model sonnet -- "<prompt for Claude>"
+consult delegate --agent claude --read-only --model sonnet -- "<prompt for Claude>"
 ```
 
 Use background mode for longer reviews:
 
 ```sh
-consult-codex delegate --agent claude --read-only --model sonnet --background -- "<prompt for Claude>"
-consult-codex status <job-id> --wait
-consult-codex result <job-id>
+consult delegate --agent claude --read-only --model sonnet --background -- "<prompt for Claude>"
+consult status <job-id> --wait
+consult result <job-id>
 ```
 
 ## Model And Effort
@@ -32,13 +32,13 @@ Default Claude model: `--model sonnet`.
 If the user asks for a specific Claude variant, preserve it:
 
 ```sh
-consult-codex delegate --agent claude --read-only --model opus -- "<prompt for Claude>"
+consult delegate --agent claude --read-only --model opus -- "<prompt for Claude>"
 ```
 
 If the user asks for effort or another Consult option, pass it through:
 
 ```sh
-consult-codex delegate --agent claude --read-only --model sonnet --effort high -- "<prompt for Claude>"
+consult delegate --agent claude --read-only --model sonnet --effort high -- "<prompt for Claude>"
 ```
 
 User-supplied `--model` and `--effort` override the examples above.

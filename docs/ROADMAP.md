@@ -9,8 +9,8 @@ The implemented local Profile set is usable:
 - Host-neutral Consult Core path.
 - Claude Code Host Adapter compatibility.
 - Direct `consult` CLI.
-- Thin Codex Host Adapter through `consult-codex`.
-- Thin opencode Host Adapter through `consult-opencode`.
+- Codex Host autodetection through the single `consult` CLI.
+- opencode Host autodetection through the single `consult` CLI.
 - Idle Broker timeout fallback.
 - Delegation Chains visibility and cancel behavior.
 - Explicit Broker inspection/cleanup through `consult brokers`.

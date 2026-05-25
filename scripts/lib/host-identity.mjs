@@ -11,15 +11,43 @@ export function resolveHostIdentity({
   defaultHost = DEFAULT_HOST,
   defaultHostSessionId = DEFAULT_HOST_SESSION_ID,
 } = {}) {
-  const host = stringFlag(args.flags?.host) ?? env[HOST_ENV] ?? defaultHost;
-  const hostSessionId =
+  const explicitHost = stringFlag(args.flags?.host) ?? env[HOST_ENV];
+  const explicitHostSessionId =
     stringFlag(args.flags?.["host-session"]) ??
     stringFlag(args.flags?.["host-session-id"]) ??
-    env[HOST_SESSION_ENV] ??
+    env[HOST_SESSION_ENV];
+  const detected = detectHostIdentity(env);
+  const host = explicitHost ?? detected?.host ?? defaultHost;
+  const hostSessionId =
+    explicitHostSessionId ??
+    (detected?.host === host ? detected.hostSessionId : undefined) ??
     defaultHostSessionId;
 
   return {
     host,
     hostSessionId,
   };
+}
+
+function detectHostIdentity(env) {
+  const opencodeSessionId = nonEmpty(env.OPENCODE_SESSION_ID) ?? nonEmpty(env.OPENCODE_RUN_ID);
+  if (opencodeSessionId) {
+    return { host: "opencode", hostSessionId: opencodeSessionId };
+  }
+
+  const codexThreadId = nonEmpty(env.CODEX_THREAD_ID);
+  if (codexThreadId) {
+    return { host: "codex", hostSessionId: codexThreadId };
+  }
+
+  const claudeSessionId = nonEmpty(env.CLAUDE_SESSION_ID);
+  if (claudeSessionId) {
+    return { host: "claude-code", hostSessionId: claudeSessionId };
+  }
+
+  return null;
+}
+
+function nonEmpty(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
