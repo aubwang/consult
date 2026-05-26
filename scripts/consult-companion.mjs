@@ -25,19 +25,49 @@ const handlers = {
   "task-resume-candidate": taskResumeCandidate,
 };
 
-const usage = `Usage: consult <subcommand> [args]
+const usage = `Usage:
+  consult help
+  consult <command> [options]
 
-Subcommands:
-  setup - Configure available profiles and defaults.
-  agents - List profiles and update the selected default.
-  delegate - Send a prompt turn to a configured profile.
-  review - Run a review prompt through a supported profile.
-  status - Show job status.
-  result - Show stored job output.
-  cancel - Cancel a running job.
-  brokers - Inspect live Broker state; --cleanup removes stale Brokers.
-  task-worker - Run a background job worker.
-  task-resume-candidate - Find a resume candidate for a job.`;
+Consult lets the current Host delegate work to another configured Profile.
+
+Common workflow:
+  consult setup
+  consult agents
+  consult delegate --agent claude --read-only -- "review this diff for bugs"
+  consult delegate --agent codex --write --background -- "add a regression test"
+  consult status <job-id> --wait
+  consult result <job-id>
+
+Commands:
+  setup      Install or verify Profiles and set a default.
+             Options: --install <profile>, --set-default <profile>, --json
+  agents     List configured Profiles or update defaults.
+             Options: --set <profile>, --host <host>, --json
+  delegate   Send a prompt turn to a Profile.
+             Options: --agent <profile>, --read-only, --write, --background,
+                      --resume, --resume-job <job-id>, --fresh, --model <name>,
+                      --effort <level>, --json
+  review     Run the built-in review flow through a supported Profile.
+             Options: --agent <profile>, --base <ref>
+  status     Show Jobs in this workspace, or inspect one Job.
+             Options: --wait, --json
+  result     Print stored output for a finished Job.
+             Options: --json
+  cancel     Cancel a running Job and active descendants.
+  brokers    Inspect live Broker state.
+             Options: --cleanup, --json
+  help       Show this help.
+
+Terms:
+  Host       Where you run Consult, such as a terminal, Codex, opencode, or Claude Code.
+  Profile    The agent Consult calls, such as claude, codex, opencode, or copilot.
+  Job        One delegated prompt turn with status and stored output.
+  Broker     The short-lived process that connects one Job to one Profile.
+
+Run delegated work in read-only mode unless you explicitly need edits. Use --write
+when the Profile should be allowed to change files in the current workspace.
+`;
 
 export async function dispatch(subcommand, parsedArgs) {
   if (!subcommand || subcommand === "--help" || subcommand === "-h" || subcommand === "help") {

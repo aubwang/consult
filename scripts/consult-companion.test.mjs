@@ -38,17 +38,36 @@ test("dispatch rejects an unknown subcommand", async () => {
 
   assert.equal(result.exitCode, 2);
   assert.equal(result.stderr.startsWith("unknown subcommand:"), true);
+  assert.equal(result.stderr.includes("Usage:"), true);
+  assert.equal(result.stderr.includes("consult help"), true);
 });
 
 test("dispatch prints help for the help subcommand", async () => {
   const result = await dispatch("help", {});
 
   assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout.includes("Common workflow:"), true);
+  assert.equal(result.stdout.includes("Terms:"), true);
+  assert.equal(result.stdout.includes("Host"), true);
+  assert.equal(result.stdout.includes("Profile"), true);
+  assert.equal(result.stdout.includes("Job"), true);
+  assert.equal(result.stdout.includes("Broker"), true);
+  assert.equal(result.stdout.includes("consult delegate --agent claude --read-only --"), true);
   assert.equal(result.stdout.includes("delegate"), true);
   assert.equal(result.stdout.includes("setup"), true);
   assert.equal(result.stdout.includes("status"), true);
   assert.equal(result.stdout.includes("brokers"), true);
   assert.equal(result.stdout.includes("adversarial-review"), false);
+});
+
+test("dispatch prints help for help aliases", async () => {
+  for (const subcommand of [undefined, "--help", "-h"]) {
+    const result = await dispatch(subcommand, { positional: [], flags: {} });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout.includes("Usage:"), true);
+    assert.equal(result.stdout.includes("consult help"), true);
+  }
 });
 
 test("dispatch routes setup json mode", async (t) => {
