@@ -7,10 +7,12 @@ Live conformance status for the implemented Consult Profiles.
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |
 | [claude](claude.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, **preventive**) | PASS | PASS (cooperative) | PASS (after iter-17 fix) | 2026-05-19 direct/Consult/bwrap proof PASS. Cancel works but is slower than codex. |
 | [opencode](opencode.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, defense-in-depth) | PASS | — | — | 2026-05-19 direct/Consult/bwrap proof PASS with provider auth configured. |
+| [gemini](gemini.md) | UNIT | — | — | — | — | — | — | — | Added as a registry Profile using Gemini CLI's native `gemini --acp`; live conformance pending local Gemini auth. |
 | [copilot](copilot.md) | PASS | PASS | — | — | — | PASS | — | — | 2026-05-22 direct and unsandboxed Consult delegate PASS with configured Copilot CLI auth. Sandbox not yet live-verified. |
 
 Legend:
 - **PASS**: live-verified end-to-end against the real backend.
+- **UNIT**: covered by unit tests, but not live-verified against the real backend in this conformance pass.
 - **AUTH-DEFERRED**: backend reachable but live delegate is intentionally out of
   scope until a per-backend auth prerequisite is satisfied. No current backend
   is auth-deferred after the 2026-05-22 Copilot rerun.
@@ -48,6 +50,14 @@ file mount is the supported shape.
 The `opencode` registry profile may require provider credentials from the host
 environment. In the live proof, no secret value was printed or persisted by
 Consult.
+
+The `gemini` registry profile mounts selected host `~/.gemini` auth/config files
+read-only into a writable sandbox `~/.gemini`: `settings.json`,
+`oauth_creds.json`, `GEMINI.md`, `mcp-oauth-tokens.json`, and
+`a2a-oauth-tokens.json` when present. Gemini runtime state such as `tmp`,
+`history`, and `projects.json` remains writable inside the sandbox. If
+`GOOGLE_APPLICATION_CREDENTIALS` points to a service-account JSON file, that file
+is mounted read-only at the same path for Vertex AI ADC flows.
 
 On 2026-05-19, release-readiness probes reran and passed direct CLI,
 unsandboxed Consult delegation, and `CONSULT_AGENT_SANDBOX=bwrap` Consult

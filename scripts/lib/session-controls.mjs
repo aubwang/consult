@@ -56,8 +56,9 @@ export function supportsLoad(capabilities) {
 }
 
 async function applyModelControl(connection, { sessionId, sessionState, model, profile }) {
+  const modelId = normalizeModelControl(profile, model);
   if (sessionState?.models) {
-    await setSessionModel(connection, { sessionId, modelId: model });
+    await setSessionModel(connection, { sessionId, modelId });
     return sessionState;
   }
 
@@ -72,10 +73,39 @@ async function applyModelControl(connection, { sessionId, sessionState, model, p
     sessionId,
     sessionState,
     option,
-    requestedValue: model,
+    requestedValue: modelId,
     controlName: "model",
   });
 }
+
+export function normalizeModelControl(profile, model) {
+  if (profile !== "claude") {
+    return model;
+  }
+  const normalized = model.toLowerCase().replaceAll("_", "-");
+  return CLAUDE_MODEL_ALIASES[normalized] ?? model;
+}
+
+const CLAUDE_MODEL_ALIASES = {
+  opus: "claude-opus-4-8",
+  "claude-opus": "claude-opus-4-8",
+  "opus-4.8": "claude-opus-4-8",
+  "opus-4-8": "claude-opus-4-8",
+  "claude-opus-4.8": "claude-opus-4-8",
+  "claude-opus-4-8": "claude-opus-4-8",
+  sonnet: "claude-sonnet-4-6",
+  "claude-sonnet": "claude-sonnet-4-6",
+  "sonnet-4.6": "claude-sonnet-4-6",
+  "sonnet-4-6": "claude-sonnet-4-6",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  "claude-sonnet-4-6": "claude-sonnet-4-6",
+  haiku: "claude-haiku-4-5",
+  "claude-haiku": "claude-haiku-4-5",
+  "haiku-4.5": "claude-haiku-4-5",
+  "haiku-4-5": "claude-haiku-4-5",
+  "claude-haiku-4.5": "claude-haiku-4-5",
+  "claude-haiku-4-5": "claude-haiku-4-5",
+};
 
 async function applyEffortControl(connection, { sessionId, sessionState, effort, profile }) {
   const option = findConfigOption(sessionState?.configOptions, {

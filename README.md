@@ -119,7 +119,7 @@ Claude Code plugin equivalents:
 | Term | Meaning |
 | --- | --- |
 | Host | Where the request starts: terminal, Codex, opencode, or Claude Code. |
-| Profile | The agent Consult calls: `claude`, `codex`, `opencode`, or `copilot`. |
+| Profile | The agent Consult calls: `claude`, `codex`, `opencode`, `gemini`, or `copilot`. |
 | Job | One delegated prompt turn with status, logs, and stored result text. |
 | Broker | The short-lived Consult process that connects one Job to one Profile. |
 
@@ -178,6 +178,7 @@ CONSULT_AGENT_SANDBOX=bwrap consult delegate --agent claude --read-only -- "insp
 | `claude` | Supported. Direct, Consult, and bubblewrap probes pass. |
 | `codex` | Supported. Direct, Consult, and bubblewrap probes pass. |
 | `opencode` | Supported with provider auth configured. |
+| `gemini` | Supported via Gemini CLI's native ACP mode. |
 | `copilot` | Supported unsandboxed; bubblewrap verification is deferred. |
 
 See [docs/conformance/README.md](docs/conformance/README.md) for the live
@@ -209,6 +210,7 @@ $consult
 $consult:ask-claude
 $consult:ask-codex
 $consult:ask-opencode
+$consult:ask-gemini
 $consult:ask-copilot
 ```
 
@@ -224,8 +226,8 @@ consult setup
 ```
 
 If a Profile cannot authenticate, run that Profile's native login first, such
-as `codex login`, `claude /login`, `opencode auth login`, or `copilot login`.
-Then rerun `consult setup` so Consult verifies the Profile.
+as `codex login`, `claude /login`, `opencode auth login`, `gemini`, or
+`copilot login`. Then rerun `consult setup` so Consult verifies the Profile.
 
 If a background Job appears stuck:
 

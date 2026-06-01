@@ -45,6 +45,7 @@ Examples:
 ```sh
 consult delegate --agent claude --read-only -- "review this diff"
 consult delegate --agent opencode --read-only -- "summarize this repo"
+consult delegate --agent gemini --read-only -- "look for missed edge cases"
 consult status
 consult result job-id
 consult cancel job-id

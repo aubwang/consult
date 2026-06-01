@@ -36,6 +36,7 @@ Common workflow:
   consult agents
   consult delegate --agent claude --read-only -- "review this diff for bugs"
   consult delegate --agent codex --write --background -- "add a regression test"
+  consult delegate --agent gemini --read-only -- "look for missed edge cases"
   consult status <job-id> --wait
   consult result <job-id>
 
@@ -61,7 +62,7 @@ Commands:
 
 Terms:
   Host       Where you run Consult, such as a terminal, Codex, opencode, or Claude Code.
-  Profile    The agent Consult calls, such as claude, codex, opencode, or copilot.
+  Profile    The agent Consult calls, such as claude, codex, opencode, gemini, or copilot.
   Job        One delegated prompt turn with status and stored output.
   Broker     The short-lived process that connects one Job to one Profile.
 

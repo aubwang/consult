@@ -20,7 +20,8 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the domain vocabulary used throughout t
 - Inline `session/request_permission` user prompts ("supervised" mode). Yolo or read-only, no middle ground.
 - Forwarding Claude Code's MCP servers into delegated sessions. Each backend uses its own MCP config.
 - Multiple profiles per backend type (e.g. two codex profiles with different defaults). One profile per backend for v1.
-- Gemini CLI support. Excluded from v1 because it lacks `sessionCapabilities.resume` and `loadSession`, so `--resume` would always fail. Adding it would require either documenting the limitation per backend or building a different resume model.
+- Gemini CLI support through native ACP mode; live conformance remains pending
+  local Gemini auth.
 
 ## Host-neutral direction
 
@@ -163,7 +164,7 @@ The smoke probe step is the load-bearing check: it catches binaries that install
 
 ## Registry
 
-`scripts/registry.json` ships with four entries:
+`scripts/registry.json` ships with five entries:
 
 ```jsonc
 {
@@ -187,6 +188,10 @@ The smoke probe step is the load-bearing check: it catches binaries that install
       "binary": "opencode", "args": ["acp"],
       "install": { "type": "npm", "cmd": "npm install -g opencode-ai" },
       "supports": { "resume": false, "load": true } },
+    { "id": "gemini", "label": "Google Gemini CLI",
+      "binary": "gemini", "args": ["--acp"],
+      "install": { "type": "npm", "cmd": "npm install -g @google/gemini-cli" },
+      "supports": { "resume": false, "load": true } },
     { "id": "copilot", "label": "GitHub Copilot CLI",
       "binary": "copilot", "args": ["--acp"],
       "install": { "type": "npm", "cmd": "npm install -g @github/copilot" },
@@ -205,7 +210,8 @@ The `supports` block is documentation only — the actual capabilities come from
 - **`github-release`** — downloads a prebuilt asset from GitHub releases, extracts it to `<dataDir>/bin/<registryId>/`, and uses the absolute path of `binaryInArchive` (or `binary` if omitted) for the profile entry. Required fields: `repo`, `version`, `assetTemplate`. The template supports `{version}`, `{versionNoV}`, `{target}` (rust-style triple, e.g. `x86_64-unknown-linux-gnu`), and `{ext}` (`tar.gz` on unix, `zip` on windows). Bundled companion files in the archive (e.g. codex-acp's `codex-resources/bwrap`) travel with the binary because we extract the whole archive into the per-registry-id install root. **SHA-256 digest is required** — the installer fetches release metadata from `api.github.com/repos/{repo}/releases/tags/{version}`, reads the matching asset's `digest` field, and verifies the downloaded tarball before extraction. An asset without a digest aborts the install with an explicit "refusing to install unverified binary" error rather than degrading to TLS-only trust.
 
 Backends explicitly **deferred to a later release**:
-- Gemini CLI — lacks both `sessionCapabilities.resume` and `loadSession`, breaks the `--resume` UX uniformly.
+- Antigravity CLI — currently lacks ACP support, so Consult cannot use it as a
+  Profile despite it being Gemini CLI's announced replacement.
 - All other ACP-speaking agents (Cursor, Goose, Kimi, Qwen, Augment, Aider wrappers, etc.) — can be added once we have a conformance test harness.
 
 ## State layout
