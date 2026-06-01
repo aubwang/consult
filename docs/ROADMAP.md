@@ -15,9 +15,11 @@ The implemented local Profile set is usable:
 - Delegation Chains visibility and cancel behavior.
 - Explicit Broker inspection/cleanup through `consult brokers`.
 - Opt-in workspace filesystem sandboxing with `CONSULT_AGENT_SANDBOX=bwrap`.
-- Profile-aware bwrap support for `claude`, `codex`, and `opencode`.
+- Profile-aware bwrap support for `claude`, `codex`, `opencode`, and `gemini`.
 - Live conformance reports for `codex`, `claude`, `opencode`, and unsandboxed
   `copilot`.
+- Unit-covered Gemini CLI Profile support using native ACP mode; live
+  conformance is pending local Gemini auth.
 
 ## Verified Backends
 

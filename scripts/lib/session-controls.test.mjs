@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   applySessionControls,
+  normalizeModelControl,
   openResumedSession,
   supportsLoad,
   supportsResume,
@@ -87,6 +88,34 @@ test("applySessionControls applies model and effort through select config option
     { sessionId: "session-1", configId: "thought", value: "high" },
   ]);
   assert.deepEqual(nextState.configOptions, sessionState.configOptions);
+});
+
+test("applySessionControls expands current Claude model aliases", async () => {
+  const calls = [];
+  const connection = {
+    async unstable_setSessionModel(params) {
+      calls.push(params);
+    },
+  };
+
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState: { models: {} },
+    model: "opus",
+    profile: "claude",
+  });
+
+  assert.deepEqual(calls, [
+    { sessionId: "session-1", modelId: "claude-opus-4-8" },
+  ]);
+});
+
+test("normalizeModelControl maps Claude shorthand and leaves other profiles alone", () => {
+  assert.equal(normalizeModelControl("claude", "opus-4.8"), "claude-opus-4-8");
+  assert.equal(normalizeModelControl("claude", "sonnet"), "claude-sonnet-4-6");
+  assert.equal(normalizeModelControl("claude", "haiku"), "claude-haiku-4-5");
+  assert.equal(normalizeModelControl("claude", "custom-model"), "custom-model");
+  assert.equal(normalizeModelControl("opencode", "opus"), "opus");
 });
 
 function configOption(id, name, category, values) {

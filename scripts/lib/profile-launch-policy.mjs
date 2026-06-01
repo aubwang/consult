@@ -9,6 +9,23 @@ const PROFILE_LAUNCH_POLICIES = {
   codex: {
     homeReadOnlyFiles: [".codex/auth.json", ".codex/config.toml", ".codex/AGENTS.md"],
   },
+  gemini: {
+    homeReadOnlyFiles: [
+      ".gemini/settings.json",
+      ".gemini/oauth_creds.json",
+      ".gemini/GEMINI.md",
+      ".gemini/mcp-oauth-tokens.json",
+      ".gemini/a2a-oauth-tokens.json",
+    ],
+    runtimeReadOnlyFiles: (env) => {
+      const credentialsPath = env.GOOGLE_APPLICATION_CREDENTIALS;
+      if (typeof credentialsPath !== "string" || credentialsPath === "") {
+        return [];
+      }
+      const resolvedPath = path.resolve(credentialsPath);
+      return [{ source: resolvedPath, destination: resolvedPath }];
+    },
+  },
 };
 
 export function profileLaunchPolicy(registryId) {

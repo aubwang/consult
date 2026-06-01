@@ -27,13 +27,18 @@ consult result <job-id>
 
 ## Model And Effort
 
-Default Claude model: `--model sonnet`.
+Default Claude model: `--model sonnet`, which Consult expands to the current
+Claude Sonnet model.
 
 If the user asks for a specific Claude variant, preserve it:
 
 ```sh
 consult delegate --agent claude --read-only --model opus -- "<prompt for Claude>"
 ```
+
+Consult expands `opus` to `claude-opus-4-8`, `sonnet` to
+`claude-sonnet-4-6`, and `haiku` to `claude-haiku-4-5`. Explicit model ids are
+passed through unchanged.
 
 If the user asks for effort or another Consult option, pass it through:
 
