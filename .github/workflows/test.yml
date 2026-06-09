@@ -1,0 +1,35 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: oven-sh/setup-bun@v2
+      - name: Enable bubblewrap (Ubuntu 24.04 restricts unprivileged userns)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Verify tracked symlinks resolve
+        run: |
+          git ls-files -s | awk '$1 == 120000 {print $4}' | while read -r link; do
+            [ -e "$link" ] || { echo "broken symlink: $link"; exit 1; }
+          done
+      - run: bun install --frozen-lockfile
+      - run: bun run test
