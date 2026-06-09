@@ -42,16 +42,18 @@ gives you commands to check status, cancel, resume, and read results.
 
 ## Install
 
-This repo is currently a local package, not a published npm package:
+This repo is currently a local package, not a published package:
 
 ```sh
 git clone https://github.com/aubwang/consult.git
 cd consult
-npm install
-npm link
+bun install
+bun link
 ```
 
-`npm link` exposes the local `consult` binary from this checkout.
+`bun link` registers this checkout and installs the `consult` binary into
+Bun's global bin directory (`~/.bun/bin`). Node.js >= 22 is still required at
+runtime; `npm install` and `npm link` also work if you prefer npm.
 
 ## First Setup
 
@@ -249,8 +251,12 @@ consult brokers --cleanup
 ## Development
 
 ```sh
-npm test
+bun run test
 ```
+
+Use `bun run test` (the package script, which runs `node --test`), not
+`bun test` — `bun test` invokes Bun's own test runner and does not run this
+suite.
 
 Useful focused checks:
 
@@ -263,7 +269,7 @@ node --test scripts/lib/companion/delegate-core.test.mjs
 Run the safe companion-disconnect drill:
 
 ```sh
-npm run drill:companion-disconnect
+bun run drill:companion-disconnect
 ```
 
 ## License

@@ -5,6 +5,9 @@
   "description": "Host-neutral delegation plugin for ACP coding agents.",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "consult": "bin/consult"
   },

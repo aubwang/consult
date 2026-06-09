@@ -33,7 +33,8 @@ Profiles through job-scoped Brokers.
 
 ## Verification
 
-- Run `npm test` after behavior changes.
+- Run `bun run test` after behavior changes (not `bun test`; the suite runs
+  under `node --test`).
 - For focused checks, prefer the relevant `node --test ...` files under
   `scripts/` or `hosts/`.
 - Update docs and ADRs when a shipped behavior or architecture decision changes.
