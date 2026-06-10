@@ -165,7 +165,7 @@ async function markFailedAtCancelTime({
     now: deps.now,
     errorMessage: "broker not running at cancel time",
   });
-  await writeJobRecord(workspaceRoot, jobId ?? "", record);
+  await writeJobRecord(workspaceRoot, jobId as string, record);
 }
 
 async function terminateWorkerIfAlive(record: JobRecord, deps: CancelDeps): Promise<string> {

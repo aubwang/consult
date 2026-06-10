@@ -76,11 +76,17 @@ interface SessionUpdateState {
   queues: Map<string, SessionUpdateQueue>;
 }
 
-interface PromptTurnOutcome {
-  ok: boolean;
-  value?: PromptResponse;
-  error?: unknown;
+interface PromptTurnResolved {
+  ok: true;
+  value: PromptResponse;
 }
+
+interface PromptTurnRejected {
+  ok: false;
+  error: unknown;
+}
+
+type PromptTurnOutcome = PromptTurnResolved | PromptTurnRejected;
 
 const sessionUpdateStates = new WeakMap<ClientSideConnection, SessionUpdateState>();
 // Some ACP agents flush the final session/update just after session/prompt resolves.
@@ -191,7 +197,7 @@ export async function* promptTurn(
       }
     }
 
-    yield { type: "stop", stopReason: promptResult!.value!.stopReason };
+    yield { type: "stop", stopReason: (promptResult as PromptTurnResolved).value.stopReason };
   } finally {
     if (state.queues.get(sessionId) === queue) {
       state.queues.delete(sessionId);
