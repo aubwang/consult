@@ -1011,7 +1011,7 @@ test("unknown RPC methods return JSON-RPC method not found", async (t) => {
   const client = await connectBroker(harness.endpoint);
 
   try {
-    await assert.rejects(client.request("consult/nope", {}), (error) => {
+    await assert.rejects(client.request("consult/nope", {}), (error: any) => {
       assert.equal(error.code, -32601);
       assert.equal(error.message, "method not found: consult/nope");
       return true;

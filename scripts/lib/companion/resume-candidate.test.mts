@@ -19,7 +19,7 @@ test("findResumeCandidate returns the latest resumable job in scope", async () =
         hostSessionId: "thread-1",
         listJobRecords: async () => records,
       })
-    ).jobId,
+    )!.jobId,
     "job-new",
   );
 });

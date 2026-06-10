@@ -8,6 +8,10 @@ import {
   exitCodeForBrokerError,
   runPromptTurn,
 } from "../prompt-turn-runner.mts";
+import type {
+  EnsureBrokerSessionInput,
+  EnsureBrokerSessionResult,
+} from "../prompt-turn-runner.mts";
 import { renderSessionUpdate } from "../session-update-renderer.mts";
 
 export { statusFromStopReason } from "../job-records.mts";
@@ -15,8 +19,14 @@ export { brokerErrorMessage, exitCodeForBrokerError } from "../prompt-turn-runne
 export { renderSessionUpdate as renderUpdate } from "../session-update-renderer.mts";
 
 export interface RunDelegateOnceDeps {
-  ensureBrokerSession?: (...args: unknown[]) => Promise<unknown>;
-  appendLogLine?: (...args: unknown[]) => Promise<void>;
+  ensureBrokerSession?: (
+    input: EnsureBrokerSessionInput,
+  ) => Promise<EnsureBrokerSessionResult>;
+  appendLogLine?: (
+    workspaceRoot: string,
+    jobId: string,
+    notification: unknown,
+  ) => Promise<void>;
   writeJobRecord?: (workspaceRoot: string, jobId: string, record: JobRecord) => Promise<void>;
   now?: () => string;
   maxFinalTextChars?: number;
@@ -64,10 +74,10 @@ export async function runDelegateOnce({
     },
     deps,
     output,
-    renderUpdate: renderSessionUpdate,
+    renderUpdate: renderSessionUpdate as (notification: unknown) => string,
     markFailedOnBrokerError,
   });
-  if (Number.isInteger(result?.exitCode)) {
+  if (Number.isInteger((result as NullOutputResult)?.exitCode)) {
     return result as NullOutputResult;
   }
   if (renderSummary) {

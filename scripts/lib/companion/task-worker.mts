@@ -12,6 +12,10 @@ import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspac
 import { jobRecordErrorResult } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
+import type {
+  EnsureBrokerSessionInput,
+  EnsureBrokerSessionResult,
+} from "../prompt-turn-runner.mts";
 import { createOutput } from "./output.mts";
 
 interface CommandResult {
@@ -25,7 +29,9 @@ interface TaskWorkerDeps {
   readJobRecord?: (workspaceRoot: string, jobId: string) => Promise<JobRecord>;
   writeJobRecord?: (workspaceRoot: string, jobId: string, record: JobRecord) => Promise<void>;
   loadProfiles?: (path: string) => Promise<ProfilesData>;
-  ensureBrokerSession?: (...args: unknown[]) => Promise<unknown>;
+  ensureBrokerSession?: (
+    input: EnsureBrokerSessionInput,
+  ) => Promise<EnsureBrokerSessionResult>;
   now?: () => string;
   stdoutWrite?: (text: string) => void;
   stderrWrite?: (text: string) => void;

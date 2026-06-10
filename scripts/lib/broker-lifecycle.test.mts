@@ -44,7 +44,7 @@ test("ensureBrokerSession spawns a fresh daemon and teardown shuts it down", asy
   assert.equal(session.brokerFile, harness.brokerFile);
   assert.equal(session.alreadyRunning, false);
   assert.equal(await brokerSessionFilePresent(harness.input), true);
-  assert.equal((await session.client.request("consult/ping", {}, { timeoutMs: 150 })).ok, true);
+  assert.equal(((await session.client.request("consult/ping", {}, { timeoutMs: 150 })) as { ok: boolean }).ok, true);
 
   assert.deepEqual(await teardownBrokerSession(harness.input), {
     teardown: "shutdown",
@@ -71,7 +71,7 @@ test("ensureBrokerSession reuses a live daemon recorded in the broker file", asy
 
   assert.equal(first.alreadyRunning, false);
   assert.equal(second.alreadyRunning, true);
-  assert.equal((await second.client.request("consult/ping", {}, { timeoutMs: 150 })).ok, true);
+  assert.equal(((await second.client.request("consult/ping", {}, { timeoutMs: 150 })) as { ok: boolean }).ok, true);
 });
 
 test("ensureBrokerSession replaces a stale broker file with a new daemon", async (t) => {
@@ -97,7 +97,7 @@ test("ensureBrokerSession replaces a stale broker file with a new daemon", async
   });
 
   assert.equal(session.alreadyRunning, false);
-  assert.equal((await session.client.request("consult/ping", {}, { timeoutMs: 150 })).ok, true);
+  assert.equal(((await session.client.request("consult/ping", {}, { timeoutMs: 150 })) as { ok: boolean }).ok, true);
   const state = JSON.parse(await fsp.readFile(harness.brokerFile, "utf8"));
   assert.notEqual(state.pid, 999999999);
 });
@@ -117,7 +117,7 @@ test("ensureBrokerSession replaces a malformed broker file with a new daemon", a
   });
 
   assert.equal(session.alreadyRunning, false);
-  assert.equal((await session.client.request("consult/ping", {}, { timeoutMs: 150 })).ok, true);
+  assert.equal(((await session.client.request("consult/ping", {}, { timeoutMs: 150 })) as { ok: boolean }).ok, true);
   const state = JSON.parse(await fsp.readFile(harness.brokerFile, "utf8"));
   assert.equal(state.host, harness.input.host);
   assert.equal(state.profile, harness.input.profile);

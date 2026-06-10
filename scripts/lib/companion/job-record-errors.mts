@@ -10,13 +10,13 @@ export interface CliResult {
   stderr: string;
 }
 
-export function jobRecordErrorResult(error: CodedError): CliResult | null {
-  if (error.code !== "JOB_RECORD_MALFORMED") {
+export function jobRecordErrorResult(error: unknown): CliResult | null {
+  if ((error as CodedError).code !== "JOB_RECORD_MALFORMED") {
     return null;
   }
   return {
     exitCode: 2,
     stdout: "",
-    stderr: `job record malformed: ${error.path}\n`,
+    stderr: `job record malformed: ${(error as CodedError).path}\n`,
   };
 }

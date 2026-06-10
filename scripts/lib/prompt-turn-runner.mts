@@ -84,7 +84,7 @@ export interface RunPromptTurnOptions {
   renderUpdate?: (notification: unknown) => string;
   onUpdate?: ((notification: unknown, context: PromptTurnContext) => void) | null;
   afterAccepted?:
-    | ((input: AfterAcceptedInput) => Promise<NullOutputResult | undefined | void>)
+    | ((input: AfterAcceptedInput) => Promise<NullOutputResult | null | undefined | void>)
     | null;
   markFailedOnBrokerError?: boolean;
 }
@@ -112,7 +112,10 @@ export async function runPromptTurn({
   const appendLogLine = deps.appendLogLine ?? defaultAppendLogLine;
   const maxFinalTextChars = deps.maxFinalTextChars ?? DEFAULT_MAX_FINAL_TEXT_CHARS;
 
-  const { client } = await (deps.ensureBrokerSession ?? defaultEnsureBrokerSession)({
+  const { client } = await (deps.ensureBrokerSession ??
+    (defaultEnsureBrokerSession as (
+      input: EnsureBrokerSessionInput,
+    ) => Promise<EnsureBrokerSessionResult>))({
     workspaceRoot,
     jobId: jobRecord.jobId,
     host: jobRecord.host,

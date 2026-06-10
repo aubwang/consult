@@ -11,6 +11,7 @@ import {
   readWorkspaceJobRecord,
   writeJobRecord as persistJobRecord,
 } from "./job-records.mts";
+import type { BrokerJobSnapshot, FinalizedJobOutcome } from "./job-records.mts";
 import { isInsideWorkspaceSync } from "./path-safety.mts";
 import { renderSessionUpdate } from "./session-update-renderer.mts";
 
@@ -360,7 +361,7 @@ export function createBrokerJobRuntime({
     busy = false;
     job.cancelRequested = true;
     ensureAgent()
-      .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId }))
+      .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
       .catch(() => {});
     await writeFailedJobRecord(job);
     notifyFinalized(job, job.finalized);
@@ -412,12 +413,12 @@ export function createBrokerJobRuntime({
 
   async function writeJobRecord(job: BrokerJob, finalized: BrokerJobFinalized) {
     const existing = await readExistingJobRecord(job.jobId);
-    await persistJobRecord(config.cwd, job.jobId, finalizedBrokerJobRecord(existing, job, finalized));
+    await persistJobRecord(config.cwd, job.jobId, finalizedBrokerJobRecord(existing, job as BrokerJobSnapshot, finalized as FinalizedJobOutcome));
   }
 
   async function writeFailedJobRecord(job: BrokerJob) {
     const existing = await readExistingJobRecord(job.jobId);
-    await persistJobRecord(config.cwd, job.jobId, failedBrokerJobRecord(existing, job));
+    await persistJobRecord(config.cwd, job.jobId, failedBrokerJobRecord(existing, job as BrokerJobSnapshot & { finalized: FinalizedJobOutcome }));
   }
 
   async function readExistingJobRecord(jobId: string) {

@@ -47,7 +47,7 @@ export interface InvocationContext {
   selected: SelectProfileResult;
 }
 
-interface ResolveInvocationContextDeps {
+export interface ResolveInvocationContextDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
   loadProfiles?: (path: string) => Promise<ProfilesData>;
   loadOverride?: (workspaceRoot: string) => Promise<WorkspaceOverride | null>;

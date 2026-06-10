@@ -5,7 +5,7 @@ import {
 } from "../job-records.mts";
 import type { JobRecord, JobStatus } from "../job-records.mts";
 
-const RESUMABLE_STATUSES = new Set([JOB_STATUS.COMPLETED, JOB_STATUS.FAILED]);
+const RESUMABLE_STATUSES = new Set<JobStatus>([JOB_STATUS.COMPLETED, JOB_STATUS.FAILED]);
 
 export type ListJobRecordsFn = (workspaceRoot: string) => Promise<JobRecord[]>;
 export type ReadJobRecordFn = (

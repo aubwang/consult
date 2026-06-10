@@ -71,7 +71,7 @@ export interface RequestOptions {
 export class BrokerClient {
   closed = false;
 
-  #buffer = Buffer.alloc(0);
+  #buffer: Buffer = Buffer.alloc(0);
   #closeHandlers = new Set<(error: BrokerError) => void>();
   #handlers = new Map<string, (params: unknown) => void>();
   #nextId = 1;
