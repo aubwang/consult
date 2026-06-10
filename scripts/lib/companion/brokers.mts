@@ -127,14 +127,14 @@ async function readBrokerRow(filePath: string, deps: BrokersDeps): Promise<Broke
   const pid = Number.isInteger(state.pid) ? (state.pid as number) : null;
   const running = pid ? await (deps.pidAlive ?? defaultPidAlive)(pid) : false;
   return {
-    jobId: typeof state.jobId === "string" ? state.jobId : jobIdFromFile(filePath),
-    profile: typeof state.profile === "string" ? state.profile : null,
-    host: typeof state.host === "string" ? state.host : null,
-    hostSessionId: typeof state.hostSessionId === "string" ? state.hostSessionId : null,
+    jobId: (state.jobId as string | undefined) ?? jobIdFromFile(filePath),
+    profile: (state.profile as string | undefined) ?? null,
+    host: (state.host as string | undefined) ?? null,
+    hostSessionId: (state.hostSessionId as string | undefined) ?? null,
     pid,
     status: running ? "running" : "stale",
-    endpoint: typeof state.endpoint === "string" ? state.endpoint : null,
-    startedAt: typeof state.startedAt === "string" ? state.startedAt : null,
+    endpoint: (state.endpoint as string | undefined) ?? null,
+    startedAt: (state.startedAt as string | undefined) ?? null,
     brokerFile: filePath,
   };
 }

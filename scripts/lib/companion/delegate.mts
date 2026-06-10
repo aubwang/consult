@@ -9,12 +9,11 @@ import {
   writeJobRecord as defaultWriteJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
-import type { ProfileRecord } from "../profiles.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import { resolveInvocationContext } from "./invocation-context.mts";
-import type { ResolveInvocationContextDeps } from "./invocation-context.mts";
+import type { InvocationContext, ResolveInvocationContextDeps } from "./invocation-context.mts";
 import { jobRecordErrorResult } from "./job-record-errors.mts";
 import { createOutput } from "./output.mts";
 import type { OutputDeps } from "./output.mts";
@@ -83,7 +82,7 @@ export async function runDelegate({
     return output.result(2);
   }
 
-  let context;
+  let context: InvocationContext;
   try {
     context = await resolveInvocationContext({
       args,
@@ -103,11 +102,7 @@ export async function runDelegate({
     }
     throw error;
   }
-  const { workspaceRoot, hostIdentity, selected } = context as {
-    workspaceRoot: string;
-    hostIdentity: { host: string; hostSessionId: string };
-    selected: { error?: string; profile?: string; profileEntry?: unknown };
-  };
+  const { workspaceRoot, hostIdentity, selected } = context;
   if (selected.error) {
     output.stderr(`${selected.error}\n`);
     return output.result(2);
@@ -119,13 +114,13 @@ export async function runDelegate({
       const resumeCandidate = await findResumeJobCandidate(
         workspaceRoot,
         validated.resumeJobId,
-        selected.profile as string,
+        selected.profile!,
       );
       if (resumeCandidate.error) {
         output.stderr(`${resumeCandidate.error}\n`);
         return output.result(2);
       }
-      resumeSessionId = (resumeCandidate as { record: JobRecord }).record.sessionId;
+      resumeSessionId = resumeCandidate.record!.sessionId;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         output.stderr(`resume job not found: ${validated.resumeJobId}\n`);
@@ -140,7 +135,7 @@ export async function runDelegate({
     }
   } else if (validated.resume) {
     try {
-      const resumeCandidate = await findResumeCandidate(workspaceRoot, selected.profile as string, {
+      const resumeCandidate = await findResumeCandidate(workspaceRoot, selected.profile!, {
         host: hostIdentity.host,
         hostSessionId: hostIdentity.hostSessionId,
       });
@@ -223,7 +218,7 @@ export async function runDelegate({
 
   return runDelegateOnce({
     workspaceRoot,
-    profileEntry: selected.profileEntry as Partial<ProfileRecord>,
+    profileEntry: selected.profileEntry!,
     jobRecord,
     prompt: validated.prompt,
     model: validated.model,
@@ -232,7 +227,7 @@ export async function runDelegate({
     deps,
     output,
     json: validated.json,
-  }) as Promise<DelegateResult>;
+  });
 }
 
 function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
