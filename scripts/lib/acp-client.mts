@@ -246,7 +246,7 @@ export async function startAgent({
 
   const stream = ndJsonStream(
     Writable.toWeb(agentChild.stdin),
-    Readable.toWeb(agentChild.stdout),
+    Readable.toWeb(agentChild.stdout) as ReadableStream<Uint8Array>,
   );
   const connection = new ClientSideConnection(
     () => buildClient(clientHandlers, sessionUpdateState),

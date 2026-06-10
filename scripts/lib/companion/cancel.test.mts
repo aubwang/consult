@@ -40,7 +40,7 @@ test("cancel sends consult/cancel when the broker is reachable", async (t) => {
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
       connectBrokerSession: async (args) => {
-        ensureArgs = args as Record<string, unknown>;
+        ensureArgs = args as unknown as Record<string, unknown>;
         return { client: client as never, alreadyRunning: true };
       },
     },

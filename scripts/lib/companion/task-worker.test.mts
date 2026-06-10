@@ -169,7 +169,7 @@ test("task-worker marks the job failed when the broker is busy at start", async 
   assert.match(result.stderr, /BROKER_BUSY/);
   assert.equal(record.status, "failed");
   assert.equal(record.completedAt, "2026-05-14T10:00:03.000Z");
-  assert.match(record.errorMessage, /BROKER_BUSY/);
+  assert.match(record.errorMessage as string, /BROKER_BUSY/);
 });
 
 async function makeWorkspace() {

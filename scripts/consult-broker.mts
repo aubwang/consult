@@ -19,8 +19,10 @@ import {
 import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mts";
 import { createBrokerJobRuntime } from "./lib/broker-job-runtime.mts";
 import { createFsHandlers } from "./lib/fs-handlers.mts";
+import type { FsHandlerMode } from "./lib/fs-handlers.mts";
 import { readJsonlMessages } from "./lib/jsonl-framing.mts";
 import { decidePermission } from "./lib/permissions.mts";
+import type { PermissionMode } from "./lib/permissions.mts";
 import { processStartTime } from "./lib/process-identity.mts";
 import { normalizeAgentSandbox } from "./lib/process-sandbox.mts";
 import {
@@ -300,7 +302,7 @@ export async function serveBroker(
         requestPermission: async ({ sessionId, ...request }) => {
           const decision = await decidePermission({
             request,
-            mode: runtime.getSessionMode(sessionId) ?? "read-only",
+            mode: (runtime.getSessionMode(sessionId) ?? "read-only") as PermissionMode,
             workspaceRoot: config.cwd,
           });
           runtime.notePermissionDecision({ sessionId, decision, request });
@@ -309,14 +311,14 @@ export async function serveBroker(
         readTextFile: async (request) => {
           const handlers = createFsHandlers({
             workspaceRoot: config.cwd,
-            mode: runtime.getSessionMode(request.sessionId) ?? "read-only",
+            mode: (runtime.getSessionMode(request.sessionId) ?? "read-only") as FsHandlerMode,
           });
           return await handlers.readTextFile(request);
         },
         writeTextFile: async (request) => {
           const handlers = createFsHandlers({
             workspaceRoot: config.cwd,
-            mode: runtime.getSessionMode(request.sessionId) ?? "read-only",
+            mode: (runtime.getSessionMode(request.sessionId) ?? "read-only") as FsHandlerMode,
           });
           return await handlers.writeTextFile(request);
         },
@@ -374,9 +376,9 @@ export async function serveBroker(
 }
 
 function handleSocket(socket: net.Socket, broker: SocketBrokerContext): void {
-  let buffer = Buffer.alloc(0);
+  let buffer: Buffer = Buffer.alloc(0);
   let closing = false;
-  socket.on("data", (chunk) => {
+  socket.on("data", (chunk: Buffer) => {
     if (closing) {
       return;
     }
@@ -599,7 +601,7 @@ async function runJob(params: ConsultRunParams, job: BrokerJob, broker: SocketBr
       sessionId: job.resumeSessionId,
       cwd: broker.config.cwd,
     });
-    sessionId = sessionState.sessionId ?? job.resumeSessionId;
+    sessionId = (sessionState as { sessionId?: string }).sessionId ?? job.resumeSessionId;
     broker.setSession(sessionId, sessionState);
   } else {
     sessionId = broker.getSession();
@@ -609,7 +611,7 @@ async function runJob(params: ConsultRunParams, job: BrokerJob, broker: SocketBr
     sessionState = await newSession(agent.connection, {
       cwd: broker.config.cwd,
     });
-    sessionId = sessionState.sessionId;
+    sessionId = (sessionState as { sessionId: string }).sessionId;
     broker.setSession(sessionId, sessionState);
   }
   broker.trackSession(sessionId, job, params.mode ?? "read-only");

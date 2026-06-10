@@ -74,7 +74,7 @@ export async function loadProfiles(profilesPath: string): Promise<ProfilesData> 
       throw error;
     }
   }
-  return data as ProfilesData;
+  return data as unknown as ProfilesData;
 }
 
 export async function saveProfiles(profilesPath: string, data: ProfilesData): Promise<void> {

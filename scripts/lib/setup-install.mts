@@ -94,7 +94,7 @@ export interface InstallDeps {
     initTimeoutMs: number;
   }) => Promise<InstallSmokeAgent>;
   spawnInstall?: (command: string) => Promise<SpawnInstallResult>;
-  whichBinary?: (binary: string) => Promise<string | null>;
+  whichBinary?: (binary: string) => Promise<string | null> | string | null;
   now?: () => string;
   detectTarget?: () => ReleaseTarget | null;
   dataDir?: () => string;

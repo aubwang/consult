@@ -1,8 +1,9 @@
 import { runCodexReview as defaultRunCodexReview } from "../../adapters/codex-review.mts";
 import { stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
-import type { ProfileRecord } from "../profiles.mts";
+import type { ProfileRecord, ProfilesData } from "../profiles.mts";
 import { resolveInvocationContext } from "./invocation-context.mts";
+import type { WorkspaceOverride } from "./invocation-context.mts";
 import { createOutput } from "./output.mts";
 import { profileErrorResult } from "./profile-errors.mts";
 import { workspaceOverrideErrorResult } from "./workspace-override-errors.mts";
@@ -18,8 +19,8 @@ interface CommandResult {
 
 export interface ReviewDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
-  loadProfiles?: (path: string) => Promise<unknown>;
-  loadOverride?: (workspaceRoot: string) => Promise<unknown>;
+  loadProfiles?: (path: string) => Promise<ProfilesData>;
+  loadOverride?: (workspaceRoot: string) => Promise<WorkspaceOverride | null>;
   runCodexReview?: (args: Record<string, unknown>) => Promise<CommandResult>;
   stdoutWrite?: (text: string) => void;
   stderrWrite?: (text: string) => void;
