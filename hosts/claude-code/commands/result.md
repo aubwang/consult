@@ -5,4 +5,4 @@ disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" result $ARGUMENTS`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" result $ARGUMENTS`

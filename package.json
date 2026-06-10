@@ -6,16 +6,21 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "bin": {
     "consult": "bin/consult"
   },
   "scripts": {
-    "test": "node --test \"scripts/**/*.test.mjs\" \"hosts/**/*.test.mjs\"",
-    "drill:companion-disconnect": "node scripts/live-companion-disconnect-drill.mjs"
+    "test": "node --test \"scripts/**/*.test.mts\" \"hosts/**/*.test.mts\"",
+    "typecheck": "tsc --noEmit",
+    "drill:companion-disconnect": "node scripts/live-companion-disconnect-drill.mts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3"
   }
 }

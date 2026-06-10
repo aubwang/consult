@@ -1,0 +1,25 @@
+export const DEFAULT_MAX_FINAL_TEXT_CHARS = 1024 * 1024;
+export const TEXT_TRUNCATED_MARKER = "\n[consult: final text truncated]\n";
+
+export interface AppendBoundedTextOptions {
+  maxChars?: number;
+  marker?: string;
+}
+
+export function appendBoundedText(
+  current: string,
+  addition: string | null | undefined,
+  { maxChars = DEFAULT_MAX_FINAL_TEXT_CHARS, marker = TEXT_TRUNCATED_MARKER }: AppendBoundedTextOptions = {},
+): string {
+  if (!addition || maxChars <= 0) {
+    return current;
+  }
+  const combined = `${current}${addition}`;
+  if (combined.length <= maxChars) {
+    return combined;
+  }
+  if (maxChars <= marker.length) {
+    return marker.slice(0, maxChars);
+  }
+  return `${combined.slice(0, maxChars - marker.length)}${marker}`;
+}
