@@ -1,0 +1,74 @@
+import {
+  isFinalStatus,
+  listWorkspaceJobRecords,
+  readWorkspaceJobRecord,
+} from "../job-records.mts";
+import { addJobRelationships } from "../delegation-chain.mts";
+import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
+import { jobRecordErrorResult } from "./job-record-errors.mts";
+import type { ParsedArgs } from "../args.mts";
+import type { CommandResult } from "./output.mts";
+
+export interface ResultDeps {
+  resolveWorkspaceRoot?: () => Promise<string>;
+}
+
+export interface RunResultOptions {
+  args: ParsedArgs;
+  env?: Record<string, string | undefined>;
+  deps?: ResultDeps;
+}
+
+export async function run(subcommand: string, parsedArgs: ParsedArgs): Promise<CommandResult> {
+  return runResult({ args: parsedArgs });
+}
+
+export async function runResult({ args, deps = {} }: RunResultOptions): Promise<CommandResult> {
+  const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
+  const jobId = args.positional?.[0];
+  if (!jobId) {
+    return { exitCode: 2, stdout: "", stderr: "job id is required\n" };
+  }
+  let record;
+  try {
+    record = await readWorkspaceJobRecord(workspaceRoot, jobId);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { exitCode: 2, stdout: "", stderr: `job not found: ${jobId}\n` };
+    }
+    const malformedResult = jobRecordErrorResult(error);
+    if (malformedResult) {
+      return malformedResult;
+    }
+    throw error;
+  }
+  if (!isFinalStatus(record.status)) {
+    return {
+      exitCode: 5,
+      stdout: "",
+      stderr: `job not finished; current status: ${record.status}\n`,
+    };
+  }
+  if (args.flags?.json) {
+    let records;
+    try {
+      records = await listWorkspaceJobRecords(workspaceRoot);
+    } catch (error) {
+      const malformedResult = jobRecordErrorResult(error);
+      if (malformedResult) {
+        return malformedResult;
+      }
+      throw error;
+    }
+    return {
+      exitCode: 0,
+      stdout: `${JSON.stringify(addJobRelationships(record, records))}\n`,
+      stderr: "",
+    };
+  }
+  return {
+    exitCode: 0,
+    stdout: record.finalText ?? "",
+    stderr: "",
+  };
+}

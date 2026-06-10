@@ -16,4 +16,4 @@ Execution mode:
 - If neither flag is present, default to foreground for short bounded asks; choose background for open-ended multi-step work.
 - If the request does not include `--write`, delegate in read-only mode.
 
-The subagent is a thin forwarder: one Bash call into `node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" delegate ...` with `$ARGUMENTS` preserved (minus `--background`/`--wait`). Return the companion stdout verbatim.
+The subagent is a thin forwarder: one Bash call into `node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" delegate ...` with `$ARGUMENTS` preserved (minus `--background`/`--wait`). Return the companion stdout verbatim.

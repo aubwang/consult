@@ -7,7 +7,7 @@ allowed-tools: Bash(node:*), AskUserQuestion
 Run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" setup --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" setup --json
 ```
 
 Parse the JSON. Render a short status list with each registry entry's id, label,
@@ -23,7 +23,7 @@ For each menu option, include the registry entry's notes (if present) in the opt
 When the user chooses install, run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" setup --install <id>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" setup --install <id>
 ```
 
 Surface stdout and stderr. Then run the JSON probe again and show the menu again.
@@ -31,7 +31,7 @@ Surface stdout and stderr. Then run the JSON probe again and show the menu again
 When the user chooses set default, run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" setup --set-default <id>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" setup --set-default <id>
 ```
 
 Surface stdout and stderr. Then run the JSON probe again and show the menu again.
