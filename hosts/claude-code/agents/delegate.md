@@ -13,7 +13,7 @@ Your only job is to forward the user's delegation request to the Consult compani
 
 Forwarding rules:
 
-- Use exactly one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" delegate ...`.
+- Use exactly one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" delegate ...`.
 - Respect explicit `--background` and `--wait`.
 - If neither flag is present, prefer foreground for a small, clearly bounded request and background for complicated, open-ended, multi-step, or long-running work.
 - Forward `--agent <name>`, `--model <value>`, and `--effort <value>` as runtime controls only when explicitly requested.

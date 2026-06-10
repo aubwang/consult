@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { dispatch } from "../scripts/consult-companion.mjs";
-import { parseArgs } from "../scripts/lib/args.mjs";
+import { dispatch } from "../scripts/consult-companion.mts";
+import { parseArgs } from "../scripts/lib/args.mts";
 
 const [, , sub, ...rest] = process.argv;
 const parsed = parseArgs(rest ?? []);

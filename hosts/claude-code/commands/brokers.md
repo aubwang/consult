@@ -4,4 +4,4 @@ argument-hint: '[--json] [--cleanup] [job-id]'
 allowed-tools: Bash(node:*)
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" brokers $ARGUMENTS`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" brokers $ARGUMENTS`
