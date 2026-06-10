@@ -33,8 +33,11 @@ Profiles through job-scoped Brokers.
 
 ## Verification
 
-- Run `bun run test` after behavior changes (not `bun test`; the suite runs
-  under `node --test`).
+- Run `bun run typecheck` and `bun run test` after behavior changes (not
+  `bun test`; the suite runs under `node --test`).
+- Source is erasable TypeScript (`.mts`) run directly by Node type stripping;
+  there is no build step. Keep syntax erasable (no enums, namespaces, or
+  parameter properties).
 - For focused checks, prefer the relevant `node --test ...` files under
   `scripts/` or `hosts/`.
 - Update docs and ADRs when a shipped behavior or architecture decision changes.

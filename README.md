@@ -52,7 +52,7 @@ bun link
 ```
 
 `bun link` registers this checkout and installs the `consult` binary into
-Bun's global bin directory (`~/.bun/bin`). Node.js >= 22 is still required at
+Bun's global bin directory (`~/.bun/bin`). Node.js >= 24 is still required at
 runtime; `npm install` and `npm link` also work if you prefer npm.
 
 ## First Setup
@@ -251,6 +251,7 @@ consult brokers --cleanup
 ## Development
 
 ```sh
+bun run typecheck
 bun run test
 ```
 
@@ -258,12 +259,15 @@ Use `bun run test` (the package script, which runs `node --test`), not
 `bun test` — `bun test` invokes Bun's own test runner and does not run this
 suite.
 
+The source is TypeScript (`.mts`) executed directly by Node's native type
+stripping — there is no build step. `bun run typecheck` runs `tsc --noEmit`.
+
 Useful focused checks:
 
 ```sh
-node --test scripts/consult-broker.test.mjs
-node --test scripts/lib/process-sandbox.test.mjs scripts/lib/acp-client.test.mjs
-node --test scripts/lib/companion/delegate-core.test.mjs
+node --test scripts/consult-broker.test.mts
+node --test scripts/lib/process-sandbox.test.mts scripts/lib/acp-client.test.mts
+node --test scripts/lib/companion/delegate-core.test.mts
 ```
 
 Run the safe companion-disconnect drill:
