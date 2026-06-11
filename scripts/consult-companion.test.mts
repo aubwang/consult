@@ -72,6 +72,25 @@ test("dispatch prints help for help aliases", async () => {
   }
 });
 
+test("dispatch help advertises the agent contract", async () => {
+  const result = await dispatch("help", { positional: [], flags: {} });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout.includes("consult help --agent"), true);
+});
+
+test("dispatch prints the agent contract for help --agent", async () => {
+  for (const subcommand of [undefined, "--help", "-h", "help"]) {
+    const result = await dispatch(subcommand, { positional: [], flags: { agent: true } });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout.includes("Agent Usage Contract"), true);
+    assert.equal(result.stdout.includes("## Exit codes"), true);
+    assert.equal(result.stdout.includes("--resume-job"), true);
+    assert.equal(result.stdout.includes("Common workflow:"), false);
+  }
+});
+
 test("dispatch routes setup json mode", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-companion-setup-"));
   const originalDataDir = process.env.CONSULT_DATA_DIR;

@@ -65,6 +65,7 @@ Commands:
   brokers    Inspect live Broker state.
              Options: --cleanup, --json
   help       Show this help.
+             Options: --agent (print the agent-facing usage contract)
 
 Terms:
   Host       Where you run Consult, such as a terminal, Codex, opencode, or Claude Code.
@@ -74,6 +75,96 @@ Terms:
 
 Run delegated work in read-only mode unless you explicitly need edits. Use --write
 when the Profile should be allowed to change files in the current workspace.
+
+Agents: run 'consult help --agent' for the full delegation contract
+(prompt guidance, JSON output, exit codes, polling and resume semantics).
+`;
+
+const agentUsage = `# Consult: Agent Usage Contract
+
+Consult delegates one prompt turn to another locally configured agent CLI (a
+Profile) and stores the output as a Job in the current Workspace. This is the
+agent-facing contract; \`consult help\` has the short human summary.
+
+## When to use
+
+- Get an independent review or second opinion from a different agent or model.
+- Run a self-contained side task (review a diff, hunt edge cases, draft tests)
+  without spending your own context on it.
+- Continue a prior delegated session with follow-up questions (\`--resume\`).
+
+When not to use: work that needs your conversation context (the delegate never
+sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
+
+## Core workflow
+
+    consult agents --json                  # discover configured Profiles
+    consult delegate --agent <profile> --read-only -- "<self-contained prompt>"
+    consult status <job-id> --wait         # block until the Job finalizes
+    consult result <job-id>                # print the stored final text
+
+## Writing the prompt
+
+- Everything after \`--\` is the prompt (or use \`--prompt <text>\`).
+- The delegate starts cold with no access to your conversation. Include file
+  paths, the concrete question, and acceptance criteria in the prompt itself.
+- Optional pass-through tuning: \`--model <name>\`, \`--effort <level>\`.
+
+## Modes
+
+- Default is read-only: the delegate cannot edit files. Pass \`--write\` only
+  when the task explicitly requires edits to this Workspace.
+- \`--write\` and \`--read-only\` are mutually exclusive.
+
+## Foreground vs background
+
+- Foreground (default): streams delegate activity, then prints a summary line
+  \`consult delegate <job-id> <status>\`. With \`--json\` the final stdout line
+  is one JSON object:
+  {"status","jobId","sessionId","stopReason","finalTextLength","logPath"}.
+- Background: \`--background\` returns immediately after printing
+  \`consult delegate <job-id> queued\`. Poll \`consult status <job-id> --wait\`
+  (blocks until the Job finalizes, 30-minute cap), then read
+  \`consult result <job-id>\`.
+- Each running Job has its own Broker; background Jobs run independently.
+- \`--background\` and \`--wait\` are mutually exclusive.
+
+## Sessions and resume
+
+- \`--resume\` continues the most recent finalized Job for that Profile in this
+  Host session; exits 2 with guidance if none exists.
+- \`--resume-job <job-id>\` continues a specific Job's session.
+- \`--fresh\` forces a new session. The three flags are mutually exclusive.
+- Host identity is autodetected (Codex, opencode, and Claude Code session
+  variables; override with \`--host\` or \`CONSULT_HOST\`). Resume scoping
+  follows the Host session.
+
+## Jobs
+
+- Lifecycle: queued -> running -> completed | cancelled | failed.
+- \`consult status\` lists all Jobs in the Workspace (tab-separated table, or
+  a JSON array with \`--json\`).
+- \`consult status <job-id>\` prints the Job record plus the last 20 log lines
+  (with \`--json\`: {"record": ..., "logTail": [...]}).
+- \`consult result <job-id>\` prints the delegate's final text verbatim; with
+  \`--json\` it prints the full Job record instead.
+- \`consult cancel <job-id>\` cancels a queued or running Job and its active
+  descendants.
+
+## Exit codes
+
+- 0 success
+- 1 internal or Broker error
+- 2 usage error, unknown subcommand, or unknown Job id
+- 3 Broker busy or Job conflict (inspect with \`consult brokers\`, retry)
+- 4 \`status --wait\` timed out before the Job finalized
+- 5 \`result\` called on an unfinished Job (poll status first)
+
+## Parsing guidance
+
+- Prefer \`--json\` wherever you parse output: agents, setup, delegate,
+  status, result, brokers.
+- Capture the Job id from delegate stdout in both modes.
 `;
 
 export async function dispatch(
@@ -81,6 +172,9 @@ export async function dispatch(
   parsedArgs: ParsedArgs,
 ): Promise<CliResult> {
   if (!subcommand || subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
+    if (parsedArgs?.flags?.agent !== undefined) {
+      return { exitCode: 0, stdout: agentUsage, stderr: "" };
+    }
     return { exitCode: 0, stdout: usage, stderr: "" };
   }
   const handler = handlers[subcommand];
