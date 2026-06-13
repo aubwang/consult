@@ -5,6 +5,7 @@ export const BOOLEAN_FLAGS = new Set([
   "wait",
   "resume",
   "fresh",
+  "follow",
   "json",
   "all",
   "cleanup",

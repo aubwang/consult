@@ -10,6 +10,7 @@ import {
 import type { JobRecord } from "../job-records.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { runLogs } from "./logs.mts";
 import type { ParsedArgs } from "../args.mts";
 
 export interface StatusDeps {
@@ -39,6 +40,12 @@ export async function runStatus({
   args: ParsedArgs;
   deps?: StatusDeps;
 }): Promise<CommandResult> {
+  if (args.flags?.follow !== undefined) {
+    if (!args.positional?.[0]) {
+      return { exitCode: 2, stdout: "", stderr: "job id is required\n" };
+    }
+    return runLogs({ args: { ...args, flags: { ...args.flags, follow: true } }, deps });
+  }
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
   const jobId = args.positional?.[0];
   if (jobId) {

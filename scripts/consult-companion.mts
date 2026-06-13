@@ -7,6 +7,9 @@ import * as agents from "./lib/companion/agents.mts";
 import * as brokers from "./lib/companion/brokers.mts";
 import * as cancel from "./lib/companion/cancel.mts";
 import * as delegate from "./lib/companion/delegate.mts";
+import * as doctor from "./lib/companion/doctor.mts";
+import * as chain from "./lib/companion/chain.mts";
+import * as logs from "./lib/companion/logs.mts";
 import * as result from "./lib/companion/result.mts";
 import * as review from "./lib/companion/review.mts";
 import * as setup from "./lib/companion/setup.mts";
@@ -22,6 +25,9 @@ const handlers: Record<string, CompanionHandler> = {
   setup,
   agents,
   delegate,
+  doctor,
+  chain,
+  logs,
   review,
   status,
   result,
@@ -45,6 +51,7 @@ Common workflow:
   consult delegate --agent gemini --read-only -- "look for missed edge cases"
   consult status <job-id> --wait
   consult result <job-id>
+  consult logs <job-id> --follow
 
 Commands:
   setup      Install or verify Profiles and set a default.
@@ -55,11 +62,17 @@ Commands:
              Options: --agent <profile>, --read-only, --write, --background,
                       --resume, --resume-job <job-id>, --fresh, --model <name>,
                       --effort <level>, --json
+  doctor     Diagnose whether Consult can delegate from this workspace.
+             Options: --agent <profile>, --profile <profile>, --json
   review     Run the built-in review flow through a supported Profile.
              Options: --agent <profile>, --base <ref>
   status     Show Jobs in this workspace, or inspect one Job.
-             Options: --wait, --json
+             Options: --wait, --follow, --json
   result     Print stored output for a finished Job.
+             Options: --json
+  logs       Print or follow rendered logs for one Job.
+             Options: --follow, --json
+  chain      Show a Delegation Chain rollup for one Job.
              Options: --json
   cancel     Cancel a running Job and active descendants.
   brokers    Inspect live Broker state.
@@ -102,6 +115,7 @@ sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
     consult delegate --agent <profile> --read-only -- "<self-contained prompt>"
     consult status <job-id> --wait         # block until the Job finalizes
     consult result <job-id>                # print the stored final text
+    consult logs <job-id> --follow         # stream rendered Job updates
 
 ## Writing the prompt
 
@@ -146,8 +160,14 @@ sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
   a JSON array with \`--json\`).
 - \`consult status <job-id>\` prints the Job record plus the last 20 log lines
   (with \`--json\`: {"record": ..., "logTail": [...]}).
+- \`consult status <job-id> --follow\` and \`consult logs <job-id> --follow\`
+  stream rendered Job updates until the Job finalizes.
 - \`consult result <job-id>\` prints the delegate's final text verbatim; with
   \`--json\` it prints the full Job record instead.
+- \`consult chain <job-id>\` prints the explicit Delegation Chain rollup for
+  the Job.
+- \`consult doctor\` reports profile, Host Identity, Job, Broker, and sandbox
+  readiness for the current Workspace.
 - \`consult cancel <job-id>\` cancels a queued or running Job and its active
   descendants.
 

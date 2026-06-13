@@ -140,9 +140,12 @@ Claude Code slash commands live under `hosts/claude-code/commands/`, with the ro
 | `/consult:setup` | `setup --json` | Two-phase: probe registry → menu with install / set-default actions. |
 | `/consult:agents` | `agents [--set <name>]` | Lists profiles + status; can set default. |
 | `/consult:delegate [args]` | `delegate ...` | Foreground/background, `--agent <name>`, `--write`, `--read-only` (default), `--resume`/`--resume-job <id>`/`--fresh`, `--parent-job <id>`, `--model`, `--effort`. |
+| `/consult:doctor [args]` | `doctor ...` | Read-only diagnostics for profile, Host Identity, Job, Broker, and sandbox readiness. |
 | `/consult:review [args]` | `review ...` | Proxies to backend's `review` slash if advertised. |
-| `/consult:status [id]` | `status ...` | Table of jobs; `--wait` blocks on one job. |
+| `/consult:status [id]` | `status ...` | Table of jobs; `--wait` blocks on one job; `--follow` streams rendered Job logs until finalization. |
 | `/consult:result [id]` | `result ...` | Final stored output for a job. |
+| `/consult:logs [id]` | `logs ...` | Render stored Job logs, or `--follow` live updates until finalization. |
+| `/consult:chain [id]` | `chain ...` | Explicit Delegation Chain rollup for one Job. |
 | `/consult:cancel [id]` | `cancel ...` | `session/cancel` + SIGTERM on background worker. |
 | `/consult:brokers [args]` | `brokers ...` | Inspect Broker locators; `--cleanup` removes stale/malformed locators, `--cleanup <job-id>` tears down one Broker. |
 
