@@ -208,6 +208,73 @@ test("status wait exits with final state after polling a job to completion", asy
   assert.match(result.stdout, /"status": "completed"/);
 });
 
+test("status follow streams rendered logs until the job finalizes", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-follow",
+    profile: "codex",
+    status: "running",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+  });
+  await writeLog(workspaceRoot, "job-follow", [
+    JSON.stringify({
+      method: "consult/update",
+      params: {
+        jobId: "job-follow",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "first" },
+        },
+      },
+    }),
+  ]);
+  let polls = 0;
+
+  const result = await runStatus({
+    args: { positional: ["job-follow"], flags: { follow: true } },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      poll: async () => {
+        polls += 1;
+        await writeLog(workspaceRoot, "job-follow", [
+          JSON.stringify({
+            method: "consult/update",
+            params: {
+              jobId: "job-follow",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "first" },
+              },
+            },
+          }),
+          JSON.stringify({
+            method: "consult/update",
+            params: {
+              jobId: "job-follow",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: " second" },
+              },
+            },
+          }),
+        ]);
+        await writeJob(workspaceRoot, {
+          jobId: "job-follow",
+          profile: "codex",
+          status: "completed",
+          submittedAt: "2026-05-14T10:00:00.000Z",
+          completedAt: "2026-05-14T10:01:00.000Z",
+        });
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(polls, 1);
+  assert.equal(result.stdout, "first second");
+});
+
 test("status wait exits 4 when the job never finishes before timeout", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

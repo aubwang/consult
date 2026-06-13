@@ -22,6 +22,9 @@ queued job-R4x...
 $ consult status job-R4x --wait
 job-R4x completed
 
+$ consult logs job-R4x --follow
+Added the regression test and verified the focused suite.
+
 $ consult result job-R4x
 Added the regression test and verified the focused suite.
 ```
@@ -96,12 +99,15 @@ Run work in the background:
 ```sh
 consult delegate --agent opencode --write --background -- "try a minimal fix"
 consult status <job-id> --wait
+consult logs <job-id> --follow
 consult result <job-id>
 ```
 
-Cancel or clean up:
+Inspect, diagnose, cancel, or clean up:
 
 ```sh
+consult doctor
+consult chain <job-id>
 consult cancel <job-id>
 consult brokers
 consult brokers --cleanup
@@ -234,7 +240,9 @@ as `codex login`, `claude /login`, `opencode auth login`, `gemini`, or
 If a background Job appears stuck:
 
 ```sh
+consult doctor
 consult status <job-id>
+consult logs <job-id> --follow
 consult brokers
 consult brokers --cleanup
 ```

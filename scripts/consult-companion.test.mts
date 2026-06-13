@@ -58,6 +58,9 @@ test("dispatch prints help for the help subcommand", async () => {
   assert.equal(result.stdout.includes("delegate"), true);
   assert.equal(result.stdout.includes("setup"), true);
   assert.equal(result.stdout.includes("status"), true);
+  assert.equal(result.stdout.includes("doctor"), true);
+  assert.equal(result.stdout.includes("logs"), true);
+  assert.equal(result.stdout.includes("chain"), true);
   assert.equal(result.stdout.includes("brokers"), true);
   assert.equal(result.stdout.includes("adversarial-review"), false);
 });
@@ -87,6 +90,9 @@ test("dispatch prints the agent contract for help --agent", async () => {
     assert.equal(result.stdout.includes("Agent Usage Contract"), true);
     assert.equal(result.stdout.includes("## Exit codes"), true);
     assert.equal(result.stdout.includes("--resume-job"), true);
+    assert.equal(result.stdout.includes("consult logs <job-id> --follow"), true);
+    assert.equal(result.stdout.includes("consult chain <job-id>"), true);
+    assert.equal(result.stdout.includes("consult doctor"), true);
     assert.equal(result.stdout.includes("Common workflow:"), false);
   }
 });
