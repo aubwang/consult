@@ -1,36 +1,24 @@
 #!/usr/bin/env node
 
-import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type {
-  PermissionOption,
-  RequestPermissionResponse,
-} from "@agentclientprotocol/sdk";
-
-import {
-  newSession,
-  promptTurn,
-  startAgent,
-} from "./lib/acp-client.mts";
+import type { StartedAgent } from "./lib/acp-client.mts";
 import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mts";
 import { createBrokerJobRuntime } from "./lib/broker-job-runtime.mts";
-import { createFsHandlers } from "./lib/fs-handlers.mts";
-import type { FsHandlerMode } from "./lib/fs-handlers.mts";
+import {
+  agentErrorMessage,
+  hashRunPayload,
+  runAgentJobTurn,
+  startJobAgent,
+} from "./lib/job-agent.mts";
+import type { AgentSessionState } from "./lib/job-agent.mts";
 import { readJsonlMessages } from "./lib/jsonl-framing.mts";
-import { decidePermission } from "./lib/permissions.mts";
-import type { PermissionMode } from "./lib/permissions.mts";
 import { processStartTime } from "./lib/process-identity.mts";
 import { normalizeAgentSandbox } from "./lib/process-sandbox.mts";
-import {
-  applySessionControls,
-  openResumedSession,
-  supportsLoad,
-  supportsResume,
-} from "./lib/session-controls.mts";
+import { supportsLoad, supportsResume } from "./lib/session-controls.mts";
 import { atomicWriteJson } from "./lib/state.mts";
 
 export const DEFAULT_BROKER_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -94,14 +82,11 @@ export interface ConsultRunParams {
   baseRef?: string;
 }
 
-type AgentHandle = Awaited<ReturnType<typeof startAgent>>;
+type AgentHandle = StartedAgent;
 type AgentCapabilities = AgentHandle["capabilities"];
 type BrokerJobRuntime = ReturnType<typeof createBrokerJobRuntime>;
 type BrokerJob = ReturnType<BrokerJobRuntime["createJob"]>;
-type SessionState =
-  | Awaited<ReturnType<typeof newSession>>
-  | Awaited<ReturnType<typeof openResumedSession>>
-  | Awaited<ReturnType<typeof applySessionControls>>;
+type SessionState = AgentSessionState;
 
 type JsonRpcId = string | number | null | undefined;
 
@@ -136,8 +121,9 @@ interface SocketBrokerContext {
   finalizeJob: (job: BrokerJob, finalized: { stopReason: string; sessionId: string }) => Promise<void>;
   failJob: (job: BrokerJob, errorMessage: string) => Promise<void>;
   cancelJobCascade: (job: BrokerJob) => string[];
+  noteTurnSettled: (job: BrokerJob) => void;
   isTainted: () => boolean;
-  ensureAgent: (mode?: string) => Promise<AgentHandle>;
+  ensureAgent: (mode?: string, jobId?: string | null) => Promise<AgentHandle>;
   isBusy: () => boolean;
   setBusy: (value: boolean) => void;
   shutdown: () => Promise<{ code: number }>;
@@ -193,6 +179,11 @@ export async function serveBroker(
   const server = net.createServer((socket) => {
     clearIdleShutdown();
     sockets.add(socket);
+    // Abrupt disconnects (EPIPE/ECONNRESET) must clean up like a close, not
+    // crash the daemon with an uncaught `error` event.
+    socket.on("error", () => {
+      socket.destroy();
+    });
     socket.on("close", () => {
       sockets.delete(socket);
       socketSessions.delete(socket);
@@ -222,6 +213,7 @@ export async function serveBroker(
       finalizeJob: (job, finalized) => runtime.finalizeJob(job, finalized),
       failJob: (job, errorMessage) => runtime.failJob(job, errorMessage),
       cancelJobCascade: (job) => runtime.cancelJobCascade(job),
+      noteTurnSettled: (job) => runtime.noteTurnSettled(job),
       isTainted: () => runtime.isTainted(),
       ensureAgent,
       isBusy: () => runtime.isBusy(),
@@ -240,6 +232,13 @@ export async function serveBroker(
   }
   await atomicWriteJson(statePath, brokerState);
   await listen(server, config.endpoint);
+  // No peer auth exists on the socket (which may live in a shared tmpdir);
+  // restrict it to the owning user.
+  await fsp.chmod(config.endpoint, 0o600).catch((error: CodedError) => {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  });
   scheduleIdleShutdown();
 
   async function shutdown(code = 0): Promise<{ code: number }> {
@@ -249,6 +248,9 @@ export async function serveBroker(
     shuttingDown = true;
     clearIdleShutdown();
     clearFinalizedShutdown();
+    for (const job of runtime.runningJobs()) {
+      await runtime.failJob(job, "broker shut down before the job finalized").catch(() => {});
+    }
     for (const socket of sockets) {
       socket.destroy();
     }
@@ -274,7 +276,7 @@ export async function serveBroker(
     shutdown,
   };
 
-  async function ensureAgent(mode = "read-only"): Promise<AgentHandle> {
+  async function ensureAgent(mode = "read-only", jobId: string | null = null): Promise<AgentHandle> {
     if (agent && config.sandbox !== "off" && agentMode !== mode) {
       await agent.dispose();
       agent = null;
@@ -287,42 +289,16 @@ export async function serveBroker(
     if (agent) {
       return agent;
     }
-    agent = await startAgent({
+    agent = await startJobAgent({
       binary: config.binary,
       args: config.args,
       env: config.env,
       cwd: config.cwd,
-      workspaceRoot: config.cwd,
       mode,
       sandbox: config.sandbox,
       profileRegistryId: config.profileRegistryId,
-      clientHandlers: {
-        sessionUpdate: async ({ sessionId, update }) =>
-          await runtime.handleSessionUpdate({ sessionId, update }),
-        requestPermission: async ({ sessionId, ...request }) => {
-          const decision = await decidePermission({
-            request,
-            mode: (runtime.getSessionMode(sessionId) ?? "read-only") as PermissionMode,
-            workspaceRoot: config.cwd,
-          });
-          runtime.notePermissionDecision({ sessionId, decision, request });
-          return permissionResponse(decision, request.options);
-        },
-        readTextFile: async (request) => {
-          const handlers = createFsHandlers({
-            workspaceRoot: config.cwd,
-            mode: (runtime.getSessionMode(request.sessionId) ?? "read-only") as FsHandlerMode,
-          });
-          return await handlers.readTextFile(request);
-        },
-        writeTextFile: async (request) => {
-          const handlers = createFsHandlers({
-            workspaceRoot: config.cwd,
-            mode: (runtime.getSessionMode(request.sessionId) ?? "read-only") as FsHandlerMode,
-          });
-          return await handlers.writeTextFile(request);
-        },
-      },
+      jobId,
+      runtime,
     });
     agentMode = mode;
     capabilities = agent.capabilities;
@@ -564,7 +540,7 @@ async function handleRunMessage(
   broker.setBusy(true);
   try {
     if (message.params.resume) {
-      const agent = await broker.ensureAgent();
+      const agent = await broker.ensureAgent(message.params.mode ?? "read-only", message.params.jobId);
       if (!supportsResume(agent.capabilities) && !supportsLoad(agent.capabilities)) {
         writeError(socket, message.id, {
           code: "RESUME_UNSUPPORTED",
@@ -585,67 +561,11 @@ async function handleRunMessage(
     accepted: true,
     jobId: message.params.jobId,
   });
-  runJob(message.params, job, broker)
+  runAgentJobTurn(message.params, job, broker)
     .catch((error) => broker.failJob(job, agentErrorMessage(error)).catch(() => {}))
     .finally(() => {
       broker.setBusy(false);
     });
-}
-
-async function runJob(params: ConsultRunParams, job: BrokerJob, broker: SocketBrokerContext): Promise<void> {
-  const agent = await broker.ensureAgent(params.mode ?? "read-only");
-  let sessionId: string | undefined;
-  let sessionState: SessionState | null = null;
-  if (job.resumeSessionId) {
-    sessionState = await openResumedSession(agent.connection, agent.capabilities, {
-      sessionId: job.resumeSessionId,
-      cwd: broker.config.cwd,
-    });
-    sessionId = (sessionState as { sessionId?: string }).sessionId ?? job.resumeSessionId;
-    broker.setSession(sessionId, sessionState);
-  } else {
-    sessionId = broker.getSession();
-    sessionState = broker.getSessionState?.() ?? null;
-  }
-  if (!sessionId) {
-    sessionState = await newSession(agent.connection, {
-      cwd: broker.config.cwd,
-    });
-    sessionId = (sessionState as { sessionId: string }).sessionId;
-    broker.setSession(sessionId, sessionState);
-  }
-  broker.trackSession(sessionId, job, params.mode ?? "read-only");
-  sessionState = await applySessionControls(agent.connection, {
-    sessionId,
-    sessionState,
-    model: params.model,
-    effort: params.effort,
-    profile: params.profile,
-  });
-  broker.setSession(sessionId, sessionState);
-
-  for await (const event of promptTurn(agent.connection, {
-    sessionId,
-    prompt: params.prompt,
-  })) {
-    if (event.type === "stop") {
-      if (job.status !== "running") {
-        continue;
-      }
-      broker.setBusy(false);
-      await broker.finalizeJob(job, {
-        stopReason: event.stopReason,
-        sessionId,
-      });
-    }
-  }
-}
-
-function agentErrorMessage(error: CodedError): string {
-  if (error.code) {
-    return `${error.code}: ${error.message}`;
-  }
-  return error.message;
 }
 
 function writeResult(
@@ -677,64 +597,6 @@ function messageParams(message: JsonRpcMessage): Record<string, unknown> | null 
     return null;
   }
   return message.params as Record<string, unknown>;
-}
-
-function hashRunPayload(params: ConsultRunParams): string {
-  return crypto
-    .createHash("sha256")
-    .update(
-      stableJson({
-        prompt: params.prompt,
-        profile: params.profile,
-        mode: params.mode,
-        resume: params.resume ?? null,
-        model: params.model ?? null,
-        effort: params.effort ?? null,
-      }),
-    )
-    .digest("hex");
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableJson(item)).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
-      .join(",")}}`;
-  }
-  return value === undefined ? "null" : JSON.stringify(value);
-}
-
-function permissionResponse(
-  decision: { allowed: boolean; reason?: string },
-  options: PermissionOption[] | undefined,
-): RequestPermissionResponse {
-  if (decision.allowed) {
-    return {
-      outcome: {
-        outcome: "selected",
-        optionId: optionIdFor(options, "allow") ?? "allow",
-      },
-    };
-  }
-
-  return {
-    _meta: {
-      reason: decision.reason,
-    },
-    outcome: {
-      outcome: "selected",
-      optionId: optionIdFor(options, "reject") ?? "reject",
-    },
-  };
-}
-
-function optionIdFor(options: PermissionOption[] | undefined, action: string): string | undefined {
-  const prefix = action === "allow" ? "allow" : "reject";
-  return options?.find((option) => option.kind?.startsWith(prefix))?.optionId;
 }
 
 function normalizeOptions(options: ServeBrokerOptions): BrokerConfig {
@@ -770,6 +632,13 @@ function resolveIdleTimeoutMs(
 }
 
 async function listenOnSocket(server: net.Server, socketPath: string): Promise<void> {
+  // A broker that died ungracefully leaves its socket file behind; listening
+  // over it would fail with EADDRINUSE forever.
+  await fsp.unlink(socketPath).catch((error: CodedError) => {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(socketPath, resolve);

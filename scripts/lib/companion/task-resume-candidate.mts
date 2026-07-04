@@ -4,6 +4,7 @@ import { resolveHostIdentity } from "../host-identity.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import type { JobRecord } from "../job-records.mts";
 import { jobRecordErrorResult } from "./job-record-errors.mts";
+import type { CommandResult } from "./output.mts";
 import { findResumeCandidate } from "./resume-candidate.mts";
 
 interface TaskResumeCandidateDeps {
@@ -15,12 +16,6 @@ interface TaskResumeCandidateOptions {
   args: ParsedArgs;
   env?: NodeJS.ProcessEnv;
   deps?: TaskResumeCandidateDeps;
-}
-
-interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
 }
 
 export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<CommandResult> {

@@ -146,6 +146,22 @@ test("write-mode allows edit inside workspace and denies edit outside workspace"
   );
 });
 
+test("path confinement covers alternate destination-style rawInput keys", async () => {
+  const workspaceRoot = makeRoot();
+
+  for (const key of ["dest", "destination", "target", "to", "from", "source"]) {
+    assert.deepEqual(
+      await decidePermission({
+        request: request("move", { [key]: "/etc/passwd" }),
+        mode: "write",
+        workspaceRoot,
+      }),
+      { allowed: false, reason: "path outside workspace: /etc/passwd" },
+      `expected key '${key}' to be confined`,
+    );
+  }
+});
+
 test("write-mode denies execute even with cwd inside workspace", async () => {
   const workspaceRoot = makeRoot();
 

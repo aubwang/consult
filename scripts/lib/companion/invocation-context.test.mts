@@ -69,7 +69,7 @@ test("selectProfile preserves error wording", () => {
       override: null,
       host: "codex",
     }).error,
-    "No profile configured (no profiles configured; run /consult:setup)",
+    "No profile configured (no profiles configured; run 'consult setup')",
   );
   assert.equal(
     selectProfile({

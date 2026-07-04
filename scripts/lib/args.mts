@@ -25,6 +25,25 @@ export function stringFlag(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+export function boolFlag(value: unknown): boolean {
+  const last = Array.isArray(value) ? value.at(-1) : value;
+  return last !== undefined && last !== false;
+}
+
+export function missingFlagValueError(
+  flags: Record<string, FlagValue | undefined> | undefined,
+  names: string[],
+): string | null {
+  for (const name of names) {
+    const value = flags?.[name];
+    const last = Array.isArray(value) ? value.at(-1) : value;
+    if (last === true || last === "") {
+      return `--${name} requires a value`;
+    }
+  }
+  return null;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
   const flags: Record<string, FlagValue | undefined> = {};

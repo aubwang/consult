@@ -182,6 +182,105 @@ test("runPromptTurn caps persisted final text while still streaming updates", as
   assert.equal(output.captured.stdout, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
 });
 
+test("runPromptTurn finalizes the job even when log and record writes fail", async () => {
+  const client = new FakeBrokerClient();
+  const output = createOutput();
+  let failWrites = true;
+  const records: Array<Record<string, unknown>> = [];
+
+  const resultPromise = runPromptTurn({
+    workspaceRoot: "/workspace",
+    profileEntry: {},
+    jobRecord: {
+      jobId: "job-flaky-disk",
+      kind: "review",
+      mode: "read-only",
+      host: "codex",
+      hostSessionId: "thread-1",
+      profile: "codex",
+      submittedAt: "2026-05-21T10:00:00.000Z",
+    },
+    deps: {
+      ensureBrokerSession: async () => ({ client }),
+      appendLogLine: async () => {
+        throw new Error("disk full");
+      },
+      writeJobRecord: async (_workspaceRoot, _jobId, record) => {
+        if (failWrites) {
+          throw new Error("disk full");
+        }
+        records.push(structuredClone(record));
+      },
+      now: () => "2026-05-21T10:01:00.000Z",
+    },
+    output,
+    renderUpdate(notification) {
+      const update = (notification as any).update ?? notification;
+      return update.content?.text ?? "";
+    },
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/update", {
+    jobId: "job-flaky-disk",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "still streamed" },
+    },
+  });
+  failWrites = false;
+  client.notify("consult/finalized", {
+    jobId: "job-flaky-disk",
+    stopReason: "end_turn",
+    sessionId: "session-flaky",
+  });
+  const result = (await resultPromise) as any;
+
+  assert.equal(result.finalNotification.stopReason, "end_turn");
+  assert.equal(result.finalText, "still streamed");
+  assert.match(output.captured.stderr, /job record write failed: disk full/);
+  assert.equal(records.at(-1)!.status, "completed");
+});
+
+test("runPromptTurn marks a background job record failed when the broker declines it", async () => {
+  const records: Array<Record<string, unknown>> = [];
+  const output = createOutput();
+  const decliningClient = {
+    on() {},
+    async request() {
+      return { accepted: false };
+    },
+  };
+
+  const result = (await runPromptTurn({
+    workspaceRoot: "/workspace",
+    profileEntry: {},
+    jobRecord: {
+      jobId: "job-declined",
+      kind: "delegate",
+      mode: "read-only",
+      host: "codex",
+      hostSessionId: "thread-1",
+      profile: "codex",
+      submittedAt: "2026-05-21T10:00:00.000Z",
+    },
+    deps: {
+      ensureBrokerSession: async () => ({ client: decliningClient }),
+      appendLogLine: async () => {},
+      writeJobRecord: async (_workspaceRoot, _jobId, record) => {
+        records.push(structuredClone(record));
+      },
+      now: () => "2026-05-21T10:01:00.000Z",
+    },
+    output,
+    markFailedOnBrokerError: true,
+  })) as any;
+
+  assert.equal(result.exitCode, 3);
+  assert.equal(records.at(-1)!.status, "failed");
+  assert.match(String(records.at(-1)!.errorMessage), /did not accept/);
+});
+
 class FakeBrokerClient {
   #handlers = new Map<string, (params: unknown) => void>();
   #requests = new Map<string, CapturedRequest>();

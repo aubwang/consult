@@ -1,4 +1,4 @@
-import { stringFlag } from "../args.mts";
+import { missingFlagValueError, stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { profilesPath } from "../broker-endpoint.mts";
 import {
@@ -37,21 +37,26 @@ export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<
 
 export async function runAgents({ args, deps = {} }: RunAgentsOptions): Promise<CliResult> {
   const profilePath = profilesPath();
-  if (args.flags?.set) {
+  const usageError = missingFlagValueError(args.flags, ["set", "host"]);
+  if (usageError) {
+    return { exitCode: 2, stdout: "", stderr: `${usageError}\n` };
+  }
+  const setProfile = stringFlag(args.flags?.set);
+  if (setProfile) {
     const host = stringFlag(args.flags?.host);
     try {
       if (host) {
         await (deps.setHostDefaultProfile ?? defaultSetHostDefaultProfile)(
           profilePath,
           host,
-          args.flags.set as string,
+          setProfile,
         );
       } else {
-        await (deps.setDefaultProfile ?? defaultSetDefaultProfile)(profilePath, args.flags.set as string);
+        await (deps.setDefaultProfile ?? defaultSetDefaultProfile)(profilePath, setProfile);
       }
     } catch (error) {
       if ((error as { code?: string }).code === "UNKNOWN_PROFILE") {
-        return { exitCode: 2, stdout: "", stderr: `no such profile: ${args.flags.set as string}\n` };
+        return { exitCode: 2, stdout: "", stderr: `no such profile: ${setProfile}\n` };
       }
       const profileResult = profileErrorResult(error as { code?: string; path?: string });
       if (profileResult) {
@@ -62,8 +67,8 @@ export async function runAgents({ args, deps = {} }: RunAgentsOptions): Promise<
     return {
       exitCode: 0,
       stdout: host
-        ? `default for host ${host} set to ${args.flags.set as string}\n`
-        : `default set to ${args.flags.set as string}\n`,
+        ? `default for host ${host} set to ${setProfile}\n`
+        : `default set to ${setProfile}\n`,
       stderr: "",
     };
   }
@@ -81,7 +86,7 @@ export async function runAgents({ args, deps = {} }: RunAgentsOptions): Promise<
   if (Object.keys(profiles.profiles).length === 0) {
     return {
       exitCode: 0,
-      stdout: "(no profiles configured; run /consult:setup)\n",
+      stdout: "(no profiles configured; run 'consult setup')\n",
       stderr: "",
     };
   }

@@ -41,6 +41,21 @@ test("getDiff returns the diff from base ref to HEAD", async () => {
   assert.match(diff, /\+second/);
 });
 
+test("getDiff rejects a baseRef shaped like a git option instead of honoring it", async () => {
+  const repo = await makeRepo("option-injection");
+  await fs.writeFile(path.join(repo, "note.txt"), "first\n");
+  await git(repo, "add", "note.txt");
+  await git(repo, "commit", "-m", "first");
+  const pwnedPath = path.join(repo, "pwned");
+
+  await assert.rejects(getDiff({ baseRef: `--output=${pwnedPath}`, cwd: repo }));
+
+  await assert.rejects(fs.access(pwnedPath), (error: NodeJS.ErrnoException) => {
+    assert.equal(error.code, "ENOENT");
+    return true;
+  });
+});
+
 test("getDiff returns clean status output without throwing", async () => {
   const repo = await makeRepo("clean");
   await fs.writeFile(path.join(repo, "note.txt"), "clean\n");

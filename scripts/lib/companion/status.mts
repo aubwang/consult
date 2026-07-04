@@ -2,27 +2,23 @@ import fs from "node:fs/promises";
 
 import { addJobRelationships } from "../delegation-chain.mts";
 import {
-  isFinalStatus,
   jobLogPath,
   listWorkspaceJobRecords,
   readWorkspaceJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
-import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { briefText } from "./brief-text.mts";
+import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
+import { pollUntilFinalRecord } from "./job-poll.mts";
 import { runLogs } from "./logs.mts";
+import type { CommandResult, OutputDeps } from "./output.mts";
 import type { ParsedArgs } from "../args.mts";
 
-export interface StatusDeps {
+export interface StatusDeps extends OutputDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
   maxWaitMs?: number;
   poll?: (ms: number) => Promise<void>;
-}
-
-interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
 }
 
 interface WaitTimeoutError extends Error {
@@ -55,17 +51,10 @@ export async function runStatus({
         ? await waitForFinalRecord(workspaceRoot, jobId, deps)
         : await readWorkspaceJobRecord(workspaceRoot, jobId);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { exitCode: 2, stdout: "", stderr: `job not found: ${jobId}\n` };
-      }
       if ((error as WaitTimeoutError).code === "WAIT_TIMEOUT") {
         return { exitCode: 4, stdout: "", stderr: `${(error as Error).message}\n` };
       }
-      const malformedResult = jobRecordErrorResult(error);
-      if (malformedResult) {
-        return malformedResult;
-      }
-      throw error;
+      return jobLookupErrorResult(error, jobId);
     }
     let records: JobRecord[];
     try {
@@ -126,19 +115,13 @@ async function waitForFinalRecord(
   jobId: string,
   deps: StatusDeps,
 ): Promise<JobRecord> {
-  const deadline = Date.now() + (deps.maxWaitMs ?? 30 * 60 * 1000);
-  const poll = deps.poll ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  let record = await readWorkspaceJobRecord(workspaceRoot, jobId);
-  while (!isFinalStatus(record.status)) {
-    if (Date.now() >= deadline) {
-      const error = new Error(`timed out waiting for job ${jobId}`) as WaitTimeoutError;
-      error.code = "WAIT_TIMEOUT";
-      throw error;
-    }
-    await poll(200);
-    record = await readWorkspaceJobRecord(workspaceRoot, jobId);
-  }
-  return record;
+  return pollUntilFinalRecord({
+    readRecord: () => readWorkspaceJobRecord(workspaceRoot, jobId),
+    maxWaitMs: deps.maxWaitMs,
+    poll: deps.poll,
+    timeoutCode: "WAIT_TIMEOUT",
+    timeoutMessage: `timed out waiting for job ${jobId}`,
+  });
 }
 
 async function readLogTail(workspaceRoot: string, jobId: string): Promise<string[]> {
@@ -172,15 +155,10 @@ function renderJobTable(records: Array<JobRecord & { childJobIds: string[] }>): 
           record.childJobIds?.length ? record.childJobIds.join(",") : "-",
           record.submittedAt ?? "-",
           record.completedAt ?? "-",
-          briefPrompt(record.prompt ?? ""),
+          briefText(record.prompt ?? ""),
         ].join("\t"),
       );
     }
   }
   return `${lines.join("\n")}\n`;
-}
-
-function briefPrompt(prompt: string): string {
-  const compact = String(prompt).replace(/\s+/g, " ").trim();
-  return compact.length > 80 ? `${compact.slice(0, 77)}...` : compact;
 }

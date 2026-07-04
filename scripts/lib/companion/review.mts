@@ -1,26 +1,22 @@
 import { runCodexReview as defaultRunCodexReview } from "../../adapters/codex-review.mts";
-import { stringFlag } from "../args.mts";
+import { missingFlagValueError, stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import type { ProfileRecord, ProfilesData } from "../profiles.mts";
-import { resolveInvocationContext } from "./invocation-context.mts";
+import { findRegistryEntry, loadRegistry as defaultLoadRegistry } from "../registry.mts";
+import type { Registry } from "../registry.mts";
+import { tryResolveInvocationContext } from "./invocation-context.mts";
 import type { WorkspaceOverride } from "./invocation-context.mts";
 import { createOutput } from "./output.mts";
-import { profileErrorResult } from "./profile-errors.mts";
-import { workspaceOverrideErrorResult } from "./workspace-override-errors.mts";
+import type { CommandResult } from "./output.mts";
 
 const REVIEW_CODEX_ONLY =
   "/consult:review is codex-only in v1. Use /consult:delegate --agent <name> with a review-style prompt, or switch to --agent codex.";
-
-interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
 
 export interface ReviewDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
   loadProfiles?: (path: string) => Promise<ProfilesData>;
   loadOverride?: (workspaceRoot: string) => Promise<WorkspaceOverride | null>;
+  loadRegistry?: () => Promise<Registry>;
   runCodexReview?: (args: Record<string, unknown>) => Promise<CommandResult>;
   stdoutWrite?: (text: string) => void;
   stderrWrite?: (text: string) => void;
@@ -28,7 +24,8 @@ export interface ReviewDeps {
 }
 
 export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<CommandResult> {
-  return runReview({ args: parsedArgs });
+  const result = await runReview({ args: parsedArgs });
+  return { exitCode: result.exitCode, stdout: "", stderr: "" };
 }
 
 export async function runReview({
@@ -41,36 +38,39 @@ export async function runReview({
   deps?: ReviewDeps;
 }): Promise<CommandResult> {
   const output = createOutput(deps);
-  let context: Awaited<ReturnType<typeof resolveInvocationContext>>;
-  try {
-    context = await resolveInvocationContext({
-      args,
-      env,
-      deps,
-    });
-  } catch (error) {
-    const profileResult = profileErrorResult(error);
-    if (profileResult) {
-      output.stderr(profileResult.stderr);
-      return output.result(profileResult.exitCode);
-    }
-    const overrideResult = workspaceOverrideErrorResult(error);
-    if (overrideResult) {
-      output.stderr(overrideResult.stderr);
-      return output.result(overrideResult.exitCode);
-    }
-    throw error;
+  const usageError = missingFlagValueError(args.flags, [
+    "agent",
+    "profile",
+    "host",
+    "host-session",
+    "host-session-id",
+    "base",
+  ]);
+  if (usageError) {
+    output.stderr(`${usageError}\n`);
+    return output.result(2);
   }
-  const { workspaceRoot, hostIdentity, selected } = context;
+  const { context, errorResult } = await tryResolveInvocationContext({
+    args,
+    env,
+    deps,
+  });
+  if (errorResult) {
+    output.stderr(errorResult.stderr);
+    return output.result(errorResult.exitCode);
+  }
+  const { workspaceRoot, hostIdentity, selected } = context!;
   if (selected.error) {
     output.stderr(`${selected.error}\n`);
     return output.result(2);
   }
 
   const profileEntry = selected.profileEntry as ProfileRecord;
-  if (profileEntry.registryId !== "codex") {
+  const registry = await (deps.loadRegistry ?? defaultLoadRegistry)();
+  const registryEntry = findRegistryEntry(registry, profileEntry.registryId);
+  if (!registryEntry?.advertisesReview) {
     output.stderr(`${REVIEW_CODEX_ONLY}\n`);
-    return output.result(6);
+    return output.result(7);
   }
 
   return (deps.runCodexReview ?? defaultRunCodexReview)({

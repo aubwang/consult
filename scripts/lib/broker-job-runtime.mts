@@ -112,7 +112,7 @@ export interface BrokerJob {
 
 export interface CreateBrokerJobRuntimeOptions {
   config: BrokerJobRuntimeConfig;
-  ensureAgent(): Promise<BrokerAgentHandle>;
+  ensureAgent(mode?: string): Promise<BrokerAgentHandle>;
   hashRunPayload(params: ConsultRunParams): string;
   writeNotification(socket: BrokerJobSocketLike, method: string, params: unknown): void;
   onActivity?(): void;
@@ -141,8 +141,10 @@ export interface BrokerJobRuntime {
   failJob(job: BrokerJob, errorMessage: string): Promise<void>;
   cancelJob(job: BrokerJob): Promise<void>;
   cancelJobCascade(job: BrokerJob): string[];
+  noteTurnSettled(job: BrokerJob): void;
   handleSocketClosed(socket: BrokerJobSocketLike): void;
   hasRunningJob(): boolean;
+  runningJobs(): BrokerJob[];
 }
 
 export function createBrokerJobRuntime({
@@ -285,6 +287,9 @@ export function createBrokerJobRuntime({
     },
     async failJob(job, errorMessage) {
       clearCancelAckTimer(job);
+      if (job.status === "finalized") {
+        return;
+      }
       job.status = "finalized";
       job.completedAt = new Date().toISOString();
       job.finalized = {
@@ -303,7 +308,10 @@ export function createBrokerJobRuntime({
       if (!job.sessionId) {
         return;
       }
-      const currentAgent = await ensureAgent();
+      startCancelAckTimer(job);
+      // Reuse the agent that runs this job; a bare ensureAgent() would default to
+      // read-only and restart a sandboxed write-mode agent mid-turn.
+      const currentAgent = await ensureAgent(job.mode ?? "read-only");
       await cancelPrompt(currentAgent.connection, { sessionId: job.sessionId });
     },
     cancelJobCascade(job) {
@@ -312,6 +320,9 @@ export function createBrokerJobRuntime({
         this.cancelJob(target).catch(() => {});
       }
       return descendants.map((candidate) => candidate.jobId);
+    },
+    noteTurnSettled(job) {
+      clearCancelAckTimer(job);
     },
     handleSocketClosed(socket) {
       for (const job of activeJobs.values()) {
@@ -329,6 +340,9 @@ export function createBrokerJobRuntime({
         }
       }
       return false;
+    },
+    runningJobs() {
+      return [...activeJobs.values()].filter((job) => job.status === "running");
     },
   };
 
@@ -358,9 +372,11 @@ export function createBrokerJobRuntime({
       errorMessage,
     };
     sessionJobs.delete(job.sessionId);
-    busy = false;
+    // Busy stays set until the violated prompt turn settles (or the cancel-ack
+    // timer fires), so a second consult/run cannot interleave prompt turns.
     job.cancelRequested = true;
-    ensureAgent()
+    startCancelAckTimer(job);
+    ensureAgent(job.mode ?? "read-only")
       .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
       .catch(() => {});
     await writeFailedJobRecord(job);
@@ -374,21 +390,23 @@ export function createBrokerJobRuntime({
       return;
     }
     job.cancelAckTimer = setTimeout(() => {
-      if (job.status !== "running") {
-        return;
+      job.cancelAckTimer = null;
+      if (job.status === "running") {
+        job.status = "finalized";
+        job.completedAt = new Date().toISOString();
+        job.finalized = {
+          stopReason: "failed",
+          sessionId: job.sessionId,
+          errorMessage: "agent did not acknowledge cancel",
+        };
+        sessionJobs.delete(job.sessionId);
+        writeFailedJobRecord(job).catch(() => {});
+        notifyFinalized(job, job.finalized);
       }
-      job.status = "finalized";
-      job.completedAt = new Date().toISOString();
-      job.finalized = {
-        stopReason: "failed",
-        sessionId: job.sessionId,
-        errorMessage: "agent did not acknowledge cancel",
-      };
-      sessionJobs.delete(job.sessionId);
+      // The job may already be finalized (policy violation) while its prompt
+      // turn is still unsettled; an unacknowledged cancel always taints.
       busy = false;
       tainted = true;
-      writeFailedJobRecord(job).catch(() => {});
-      notifyFinalized(job, job.finalized);
       onActivity();
       onTerminal(job);
     }, config.cancelAckTimeoutMs);

@@ -62,6 +62,9 @@ Commands:
              Options: --agent <profile>, --read-only, --write, --background,
                       --resume, --resume-job <job-id>, --fresh, --model <name>,
                       --effort <level>, --json
+             --model accepts an exact model id or a family alias (for the
+             claude Profile: sonnet, opus, haiku, fable); a family alias
+             resolves to the newest model the Profile advertises.
   doctor     Diagnose whether Consult can delegate from this workspace.
              Options: --agent <profile>, --profile <profile>, --json
   review     Run the built-in review flow through a supported Profile.
@@ -123,6 +126,9 @@ sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
 - The delegate starts cold with no access to your conversation. Include file
   paths, the concrete question, and acceptance criteria in the prompt itself.
 - Optional pass-through tuning: \`--model <name>\`, \`--effort <level>\`.
+  \`--model\` takes an exact model id or a family alias (claude Profile:
+  \`sonnet\`, \`opus\`, \`haiku\`, \`fable\`); a family alias resolves to the
+  newest model the Profile advertises at session start.
 
 ## Modes
 
@@ -137,16 +143,18 @@ sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
   is one JSON object:
   {"status","jobId","sessionId","stopReason","finalTextLength","logPath"}.
 - Background: \`--background\` returns immediately after printing
-  \`consult delegate <job-id> queued\`. Poll \`consult status <job-id> --wait\`
-  (blocks until the Job finalizes, 30-minute cap), then read
-  \`consult result <job-id>\`.
+  \`consult delegate <job-id> queued\` plus a \`consult status <job-id>\` hint
+  (with \`--json\`: one JSON object {"status","jobId"}). Poll
+  \`consult status <job-id> --wait\` (blocks until the Job finalizes,
+  30-minute cap), then read \`consult result <job-id>\`.
 - Each running Job has its own Broker; background Jobs run independently.
 - \`--background\` and \`--wait\` are mutually exclusive.
 
 ## Sessions and resume
 
-- \`--resume\` continues the most recent finalized Job for that Profile in this
-  Host session; exits 2 with guidance if none exists.
+- \`--resume\` continues the most recent completed or failed Job for that
+  Profile in this Host session (cancelled Jobs are skipped); exits 2 with
+  guidance if none exists.
 - \`--resume-job <job-id>\` continues a specific Job's session.
 - \`--fresh\` forces a new session. The three flags are mutually exclusive.
 - Host identity is autodetected (Codex, opencode, and Claude Code session
@@ -171,19 +179,34 @@ sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
 - \`consult cancel <job-id>\` cancels a queued or running Job and its active
   descendants.
 
+## Delegation lineage
+
+- When delegating from inside a delegated Job, pass \`--parent-job <job-id>\`
+  so the new Job joins the Delegation Chain.
+- If the flag is absent, delegate falls back to the \`CONSULT_PARENT_JOB\`
+  environment variable (injected into delegated agent environments), so
+  nested delegations stay chained by default. An explicit flag wins.
+
 ## Exit codes
 
 - 0 success
-- 1 internal or Broker error
-- 2 usage error, unknown subcommand, or unknown Job id
+- 1 internal or Broker error; \`doctor\` also exits 1 when the workspace is
+  not delegate-ready (canDelegate false)
+- 2 usage error, unknown subcommand, unknown Job id, or not inside a git
+  repository (no Workspace)
 - 3 Broker busy or Job conflict (inspect with \`consult brokers\`, retry)
-- 4 \`status --wait\` timed out before the Job finalized
+- 4 \`status --wait\` or \`--follow\` timed out before the Job finalized
 - 5 \`result\` called on an unfinished Job (poll status first)
+- 6 the delegated turn finalized as failed (inspect with
+  \`consult result <job-id>\`)
+- 7 \`review\` is not supported by the selected Profile (codex-only in v1)
+- 8 the Profile did not advertise the review command (codex-acp version may
+  not support it)
 
 ## Parsing guidance
 
 - Prefer \`--json\` wherever you parse output: agents, setup, delegate,
-  status, result, brokers.
+  status, result, logs, chain, doctor, brokers.
 - Capture the Job id from delegate stdout in both modes.
 `;
 
@@ -201,7 +224,18 @@ export async function dispatch(
   if (!handler) {
     return { exitCode: 2, stdout: "", stderr: `unknown subcommand: ${subcommand}\n\n${usage}` };
   }
-  return handler.run(subcommand, parsedArgs);
+  try {
+    return await handler.run(subcommand, parsedArgs);
+  } catch (error) {
+    if ((error as { code?: string }).code === "NO_WORKSPACE") {
+      return {
+        exitCode: 2,
+        stdout: "",
+        stderr: "no workspace found: run consult inside a git repository\n",
+      };
+    }
+    throw error;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

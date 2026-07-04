@@ -5,7 +5,7 @@ import {
 } from "../job-records.mts";
 import { addJobRelationships } from "../delegation-chain.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
-import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 import type { ParsedArgs } from "../args.mts";
 import type { CommandResult } from "./output.mts";
 
@@ -33,14 +33,7 @@ export async function runResult({ args, deps = {} }: RunResultOptions): Promise<
   try {
     record = await readWorkspaceJobRecord(workspaceRoot, jobId);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { exitCode: 2, stdout: "", stderr: `job not found: ${jobId}\n` };
-    }
-    const malformedResult = jobRecordErrorResult(error);
-    if (malformedResult) {
-      return malformedResult;
-    }
-    throw error;
+    return jobLookupErrorResult(error, jobId);
   }
   if (!isFinalStatus(record.status)) {
     return {

@@ -8,6 +8,9 @@ import { resolveHostIdentity } from "../host-identity.mts";
 import { loadProfiles as defaultLoadProfiles } from "../profiles.mts";
 import type { ProfileRecord, ProfilesData } from "../profiles.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
+import type { CliResult } from "./job-record-errors.mts";
+import { profileErrorResult } from "./profile-errors.mts";
+import { workspaceOverrideErrorResult } from "./workspace-override-errors.mts";
 
 export interface WorkspaceOverride {
   profile?: string;
@@ -53,7 +56,7 @@ export interface ResolveInvocationContextDeps {
   loadOverride?: (workspaceRoot: string) => Promise<WorkspaceOverride | null>;
 }
 
-interface ResolveInvocationContextOptions {
+export interface ResolveInvocationContextOptions {
   args: ParsedArgs;
   env?: NodeJS.ProcessEnv;
   deps?: ResolveInvocationContextDeps;
@@ -78,6 +81,29 @@ export async function resolveInvocationContext({
   };
 }
 
+export interface InvocationContextResult {
+  context?: InvocationContext;
+  errorResult?: CliResult;
+}
+
+export async function tryResolveInvocationContext(
+  options: ResolveInvocationContextOptions,
+): Promise<InvocationContextResult> {
+  try {
+    return { context: await resolveInvocationContext(options) };
+  } catch (error) {
+    const profileResult = profileErrorResult(error);
+    if (profileResult) {
+      return { errorResult: profileResult };
+    }
+    const overrideResult = workspaceOverrideErrorResult(error);
+    if (overrideResult) {
+      return { errorResult: overrideResult };
+    }
+    throw error;
+  }
+}
+
 export function selectProfile({
   args,
   profiles,
@@ -91,7 +117,7 @@ export function selectProfile({
     return {
       error:
         available.length === 0
-          ? "No profile configured (no profiles configured; run /consult:setup)"
+          ? "No profile configured (no profiles configured; run 'consult setup')"
           : `No profile selected. Available profiles: ${available.join(", ")}`,
     };
   }

@@ -192,7 +192,218 @@ test("cancel ignores a stale worker pid after broker cancel succeeds", async (t)
   assert.doesNotMatch(result.stdout, /worker pid/);
 });
 
-test("cancel marks an active job failed when the broker is unreachable", async (t) => {
+test("cancel preserves partial output when a cascade target fails", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-parent",
+    status: "running",
+    profile: "codex",
+    chainId: "job-parent",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-child",
+    status: "running",
+    profile: "codex",
+    chainId: "job-parent",
+    parentJobId: "job-parent",
+    host: null,
+    hostSessionId: null,
+  });
+  const client = new FakeBrokerClient({ ok: true });
+
+  const result = await runCancel({
+    args: { positional: ["job-parent"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      connectBrokerSession: async () => ({ client: client as never, alreadyRunning: true }),
+    },
+  });
+
+  assert.equal(result.exitCode, 2);
+  // The parent was already cancelled before the child failed; that output
+  // must not be discarded.
+  assert.match(result.stdout, /"ok":true/);
+  assert.match(result.stderr, /invalid job record job-child: missing host identity/);
+});
+
+test("cancel signals a live inline runner instead of dialing a broker", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-inline",
+    status: "running",
+    profile: "codex",
+    runner: "inline",
+    runnerPid: 4242,
+  });
+  const signalled: Array<[number, string]> = [];
+
+  const result = await runCancel({
+    args: { positional: ["job-inline"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      connectBrokerSession: async () => {
+        throw new Error("broker should not be touched for an inline job");
+      },
+      pidIsAlive: (pid) => pid === 4242,
+      signalPid: (pid, signal) => {
+        signalled.push([pid, signal]);
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(signalled, [[4242, "SIGTERM"]]);
+  assert.match(result.stdout, /inline runner pid 4242 signalled/);
+  // The record settles via the signalled companion, not the cancel command.
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-inline.json"), "utf8"),
+  );
+  assert.equal(record.status, "running");
+});
+
+test("cancel marks an inline job cancelled when the runner pid is dead", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-inline-dead",
+    status: "running",
+    profile: "codex",
+    runner: "inline",
+    runnerPid: 4242,
+  });
+
+  const result = await runCancel({
+    args: { positional: ["job-inline-dead"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      connectBrokerSession: async () => {
+        throw new Error("broker should not be touched for an inline job");
+      },
+      pidIsAlive: () => false,
+      signalPid: () => {
+        throw new Error("dead pid must not be signalled");
+      },
+      now: () => "2026-05-14T10:01:00.000Z",
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /inline runner not running/);
+  assert.match(result.stdout, /record marked cancelled/);
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-inline-dead.json"), "utf8"),
+  );
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.stopReason, "cancelled");
+  assert.equal(record.errorMessage, "inline runner not running at cancel time");
+  assert.equal(record.completedAt, "2026-05-14T10:01:00.000Z");
+});
+
+test("cancel settles an inline job when the runner dies between check and signal", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-inline-esrch",
+    status: "running",
+    profile: "codex",
+    runner: "inline",
+    runnerPid: 4242,
+  });
+
+  const result = await runCancel({
+    args: { positional: ["job-inline-esrch"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      pidIsAlive: () => true,
+      signalPid: () => {
+        const error = new Error("kill ESRCH") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /record marked cancelled/);
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-inline-esrch.json"), "utf8"),
+  );
+  assert.equal(record.status, "cancelled");
+});
+
+test("cancel reports a permission error instead of crashing on EPERM", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-inline-eperm",
+    status: "running",
+    profile: "codex",
+    runner: "inline",
+    runnerPid: 4242,
+  });
+
+  const result = await runCancel({
+    args: { positional: ["job-inline-eperm"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      pidIsAlive: () => true,
+      signalPid: () => {
+        const error = new Error("kill EPERM") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /permission denied \(pid likely reused\)/);
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-inline-eperm.json"), "utf8"),
+  );
+  assert.equal(record.status, "running");
+});
+
+test("cancel treats a reused inline runner pid as dead via the start-time check", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-inline-reused",
+    status: "running",
+    profile: "codex",
+    runner: "inline",
+    runnerPid: 4242,
+    runnerStartTime: "111111",
+  });
+
+  const result = await runCancel({
+    args: { positional: ["job-inline-reused"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      pidIsAlive: () => true,
+      pidMatchesStartTime: async () => false,
+      signalPid: () => {
+        throw new Error("a reused pid must not be signalled");
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /record marked cancelled/);
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-inline-reused.json"), "utf8"),
+  );
+  assert.equal(record.status, "cancelled");
+});
+
+test("cancel marks an active job cancelled when the broker is unreachable", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeJob(workspaceRoot, {
@@ -221,8 +432,12 @@ test("cancel marks an active job failed when the broker is unreachable", async (
   );
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /broker not running/);
+  assert.match(result.stdout, /record marked cancelled/);
   assert.match(result.stdout, /consult brokers --cleanup/);
-  assert.equal(record.status, "failed");
+  // Cancel yields the documented `cancelled` lifecycle status, with the
+  // unreachable-broker diagnostic preserved in the message.
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.stopReason, "cancelled");
   assert.equal(record.errorMessage, "broker not running at cancel time");
   assert.equal(record.completedAt, "2026-05-14T10:01:00.000Z");
 });

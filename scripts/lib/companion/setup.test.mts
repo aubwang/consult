@@ -29,6 +29,25 @@ test("setup json mode prints registry status and profiles", async (t) => {
   });
 });
 
+test("setup exits 2 when --install or --set-default is passed without a value", async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-setup-"));
+  withDataDir(t, dataDir);
+
+  const installResult = await runSetup({
+    args: { positional: [], flags: { install: true } },
+    deps: {},
+  });
+  assert.equal(installResult.exitCode, 2);
+  assert.equal(installResult.stderr, "--install requires a value\n");
+
+  const setDefaultResult = await runSetup({
+    args: { positional: [], flags: { "set-default": true } },
+    deps: {},
+  });
+  assert.equal(setDefaultResult.exitCode, 2);
+  assert.equal(setDefaultResult.stderr, "--set-default requires a value\n");
+});
+
 test("setup install persists a verified profile", async (t) => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-setup-"));
   withDataDir(t, dataDir);

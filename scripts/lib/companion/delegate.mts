@@ -1,7 +1,7 @@
 import { spawn as defaultSpawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { stringFlag } from "../args.mts";
+import { boolFlag, missingFlagValueError, stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { resolveNewJobChain } from "../delegation-chain.mts";
 import {
@@ -10,25 +10,21 @@ import {
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
+import { processStartTime } from "../process-identity.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
-import { resolveInvocationContext } from "./invocation-context.mts";
+import { tryResolveInvocationContext } from "./invocation-context.mts";
 import type { InvocationContext, ResolveInvocationContextDeps } from "./invocation-context.mts";
-import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
+import type { CliResult } from "./job-record-errors.mts";
 import { createOutput } from "./output.mts";
 import type { OutputDeps } from "./output.mts";
-import { profileErrorResult } from "./profile-errors.mts";
 import {
   findResumeCandidate,
   findResumeJobCandidate,
 } from "./resume-candidate.mts";
-import { workspaceOverrideErrorResult } from "./workspace-override-errors.mts";
 
-export interface DelegateResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+export type DelegateResult = CliResult;
 
 export interface DelegateDeps
   extends OutputDeps,
@@ -82,27 +78,16 @@ export async function runDelegate({
     return output.result(2);
   }
 
-  let context: InvocationContext;
-  try {
-    context = await resolveInvocationContext({
-      args,
-      env,
-      deps,
-    });
-  } catch (error) {
-    const profileResult = profileErrorResult(error);
-    if (profileResult) {
-      output.stderr(profileResult.stderr);
-      return output.result(profileResult.exitCode);
-    }
-    const overrideResult = workspaceOverrideErrorResult(error);
-    if (overrideResult) {
-      output.stderr(overrideResult.stderr);
-      return output.result(overrideResult.exitCode);
-    }
-    throw error;
+  const { context, errorResult } = await tryResolveInvocationContext({
+    args,
+    env,
+    deps,
+  });
+  if (errorResult) {
+    output.stderr(errorResult.stderr);
+    return output.result(errorResult.exitCode);
   }
-  const { workspaceRoot, hostIdentity, selected } = context;
+  const { workspaceRoot, hostIdentity, selected } = context as InvocationContext;
   if (selected.error) {
     output.stderr(`${selected.error}\n`);
     return output.result(2);
@@ -122,16 +107,13 @@ export async function runDelegate({
       }
       resumeSessionId = resumeCandidate.record!.sessionId;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        output.stderr(`resume job not found: ${validated.resumeJobId}\n`);
-        return output.result(2);
-      }
-      const malformedResult = jobRecordErrorResult(error);
-      if (malformedResult) {
-        output.stderr(malformedResult.stderr);
-        return output.result(malformedResult.exitCode);
-      }
-      throw error;
+      const lookupResult = jobLookupErrorResult(
+        error,
+        validated.resumeJobId,
+        "resume job not found",
+      );
+      output.stderr(lookupResult.stderr);
+      return output.result(lookupResult.exitCode);
     }
   } else if (validated.resume) {
     try {
@@ -160,12 +142,16 @@ export async function runDelegate({
   const generateJobId = deps.generateJobId ?? defaultGenerateJobId;
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
   const jobId = generateJobId();
+  // Delegation lineage: an explicit --parent-job flag wins; otherwise fall
+  // back to CONSULT_PARENT_JOB, which the Broker injects into delegated agent
+  // environments so nested delegations stay chained (ADR-0007/0008).
+  const parentJobId = validated.parentJobId ?? (env.CONSULT_PARENT_JOB || null);
   let chain;
   try {
     chain = await resolveNewJobChain({
       workspaceRoot,
       jobId,
-      parentJobId: validated.parentJobId,
+      parentJobId,
       requestedMode: validated.mode,
       writeExplicit: validated.writeExplicit,
     });
@@ -195,6 +181,16 @@ export async function runDelegate({
     model: validated.model,
     effort: validated.effort,
     resumeSessionId: resumeSessionId as string | undefined,
+    // Foreground jobs run in-process (ADR-0021); record the runner kind,
+    // companion pid, and pid start time so `consult cancel` can signal it
+    // (without pid-reuse risk) instead of dialing a Broker endpoint.
+    ...(validated.background
+      ? {}
+      : {
+          runner: "inline",
+          runnerPid: process.pid,
+          runnerStartTime: (await processStartTime(process.pid).catch(() => null)) ?? undefined,
+        }),
   });
 
   await writeJobRecord(workspaceRoot, jobId, jobRecord);
@@ -212,7 +208,11 @@ export async function runDelegate({
       },
     );
     child.unref();
-    output.stdout(`consult delegate ${jobId} queued\n/consult:status ${jobId}\n`);
+    if (validated.json) {
+      output.stdout(`${JSON.stringify({ status: "queued", jobId })}\n`);
+    } else {
+      output.stdout(`consult delegate ${jobId} queued\nconsult status ${jobId}\n`);
+    }
     return output.result(0);
   }
 
@@ -227,24 +227,48 @@ export async function runDelegate({
     deps,
     output,
     json: validated.json,
+    inline: true,
   });
 }
 
 function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const flags = args.flags ?? {};
-  if (flags.write !== undefined && flags["read-only"] !== undefined) {
+  const missingValue = missingFlagValueError(flags, [
+    "agent",
+    "profile",
+    "model",
+    "effort",
+    "host",
+    "host-session",
+    "host-session-id",
+    "parent-job",
+    "parent-job-id",
+    "resume-job",
+    "prompt",
+  ]);
+  if (missingValue) {
+    return { error: missingValue };
+  }
+  const write = boolFlag(flags.write);
+  const readOnly = boolFlag(flags["read-only"]);
+  const resume = boolFlag(flags.resume);
+  const fresh = boolFlag(flags.fresh);
+  const background = boolFlag(flags.background);
+  const wait = boolFlag(flags.wait);
+  const resumeJobId = stringFlag(flags["resume-job"]);
+  if (write && readOnly) {
     return { error: "--write and --read-only are mutually exclusive" };
   }
-  if (flags.resume !== undefined && flags.fresh !== undefined) {
+  if (resume && fresh) {
     return { error: "--resume and --fresh are mutually exclusive" };
   }
-  if (flags["resume-job"] !== undefined && flags.fresh !== undefined) {
+  if (resumeJobId !== undefined && fresh) {
     return { error: "--resume-job and --fresh are mutually exclusive" };
   }
-  if (flags["resume-job"] !== undefined && flags.resume !== undefined) {
+  if (resumeJobId !== undefined && resume) {
     return { error: "--resume-job and --resume are mutually exclusive" };
   }
-  if (flags.background !== undefined && flags.wait !== undefined) {
+  if (background && wait) {
     return { error: "--background and --wait are mutually exclusive" };
   }
   const promptFromFlag = stringFlag(flags.prompt);
@@ -254,17 +278,17 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   }
 
   return {
-    mode: flags.write !== undefined ? "write" : "read-only",
-    writeExplicit: flags.write !== undefined,
+    mode: write ? "write" : "read-only",
+    writeExplicit: write,
     parentJobId:
       stringFlag(flags["parent-job"]) ?? stringFlag(flags["parent-job-id"]) ?? null,
     prompt: promptFromFlag || promptFromPositionals,
     model: stringFlag(flags.model),
     effort: stringFlag(flags.effort),
-    json: flags.json !== undefined,
-    resume: flags.resume !== undefined,
-    resumeJobId: stringFlag(flags["resume-job"]),
-    background: flags.background !== undefined,
+    json: boolFlag(flags.json),
+    resume,
+    resumeJobId,
+    background,
   };
 }
 

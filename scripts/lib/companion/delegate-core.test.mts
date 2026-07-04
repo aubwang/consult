@@ -91,7 +91,8 @@ test("runDelegateOnce persists finalized error messages for failed jobs", async 
   });
   const result = await resultPromise;
 
-  assert.equal(result.exitCode, 0);
+  // A turn that finalized as failed exits 6 per the agent contract.
+  assert.equal(result.exitCode, 6);
   const persistedRecord = persistedRecords.at(-1) as Record<string, unknown>;
   assert.equal(persistedRecord.status, "failed");
   assert.equal(persistedRecord.errorMessage, "test error");

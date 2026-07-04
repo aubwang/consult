@@ -9,6 +9,7 @@ import type { BrokerIdentity } from "./broker-endpoint.mts";
 import { connectBroker } from "./broker-client.mts";
 import type { BrokerClient } from "./broker-client.mts";
 import { pidMatchesStartTime } from "./process-identity.mts";
+import { pidIsAlive, terminateProcessTree } from "./process.mts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const brokerScriptPath = path.resolve(__dirname, "../consult-broker.mts");
@@ -279,7 +280,7 @@ async function connectAndPing(endpoint: string, pingTimeoutMs: number): Promise<
   let client: BrokerClient | undefined;
   try {
     client = await connectBroker(endpoint, { connectTimeoutMs: pingTimeoutMs });
-    await client.request("consult/ping", {}, { timeoutMs: 150 });
+    await client.request("consult/ping", {}, { timeoutMs: pingTimeoutMs });
   } catch {
     await client?.close().catch(() => {});
     throw new Error("broker ping failed");
@@ -341,31 +342,8 @@ async function terminatePid(
   if (requireIdentity && !(await pidMatchesStartTime(pid, pidStartTime))) {
     return { signaled: false };
   }
-  signalPidTree(pid, "SIGTERM");
-  await waitForPidExit(pid, timeoutMs);
-  if (await pidAlive(pid)) {
-    signalPidTree(pid, "SIGKILL");
-    await waitForPidExit(pid, timeoutMs);
-  }
+  await terminateProcessTree(pid, { timeoutMs });
   return { signaled: true };
-}
-
-function signalPidTree(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal);
-    return;
-  } catch (error) {
-    if ((error as CodedError).code !== "ESRCH") {
-      throw error;
-    }
-  }
-  try {
-    process.kill(pid, signal);
-  } catch (error) {
-    if ((error as CodedError).code !== "ESRCH") {
-      throw error;
-    }
-  }
 }
 
 async function waitForExitOrMissing(
@@ -384,26 +362,9 @@ async function waitForExitOrMissing(
   }
 }
 
-async function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!(await pidAlive(pid))) {
-      return;
-    }
-    await sleep(25);
-  }
-}
-
 export async function pidAlive(pid: number): Promise<boolean> {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if ((error as CodedError).code === "ESRCH") {
-      return false;
-    }
-    throw error;
-  }
+  // Single liveness implementation: EPERM means the pid exists but is not ours.
+  return pidIsAlive(pid);
 }
 
 function sleep(ms: number): Promise<void> {

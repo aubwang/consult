@@ -111,6 +111,32 @@ test("brokerSocketPath falls back to tmp when XDG_RUNTIME_DIR is unusable", asyn
   }
 });
 
+test("brokerSocketPath errors instead of truncating the identity hash away", async () => {
+  const workspace = await makeWorkspace();
+  const previousRuntimeDir = process.env.XDG_RUNTIME_DIR;
+  const previousTmpdir = process.env.TMPDIR;
+
+  try {
+    delete process.env.XDG_RUNTIME_DIR;
+    process.env.TMPDIR = path.join(workspace, "x".repeat(80));
+    assert.throws(
+      () => brokerSocketPath({ workspaceRoot: workspace, jobId: "job-1" }),
+      /broker socket path exceeds/,
+    );
+  } finally {
+    if (previousRuntimeDir === undefined) {
+      delete process.env.XDG_RUNTIME_DIR;
+    } else {
+      process.env.XDG_RUNTIME_DIR = previousRuntimeDir;
+    }
+    if (previousTmpdir === undefined) {
+      delete process.env.TMPDIR;
+    } else {
+      process.env.TMPDIR = previousTmpdir;
+    }
+  }
+});
+
 test("brokerSocketPath is stable and differs by job id", async () => {
   const workspace = await makeWorkspace();
   const firstInput = {
