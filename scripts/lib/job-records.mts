@@ -50,6 +50,12 @@ export interface JobRecord extends Record<string, unknown> {
   effort?: string;
   resumeSessionId?: string;
   baseRef?: string;
+  // Foreground jobs run in-process in the companion (ADR-0021): runner is
+  // "inline" and runnerPid is the companion pid `consult cancel` signals.
+  // runnerStartTime guards that signal against pid reuse.
+  runner?: string;
+  runnerPid?: number;
+  runnerStartTime?: string;
 }
 
 export interface JobClockOptions {

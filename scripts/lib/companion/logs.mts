@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 
 import {
-  isFinalStatus,
   jobLogPath,
   readWorkspaceJobRecord,
 } from "../job-records.mts";
@@ -10,7 +9,8 @@ import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspac
 import { renderSessionUpdate } from "../session-update-renderer.mts";
 import { createOutput } from "./output.mts";
 import type { CommandResult, OutputDeps } from "./output.mts";
-import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { jobLookupErrorResult } from "./job-record-errors.mts";
+import { pollUntilFinalRecord } from "./job-poll.mts";
 import type { ParsedArgs } from "../args.mts";
 
 export interface LogsDeps extends OutputDeps {
@@ -77,60 +77,54 @@ export async function runLogs({
   };
 }
 
+// Follow mode streams incrementally through the injected writers (defaulting
+// to process stdout/stderr) and returns empty stdout/stderr; the caller must
+// not print the result text again.
 async function followLogs(
   workspaceRoot: string,
   jobId: string,
   deps: LogsDeps,
 ): Promise<CommandResult> {
-  const output = createOutput({
-    stdoutWrite: deps.stdoutWrite ?? (() => {}),
-    stderrWrite: deps.stderrWrite ?? (() => {}),
-  });
-  const poll = deps.poll ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const nowMs = deps.nowMs ?? (() => Date.now());
-  const deadline = nowMs() + (deps.maxWaitMs ?? 30 * 60 * 1000);
+  const output = createOutput(deps);
   let renderedLineCount = 0;
-  let record: JobRecord;
 
   try {
-    record = await readJobRecord(workspaceRoot, jobId, deps);
-    renderedLineCount = await appendNewLogText(workspaceRoot, jobId, renderedLineCount, deps, output);
-    while (!isFinalStatus(record.status)) {
-      if (nowMs() >= deadline) {
-        const error = new Error(`timed out following job ${jobId}`) as WaitTimeoutError;
-        error.code = "FOLLOW_TIMEOUT";
-        throw error;
-      }
-      await poll(200);
-      record = await readJobRecord(workspaceRoot, jobId, deps);
-      renderedLineCount = await appendNewLogText(
-        workspaceRoot,
-        jobId,
-        renderedLineCount,
-        deps,
-        output,
-      );
-    }
+    await pollUntilFinalRecord({
+      readRecord: () => readJobRecord(workspaceRoot, jobId, deps),
+      onRecord: async () => {
+        renderedLineCount = await appendNewLogText(
+          workspaceRoot,
+          jobId,
+          renderedLineCount,
+          deps,
+          output,
+        );
+      },
+      maxWaitMs: deps.maxWaitMs,
+      poll: deps.poll,
+      nowMs: deps.nowMs,
+      timeoutCode: "FOLLOW_TIMEOUT",
+      timeoutMessage: `timed out following job ${jobId}`,
+    });
   } catch (error) {
     if ((error as WaitTimeoutError).code === "FOLLOW_TIMEOUT") {
       output.stderr(`${(error as Error).message}\n`);
-      return output.result(4);
+      return streamedResult(4);
     }
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      output.stderr(`job not found: ${jobId}\n`);
-      return output.result(2);
+    if ((error as NodeJS.ErrnoException).code === "JOB_LOG_MALFORMED") {
+      output.stderr(`${(error as Error).message}\n`);
+      return streamedResult(2);
     }
-    const malformedRecord = jobRecordErrorResult(error);
-    if (malformedRecord) {
-      output.stderr(malformedRecord.stderr);
-      return output.result(malformedRecord.exitCode);
-    }
-    const logError = logReadErrorResult(error);
-    output.stderr(logError.stderr);
-    return output.result(logError.exitCode);
+    const lookupResult = jobLookupErrorResult(error, jobId);
+    output.stderr(lookupResult.stderr);
+    return streamedResult(lookupResult.exitCode);
   }
 
-  return output.result(0);
+  return streamedResult(0);
+}
+
+function streamedResult(exitCode: number): CommandResult {
+  return { exitCode, stdout: "", stderr: "" };
 }
 
 async function appendNewLogText(
@@ -140,7 +134,7 @@ async function appendNewLogText(
   deps: LogsDeps,
   output: { stdout(text: string): void },
 ): Promise<number> {
-  const parsed = await readParsedLog(workspaceRoot, jobId, deps);
+  const parsed = await readParsedLog(workspaceRoot, jobId, deps, { dropPartialTail: true });
   output.stdout(renderLogEntries(parsed.entries.slice(renderedLineCount)));
   return parsed.entries.length;
 }
@@ -149,6 +143,7 @@ async function readParsedLog(
   workspaceRoot: string,
   jobId: string,
   deps: LogsDeps,
+  { dropPartialTail = false }: { dropPartialTail?: boolean } = {},
 ): Promise<ParsedLog> {
   let contents: string;
   const path = jobLogPath(workspaceRoot, jobId);
@@ -160,7 +155,7 @@ async function readParsedLog(
     }
     throw error;
   }
-  return parseLog(contents, path);
+  return parseLog(contents, path, { dropPartialTail });
 }
 
 async function readJobRecord(
@@ -175,8 +170,17 @@ async function defaultReadLogFile(path: string): Promise<string> {
   return await fs.readFile(path, "utf8");
 }
 
-function parseLog(contents: string, path: string): ParsedLog {
-  const lines = contents.endsWith("\n") ? contents.slice(0, -1).split("\n") : contents.split("\n");
+function parseLog(
+  contents: string,
+  path: string,
+  { dropPartialTail = false }: { dropPartialTail?: boolean } = {},
+): ParsedLog {
+  let text = contents;
+  if (dropPartialTail && !text.endsWith("\n")) {
+    // A writer may still be flushing the trailing line; parse it on a later read.
+    text = text.slice(0, text.lastIndexOf("\n") + 1);
+  }
+  const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
   const entries: unknown[] = [];
   if (lines.length === 1 && lines[0] === "") {
     return { entries, lineCount: 0 };
@@ -207,17 +211,6 @@ function renderLogEntry(entry: unknown): string {
     return renderSessionUpdate((entry as { params?: unknown }).params as never);
   }
   return renderSessionUpdate(entry as never);
-}
-
-function jobLookupErrorResult(error: unknown, jobId: string): CommandResult {
-  if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-    return { exitCode: 2, stdout: "", stderr: `job not found: ${jobId}\n` };
-  }
-  const malformedResult = jobRecordErrorResult(error);
-  if (malformedResult) {
-    return malformedResult;
-  }
-  throw error;
 }
 
 function logReadErrorResult(error: unknown): CommandResult {

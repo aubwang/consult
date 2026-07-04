@@ -18,7 +18,28 @@ test("agents lists setup guidance when no profiles are configured", async (t) =>
   });
 
   assert.equal(result.exitCode, 0);
-  assert.match(result.stdout, /\(no profiles configured; run \/consult:setup\)/);
+  assert.match(result.stdout, /\(no profiles configured; run 'consult setup'\)/);
+});
+
+test("agents exits 2 when --set is passed without a value", async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-agents-"));
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "codex",
+    profiles: {
+      codex: profileFixture({ registryId: "codex", binary: "/bin/codex-acp" }),
+    },
+  });
+
+  const result = await runAgents({
+    args: { positional: [], flags: { set: true } },
+    env: {},
+    deps: {},
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--set requires a value\n");
 });
 
 test("agents exits 2 when profiles are malformed", async (t) => {

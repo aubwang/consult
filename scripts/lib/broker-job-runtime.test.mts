@@ -6,7 +6,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 
 import { createBrokerJobRuntime } from "./broker-job-runtime.mts";
-import type { BrokerJobSocketLike } from "./broker-job-runtime.mts";
+import type { BrokerAgentHandle, BrokerJobSocketLike } from "./broker-job-runtime.mts";
 import { TEXT_TRUNCATED_MARKER } from "./bounded-text.mts";
 
 test("broker job runtime buffers updates and notifies subscribers on finalize", async (t: TestContext) => {
@@ -103,6 +103,52 @@ test("broker job runtime caps accumulated final text", async (t: TestContext) =>
 
   assert.equal(job.finalText.length, 40);
   assert.equal(job.finalText, `abcdefg${TEXT_TRUNCATED_MARKER}`);
+});
+
+test("cancelJob ensures the agent with the running job's own mode", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const modes: Array<string | undefined> = [];
+  const cancelledSessions: string[] = [];
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async (mode?: string) => {
+      modes.push(mode);
+      return {
+        connection: {
+          cancel: async ({ sessionId }: { sessionId: string }) => {
+            cancelledSessions.push(sessionId);
+          },
+        },
+      } as unknown as BrokerAgentHandle;
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+  });
+  const job = runtime.createJob(
+    {
+      jobId: "job-cancel-mode",
+      kind: "delegate",
+      profile: "codex",
+      mode: "write",
+      prompt: "fix",
+    },
+    fakeSocket("originator"),
+  );
+  runtime.trackSession("session-1", job, "write");
+
+  await runtime.cancelJob(job);
+
+  // A bare ensureAgent() would default to read-only and restart a sandboxed
+  // write-mode agent mid-turn instead of cancelling on the live one.
+  assert.deepEqual(modes, ["write"]);
+  assert.deepEqual(cancelledSessions, ["session-1"]);
+  await runtime.finalizeJob(job, { stopReason: "cancelled", sessionId: "session-1" });
 });
 
 interface FakeSocket extends BrokerJobSocketLike {

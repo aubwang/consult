@@ -230,11 +230,13 @@ test("status follow streams rendered logs until the job finalizes", async (t) =>
     }),
   ]);
   let polls = 0;
+  const streamed: string[] = [];
 
   const result = await runStatus({
     args: { positional: ["job-follow"], flags: { follow: true } },
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
+      stdoutWrite: (text: string) => streamed.push(text),
       poll: async () => {
         polls += 1;
         await writeLog(workspaceRoot, "job-follow", [
@@ -272,7 +274,9 @@ test("status follow streams rendered logs until the job finalizes", async (t) =>
 
   assert.equal(result.exitCode, 0);
   assert.equal(polls, 1);
-  assert.equal(result.stdout, "first second");
+  // status --follow streams through the writer and returns empty stdout.
+  assert.equal(result.stdout, "");
+  assert.equal(streamed.join(""), "first second");
 });
 
 test("status wait exits 4 when the job never finishes before timeout", async (t) => {

@@ -71,20 +71,54 @@ test("logs follow appends newly rendered log text until the job finalizes", asyn
 
   assert.equal(result.exitCode, 0);
   assert.equal(polls, 1);
-  assert.equal(result.stdout, "first second");
+  // Follow mode streams through the writer and returns empty stdout so the
+  // CLI entrypoint does not print the streamed text a second time.
+  assert.equal(result.stdout, "");
   assert.deepEqual(streamed, ["first", " second"]);
+});
+
+test("logs follow skips a partially flushed trailing line and picks it up later", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-partial", status: "running" });
+  const fullLine = JSON.stringify(updateText("first"));
+  const secondLine = JSON.stringify(updateText(" second"));
+  await writeRawLog(workspaceRoot, "job-partial", `${fullLine}\n${secondLine.slice(0, 10)}`);
+  const streamed: string[] = [];
+  let polls = 0;
+
+  const result = await runLogs({
+    args: { positional: ["job-partial"], flags: { follow: true } },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      stdoutWrite: (text) => streamed.push(text),
+      stderrWrite: () => {},
+      poll: async () => {
+        polls += 1;
+        await writeRawLog(workspaceRoot, "job-partial", `${fullLine}\n${secondLine}\n`);
+        await writeJob(workspaceRoot, { jobId: "job-partial", status: "completed" });
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(polls, 1);
+  assert.equal(streamed.filter((chunk) => chunk !== "").join(""), "first second");
 });
 
 test("logs follow times out when the job does not finalize", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeJob(workspaceRoot, { jobId: "job-timeout", status: "running" });
+  const streamedErrors: string[] = [];
   let now = 0;
 
   const result = await runLogs({
     args: { positional: ["job-timeout"], flags: { follow: true } },
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
+      stdoutWrite: () => {},
+      stderrWrite: (text) => streamedErrors.push(text),
       maxWaitMs: 1,
       nowMs: () => now,
       poll: async () => {
@@ -94,7 +128,8 @@ test("logs follow times out when the job does not finalize", async (t) => {
   });
 
   assert.equal(result.exitCode, 4);
-  assert.match(result.stderr, /timed out following job job-timeout/);
+  assert.equal(result.stderr, "");
+  assert.match(streamedErrors.join(""), /timed out following job job-timeout/);
 });
 
 test("logs exits 2 for an unknown job id", async (t) => {

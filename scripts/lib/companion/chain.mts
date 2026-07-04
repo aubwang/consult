@@ -6,8 +6,9 @@ import {
 import type { JobRecord } from "../job-records.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import type { ParsedArgs } from "../args.mts";
+import { briefText } from "./brief-text.mts";
 import type { CommandResult } from "./output.mts";
-import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 
 export interface ChainDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
@@ -57,14 +58,7 @@ export async function runChain({ args, deps = {} }: RunChainOptions): Promise<Co
   try {
     requestedRecord = await (deps.readJobRecord ?? readWorkspaceJobRecord)(workspaceRoot, jobId);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { exitCode: 2, stdout: "", stderr: `job not found: ${jobId}\n` };
-    }
-    const malformedResult = jobRecordErrorResult(error);
-    if (malformedResult) {
-      return malformedResult;
-    }
-    throw error;
+    return jobLookupErrorResult(error, jobId);
   }
 
   let records: JobRecord[];
@@ -198,12 +192,4 @@ function renderChainTable(rollup: ChainRollup, records: ChainRecord[]): string {
     );
   }
   return `${lines.join("\n")}\n`;
-}
-
-function briefText(text: string): string {
-  const compact = String(text).replace(/\s+/g, " ").trim();
-  if (!compact) {
-    return "-";
-  }
-  return compact.length > 80 ? `${compact.slice(0, 77)}...` : compact;
 }

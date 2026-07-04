@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 
 import { dispatch } from "./consult-companion.mts";
 import type { ParsedArgs } from "./lib/args.mts";
+import { jobsDir, logsDir } from "./lib/broker-endpoint.mts";
+import { resolveWorkspaceRoot } from "./lib/workspace.mts";
 
 const companionPath = fileURLToPath(new URL("./consult-companion.mts", import.meta.url));
 const stableCliPath = fileURLToPath(new URL("../bin/consult", import.meta.url));
@@ -95,6 +97,97 @@ test("dispatch prints the agent contract for help --agent", async () => {
     assert.equal(result.stdout.includes("consult doctor"), true);
     assert.equal(result.stdout.includes("Common workflow:"), false);
   }
+});
+
+test("agent contract documents the extended exit codes, lineage env, and json coverage", async () => {
+  const result = await dispatch("help", { positional: [], flags: { agent: true } });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /6 the delegated turn finalized as failed/);
+  assert.match(result.stdout, /7 `review` is not supported by the selected Profile/);
+  assert.match(result.stdout, /8 the Profile did not advertise the review command/);
+  assert.match(result.stdout, /CONSULT_PARENT_JOB/);
+  assert.match(result.stdout, /status, result, logs, chain, doctor, brokers/);
+  assert.match(result.stdout, /most recent completed or failed Job/);
+  assert.match(result.stdout, /cancelled Jobs are skipped/);
+  assert.doesNotMatch(result.stdout, /most recent finalized Job/);
+});
+
+test("dispatch maps NO_WORKSPACE to an actionable exit-2 error", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "consult-no-workspace-"));
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  t.after(async () => {
+    process.chdir(originalCwd);
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  const result = await dispatch("status", { positional: [], flags: {} });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "no workspace found: run consult inside a git repository\n");
+});
+
+test("dispatch review with default deps prints its error exactly once", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-e2e-review-"));
+  withDataDir(t, root);
+  const stderrCapture = captureStream(t, process.stderr);
+
+  const result = await dispatch("review", { positional: [], flags: {} });
+
+  assert.equal(result.exitCode, 2);
+  // Streaming handlers return empty stdout/stderr; the streamed write is the
+  // single copy of the message.
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  assert.equal(
+    stderrCapture.text(),
+    "No profile configured (no profiles configured; run 'consult setup')\n",
+  );
+});
+
+test("dispatch task-worker with default deps prints its error exactly once", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-e2e-worker-"));
+  withDataDir(t, root);
+  const stderrCapture = captureStream(t, process.stderr);
+
+  const result = await dispatch("task-worker", { positional: [], flags: {} });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  assert.equal(stderrCapture.text(), "task-worker requires --job-id\n");
+});
+
+test("dispatch logs --follow with default deps streams incrementally", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-e2e-follow-"));
+  withDataDir(t, root);
+  const workspaceRoot = await resolveWorkspaceRoot();
+  const jobDir = jobsDir(workspaceRoot);
+  const logDir = logsDir(workspaceRoot);
+  fs.mkdirSync(jobDir, { recursive: true });
+  fs.mkdirSync(logDir, { recursive: true });
+  const jobId = "job-e2e-follow";
+  const jobPath = path.join(jobDir, `${jobId}.json`);
+  const logPath = path.join(logDir, `${jobId}.log`);
+  fs.writeFileSync(jobPath, JSON.stringify({ jobId, status: "running" }));
+  fs.writeFileSync(logPath, `${JSON.stringify(followUpdate(jobId, "first"))}\n`);
+  const stdoutCapture = captureStream(t, process.stdout);
+
+  const resultPromise = dispatch("logs", { positional: [jobId], flags: { follow: true } });
+  await waitUntil(() => stdoutCapture.text().includes("first"));
+  const textBeforeFinalize = stdoutCapture.text();
+  fs.appendFileSync(logPath, `${JSON.stringify(followUpdate(jobId, " second"))}\n`);
+  fs.writeFileSync(jobPath, JSON.stringify({ jobId, status: "completed" }));
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  // Content arrived before the job finalized, so output really streamed.
+  assert.equal(textBeforeFinalize, "first");
+  assert.equal(stdoutCapture.text(), "first second");
 });
 
 test("dispatch routes setup json mode", async (t) => {
@@ -232,6 +325,58 @@ test("stable consult CLI preserves handler stdout exactly", async (t) => {
 interface WaitForChildResult {
   error?: Error;
   code?: number | null;
+}
+
+function withDataDir(t: { after: (fn: () => void | Promise<void>) => void }, dataDir: string): void {
+  const originalDataDir = process.env.CONSULT_DATA_DIR;
+  process.env.CONSULT_DATA_DIR = dataDir;
+  t.after(async () => {
+    if (originalDataDir === undefined) {
+      delete process.env.CONSULT_DATA_DIR;
+    } else {
+      process.env.CONSULT_DATA_DIR = originalDataDir;
+    }
+    await fsp.rm(dataDir, { recursive: true, force: true });
+  });
+}
+
+function captureStream(
+  t: { after: (fn: () => void) => void },
+  stream: NodeJS.WriteStream,
+): { text: () => string } {
+  const chunks: string[] = [];
+  const originalWrite = stream.write;
+  stream.write = ((chunk: string | Uint8Array) => {
+    chunks.push(String(chunk));
+    return true;
+  }) as typeof stream.write;
+  t.after(() => {
+    stream.write = originalWrite;
+  });
+  return { text: () => chunks.join("") };
+}
+
+async function waitUntil(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error("waitUntil timed out");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+function followUpdate(jobId: string, text: string): Record<string, unknown> {
+  return {
+    method: "consult/update",
+    params: {
+      jobId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+      },
+    },
+  };
 }
 
 function waitForChild(child: ChildProcess): Promise<WaitForChildResult> {

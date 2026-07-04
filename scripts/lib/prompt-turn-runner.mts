@@ -151,17 +151,22 @@ export async function runPromptTurn({
     }
   });
 
+  // One failed log/record write must not poison the chain and block finalization.
+  const reportWriteFailure = (error: unknown) => {
+    output.stderr(`job record write failed: ${(error as Error).message}\n`);
+  };
+
   client.on("consult/update", (notification) => {
     onUpdate?.(notification, context);
     notificationChain = notificationChain.then(async () => {
       await appendLogLine(workspaceRoot, jobRecord.jobId!, {
         method: "consult/update",
         params: notification,
-      });
+      }).catch(reportWriteFailure);
       if (!sawUpdate) {
         sawUpdate = true;
         markJobRunning(jobRecord, { now });
-        await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord);
+        await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord).catch(reportWriteFailure);
       }
       const rendered = renderUpdate(notification);
       if (rendered) {
@@ -178,7 +183,7 @@ export async function runPromptTurn({
       await appendLogLine(workspaceRoot, jobRecord.jobId!, {
         method: "consult/finalized",
         params: notification,
-      });
+      }).catch(reportWriteFailure);
       finalizeJobRecord(jobRecord, {
         now,
         stopReason: finalizedNotification.stopReason,
@@ -187,7 +192,7 @@ export async function runPromptTurn({
         finalText,
         errorMessage: finalizedNotification.errorMessage,
       });
-      await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord);
+      await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord).catch(reportWriteFailure);
       finalizedResolve(finalizedNotification);
     });
   });
@@ -224,7 +229,12 @@ export async function runPromptTurn({
   }
 
   if (!(accepted as { accepted?: unknown } | null | undefined)?.accepted) {
-    output.stderr(`Broker did not accept ${jobRecord.kind} job\n`);
+    const message = `Broker did not accept ${jobRecord.kind} job`;
+    if (markFailedOnBrokerError) {
+      failJobRecord(jobRecord, { now, errorMessage: message });
+      await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord);
+    }
+    output.stderr(`${message}\n`);
     return output.result(3);
   }
 

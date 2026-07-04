@@ -1,8 +1,10 @@
-export interface NullOutputResult {
+export interface CliResult {
   exitCode: number;
   stdout: string;
   stderr: string;
 }
+
+export type NullOutputResult = CliResult;
 
 export interface NullOutput {
   stdout(text: string): void;

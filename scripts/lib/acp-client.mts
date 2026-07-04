@@ -91,6 +91,8 @@ type PromptTurnOutcome = PromptTurnResolved | PromptTurnRejected;
 const sessionUpdateStates = new WeakMap<ClientSideConnection, SessionUpdateState>();
 // Some ACP agents flush the final session/update just after session/prompt resolves.
 const POST_PROMPT_UPDATE_DRAIN_IDLE_MS = 100;
+// Bounded SIGTERM grace before dispose escalates to SIGKILL.
+const DISPOSE_SIGTERM_TIMEOUT_MS = 500;
 
 export async function newSession(
   connection: AcpConnection,
@@ -249,6 +251,13 @@ export async function startAgent({
       resolve({ code, signal });
     });
   });
+  // spawn failures (for example a missing binary) emit `error` instead of `exit`.
+  const spawnErrorPromise = new Promise<Error>((resolve) => {
+    agentChild.once("error", (error) => {
+      alive = false;
+      resolve(error);
+    });
+  });
 
   const stream = ndJsonStream(
     Writable.toWeb(agentChild.stdin),
@@ -299,6 +308,9 @@ export async function startAgent({
         await Promise.race([stderrClosedPromise, delay(50)]);
         throw agentInitError("AGENT_INIT_FAILED", stderr);
       }),
+      spawnErrorPromise.then((error) => {
+        throw agentInitError("AGENT_INIT_FAILED", stderr || error.message);
+      }),
       timeoutPromise,
     ]);
   } finally {
@@ -314,6 +326,10 @@ export async function startAgent({
       await waitForExit(agentChild, 250);
       if (alive) {
         agentChild.kill();
+        await waitForExit(agentChild, DISPOSE_SIGTERM_TIMEOUT_MS);
+      }
+      if (alive) {
+        agentChild.kill("SIGKILL");
       }
       await onceExit(agentChild);
     },

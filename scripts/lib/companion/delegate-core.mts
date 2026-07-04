@@ -1,4 +1,5 @@
-import { jobLogPath, statusFromStopReason } from "../job-records.mts";
+import { ensureInlineSession } from "../inline-turn-runner.mts";
+import { JOB_STATUS, jobLogPath, statusFromStopReason } from "../job-records.mts";
 import { createNullOutput } from "../null-output.mts";
 import type { NullOutput, NullOutputResult } from "../null-output.mts";
 import type { JobRecord } from "../job-records.mts";
@@ -45,6 +46,7 @@ export interface RunDelegateOnceOptions {
   json?: boolean;
   renderSummary?: boolean;
   markFailedOnBrokerError?: boolean;
+  inline?: boolean;
 }
 
 export async function runDelegateOnce({
@@ -60,7 +62,14 @@ export async function runDelegateOnce({
   json = false,
   renderSummary = true,
   markFailedOnBrokerError = false,
+  inline = false,
 }: RunDelegateOnceOptions): Promise<NullOutputResult> {
+  // Foreground delegates run the ACP agent in-process (ADR-0021); background
+  // jobs keep the Broker daemon. An injected ensureBrokerSession still wins so
+  // tests and callers can substitute their own session transport.
+  const effectiveDeps = inline
+    ? { ...deps, ensureBrokerSession: deps.ensureBrokerSession ?? ensureInlineSession }
+    : deps;
   const result = await runPromptTurn({
     workspaceRoot,
     profileEntry,
@@ -72,7 +81,7 @@ export async function runDelegateOnce({
       model,
       effort,
     },
-    deps,
+    deps: effectiveDeps,
     output,
     renderUpdate: renderSessionUpdate as (notification: unknown) => string,
     markFailedOnBrokerError,
@@ -80,11 +89,11 @@ export async function runDelegateOnce({
   if (Number.isInteger((result as NullOutputResult)?.exitCode)) {
     return result as NullOutputResult;
   }
+  const { finalNotification, finalText } = result as {
+    finalNotification: { stopReason: string; sessionId: string };
+    finalText: string;
+  };
   if (renderSummary) {
-    const { finalNotification, finalText } = result as {
-      finalNotification: { stopReason: string; sessionId: string };
-      finalText: string;
-    };
     const summaryPrefix = finalText.length > 0 && !finalText.endsWith("\n") ? "\n" : "";
     if (json) {
       output.stdout(
@@ -105,5 +114,9 @@ export async function runDelegateOnce({
       );
     }
   }
-  return output.result(0);
+  // Exit code contract: a turn that finalized as failed exits 6 so callers
+  // checking exit codes do not mistake a failed delegation for success.
+  return output.result(
+    statusFromStopReason(finalNotification.stopReason) === JOB_STATUS.FAILED ? 6 : 0,
+  );
 }

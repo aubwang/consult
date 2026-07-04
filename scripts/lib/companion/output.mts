@@ -1,8 +1,6 @@
-export interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+import type { CliResult } from "../null-output.mts";
+
+export type CommandResult = CliResult;
 
 export interface OutputDeps {
   stdoutWrite?: (text: string) => void;

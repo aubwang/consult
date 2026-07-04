@@ -269,7 +269,9 @@ function descendantItems<T extends CascadeJobItem>(
       if (candidate.chainId !== undefined && candidate.chainId !== chainId) {
         continue;
       }
-      if (!parentIds.has(candidate.parentJobId)) {
+      // A candidate without a chainId joins the cascade only through an
+      // explicit parent link to a visited job, never a missing-field match.
+      if (candidate.parentJobId == null || !parentIds.has(candidate.parentJobId)) {
         continue;
       }
       visitedIds.add(candidate.jobId);

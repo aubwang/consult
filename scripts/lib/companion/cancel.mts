@@ -3,26 +3,32 @@ import { connectBrokerSession as defaultConnectBrokerSession } from "../broker-l
 import type { BrokerLifecycleInput } from "../broker-lifecycle.mts";
 import { cancelCascadeRecordTargets } from "../delegation-chain.mts";
 import {
-  failJobRecord,
+  finalizeJobRecord,
   isFinalStatus,
   listWorkspaceJobRecords,
   readWorkspaceJobRecord,
   writeJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
+import { pidMatchesStartTime as defaultPidMatchesStartTime } from "../process-identity.mts";
 import {
   pidIsAlive as defaultPidIsAlive,
   terminateProcessTree as defaultTerminateProcessTree,
 } from "../process.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
-import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 import type { CliResult } from "./job-record-errors.mts";
 
 interface CancelDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
   connectBrokerSession?: (args: BrokerLifecycleInput) => Promise<{ client: BrokerClient }>;
   pidIsAlive?: (pid: number) => boolean;
+  pidMatchesStartTime?: (
+    pid: number,
+    expectedStartTime: string | null | undefined,
+  ) => Promise<boolean>;
   terminateProcessTree?: (pid: number) => Promise<void>;
+  signalPid?: (pid: number, signal: NodeJS.Signals) => void;
   now?: () => string;
 }
 
@@ -53,14 +59,7 @@ export async function runCancel({
   try {
     record = await readWorkspaceJobRecord(workspaceRoot, jobId);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { exitCode: 2, stdout: "", stderr: `job not found: ${jobId}\n` };
-    }
-    const malformedResult = jobRecordErrorResult(error);
-    if (malformedResult) {
-      return malformedResult;
-    }
-    throw error;
+    return jobLookupErrorResult(error, jobId);
   }
   let records: JobRecord[];
   try {
@@ -91,7 +90,7 @@ export async function runCancel({
   for (const target of targets) {
     const result = await cancelOneRecord({ workspaceRoot, jobId: target.jobId, record: target, deps });
     if (result.exitCode !== 0) {
-      return result;
+      return { ...result, stdout: stdout + result.stdout };
     }
     stdout += target.jobId === jobId ? result.stdout : `cascade ${target.jobId}: ${result.stdout}`;
   }
@@ -117,6 +116,9 @@ async function cancelOneRecord({
       stderr: `invalid job record ${jobId}: missing host identity\n`,
     };
   }
+  if (record.runner === "inline") {
+    return await cancelInlineJob({ workspaceRoot, jobId, record, deps });
+  }
   let client: BrokerClient;
   try {
     ({ client } = await (deps.connectBrokerSession ?? defaultConnectBrokerSession)({
@@ -132,12 +134,12 @@ async function cancelOneRecord({
       (error as NodeJS.ErrnoException).code === "BROKER_STATE_MALFORMED" ||
       (error as NodeJS.ErrnoException).code === "ENOENT"
     ) {
-      await markFailedAtCancelTime({ workspaceRoot, jobId, record, deps });
+      await markCancelledAtCancelTime({ workspaceRoot, jobId, record, deps });
       const workerOutput = await terminateWorkerIfAlive(record, deps);
       return {
         exitCode: 0,
         stdout:
-          "broker not running -- job is presumably orphaned; record marked failed\n" +
+          "broker not running -- job is presumably orphaned; record marked cancelled\n" +
           "inspect Broker state with `consult brokers`; remove stale state with `consult brokers --cleanup`\n" +
           workerOutput,
         stderr: "",
@@ -150,7 +152,7 @@ async function cancelOneRecord({
   return { exitCode: 0, stdout: `${JSON.stringify(cancelResult)}\n${workerOutput}`, stderr: "" };
 }
 
-async function markFailedAtCancelTime({
+async function cancelInlineJob({
   workspaceRoot,
   jobId,
   record,
@@ -160,10 +162,77 @@ async function markFailedAtCancelTime({
   jobId: string | undefined;
   record: JobRecord;
   deps: CancelDeps;
+}): Promise<CliResult> {
+  const runnerPid = record.runnerPid;
+  const pidIsAlive = deps.pidIsAlive ?? defaultPidIsAlive;
+  const pidMatchesStartTime = deps.pidMatchesStartTime ?? defaultPidMatchesStartTime;
+  let runnerLive = Number.isInteger(runnerPid) && pidIsAlive(runnerPid as number);
+  if (runnerLive && record.runnerStartTime) {
+    // A stale record can point at a reused pid; only signal the companion
+    // process that actually stamped this record.
+    runnerLive = await pidMatchesStartTime(runnerPid as number, record.runnerStartTime);
+  }
+  if (runnerLive) {
+    try {
+      // A plain SIGTERM (not a tree kill): the companion's inline signal handler
+      // sends session/cancel, settles the record, and disposes the agent.
+      (deps.signalPid ?? defaultSignalPid)(runnerPid as number, "SIGTERM");
+      return {
+        exitCode: 0,
+        stdout: `inline runner pid ${runnerPid} signalled; job will finalize as cancelled\n`,
+        stderr: "",
+      };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EPERM") {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: `cannot signal inline runner pid ${runnerPid}: permission denied (pid likely reused)\n`,
+        };
+      }
+      if (code !== "ESRCH") {
+        throw error;
+      }
+      // The runner died between the liveness check and the signal; fall
+      // through and settle the record here.
+    }
+  }
+  await markCancelledAtCancelTime({
+    workspaceRoot,
+    jobId,
+    record,
+    deps,
+    errorMessage: "inline runner not running at cancel time",
+  });
+  return {
+    exitCode: 0,
+    stdout: "inline runner not running -- job is presumably orphaned; record marked cancelled\n",
+    stderr: "",
+  };
+}
+
+function defaultSignalPid(pid: number, signal: NodeJS.Signals): void {
+  process.kill(pid, signal);
+}
+
+async function markCancelledAtCancelTime({
+  workspaceRoot,
+  jobId,
+  record,
+  deps,
+  errorMessage = "broker not running at cancel time",
+}: {
+  workspaceRoot: string;
+  jobId: string | undefined;
+  record: JobRecord;
+  deps: CancelDeps;
+  errorMessage?: string;
 }): Promise<void> {
-  failJobRecord(record, {
+  finalizeJobRecord(record, {
     now: deps.now,
-    errorMessage: "broker not running at cancel time",
+    stopReason: "cancelled",
+    errorMessage,
   });
   await writeJobRecord(workspaceRoot, jobId as string, record);
 }

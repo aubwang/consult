@@ -45,13 +45,65 @@ for (const profile of ["claude", "opencode", "copilot"]) {
       }),
     });
 
-    assert.equal(result.exitCode, 6);
+    assert.equal(result.exitCode, 7);
     assert.equal(
       result.stderr,
       "/consult:review is codex-only in v1. Use /consult:delegate --agent <name> with a review-style prompt, or switch to --agent codex.\n",
     );
   });
 }
+
+test("review reads advertisesReview from the registry instead of hardcoding codex", async () => {
+  let adapterRan = false;
+  const result = await runReview({
+    args: { positional: [], flags: { agent: "claude" } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      loadRegistry: async () => ({
+        schemaVersion: 1,
+        agents: [
+          {
+            id: "claude",
+            label: "Claude",
+            binary: "claude-agent-acp",
+            args: [],
+            install: { type: "npm" as const, cmd: "npm install -g x" },
+            supports: { resume: true, load: true },
+            advertisesReview: true,
+          },
+        ],
+      }),
+      runCodexReview: async () => {
+        adapterRan = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(adapterRan, true);
+});
+
+test("review exits 2 when --agent is passed without a value", async () => {
+  const result = await runReview({
+    args: { positional: [], flags: { agent: true } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+      runCodexReview: async () => {
+        throw new Error("adapter should not run");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--agent requires a value\n");
+});
 
 test("review exits 2 when profiles are malformed", async () => {
   const result = await runReview({

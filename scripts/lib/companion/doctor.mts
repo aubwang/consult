@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { missingFlagValueError } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { brokersDir, profilesPath } from "../broker-endpoint.mts";
 import { pidAlive as defaultPidAlive } from "../broker-lifecycle.mts";
@@ -97,6 +98,16 @@ export async function runDoctor({
   env?: Record<string, string | undefined>;
   deps?: DoctorDeps;
 }): Promise<CliResult> {
+  const usageError = missingFlagValueError(args.flags, [
+    "agent",
+    "profile",
+    "host",
+    "host-session",
+    "host-session-id",
+  ]);
+  if (usageError) {
+    return { exitCode: 2, stdout: "", stderr: `${usageError}\n` };
+  }
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
   const [profile, jobs, brokers, sandbox] = await Promise.all([
     inspectProfile({ args, env, deps, workspaceRoot }),
@@ -113,8 +124,10 @@ export async function runDoctor({
     sandbox,
   };
 
+  // Exit 1 when the workspace is not delegate-ready so scripted callers can
+  // gate on `consult doctor` without parsing the report.
   return {
-    exitCode: 0,
+    exitCode: report.canDelegate ? 0 : 1,
     stdout: args.flags?.json ? `${JSON.stringify(report)}\n` : renderDoctor(report),
     stderr: "",
   };

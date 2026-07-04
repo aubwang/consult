@@ -6,6 +6,8 @@ import path from "node:path";
 import { safeSegment } from "./path-segments.mts";
 
 const SOCKET_PATH_MAX_LENGTH = 100;
+// Below this many identity chars, distinct host sessions could collide on one socket.
+const MIN_SOCKET_IDENTITY_LENGTH = 8;
 
 export interface BrokerIdentity {
   workspaceRoot: string;
@@ -78,21 +80,25 @@ export function brokerSocketPath({
 
   for (const [basePath, filenamePrefix] of candidates) {
     const socketPath = socketPathWithinBudget(basePath, filenamePrefix, identity);
-    if (socketPath.length <= SOCKET_PATH_MAX_LENGTH) {
+    if (socketPath !== null && socketPath.length <= SOCKET_PATH_MAX_LENGTH) {
       return socketPath;
     }
   }
 
-  const [basePath, filenamePrefix] = candidates.at(-1)!;
-  return socketPathWithinBudget(basePath, filenamePrefix, "");
+  throw new Error(
+    `broker socket path exceeds ${SOCKET_PATH_MAX_LENGTH} characters; set XDG_RUNTIME_DIR or TMPDIR to a shorter path`,
+  );
 }
 
-function socketPathWithinBudget(basePath: string, filenamePrefix: string, identity: string) {
+function socketPathWithinBudget(basePath: string, filenamePrefix: string, identity: string): string | null {
   const suffix = ".sock";
   const availableIdLength =
     SOCKET_PATH_MAX_LENGTH -
     path.join(basePath, `${filenamePrefix}${suffix}`).length;
-  const socketIdentity = identity.slice(0, Math.max(0, availableIdLength));
+  if (availableIdLength < MIN_SOCKET_IDENTITY_LENGTH) {
+    return null;
+  }
+  const socketIdentity = identity.slice(0, availableIdLength);
 
   return path.join(basePath, `${filenamePrefix}${socketIdentity}${suffix}`);
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { BOOLEAN_FLAGS, parseArgs } from "./args.mts";
+import { BOOLEAN_FLAGS, boolFlag, missingFlagValueError, parseArgs } from "./args.mts";
 
 test("parseArgs treats bare tokens as positional arguments", () => {
   assert.deepEqual(parseArgs(["a", "b", "c"]), {
@@ -104,4 +104,28 @@ test("parseArgs still honors the separator after boolean flags", () => {
     positional: ["prompt"],
     flags: { "read-only": true },
   });
+});
+
+test("boolFlag honors explicit false and undefined", () => {
+  assert.equal(boolFlag(true), true);
+  assert.equal(boolFlag("true"), true);
+  assert.equal(boolFlag(false), false);
+  assert.equal(boolFlag(undefined), false);
+  // The last occurrence wins for repeated flags.
+  assert.equal(boolFlag([true, false]), false);
+  assert.equal(boolFlag([false, true]), true);
+});
+
+test("missingFlagValueError flags value-bearing flags without a value", () => {
+  assert.equal(
+    missingFlagValueError(parseArgs(["--agent", "--", "prompt"]).flags, ["agent"]),
+    "--agent requires a value",
+  );
+  assert.equal(
+    missingFlagValueError(parseArgs(["--agent="]).flags, ["agent"]),
+    "--agent requires a value",
+  );
+  assert.equal(missingFlagValueError(parseArgs(["--agent", "codex"]).flags, ["agent"]), null);
+  assert.equal(missingFlagValueError(parseArgs([]).flags, ["agent"]), null);
+  assert.equal(missingFlagValueError(undefined, ["agent"]), null);
 });

@@ -9,7 +9,7 @@ import {
 import { loadProfiles as defaultLoadProfiles } from "../profiles.mts";
 import type { ProfilesData } from "../profiles.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
-import { jobRecordErrorResult } from "./job-record-errors.mts";
+import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
 import type {
@@ -17,12 +17,7 @@ import type {
   EnsureBrokerSessionResult,
 } from "../prompt-turn-runner.mts";
 import { createOutput } from "./output.mts";
-
-interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+import type { CommandResult } from "./output.mts";
 
 interface TaskWorkerDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
@@ -44,7 +39,8 @@ interface TaskWorkerOptions {
 }
 
 export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<CommandResult> {
-  return runTaskWorker({ args: parsedArgs });
+  const result = await runTaskWorker({ args: parsedArgs });
+  return { exitCode: result.exitCode, stdout: "", stderr: "" };
 }
 
 export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Promise<CommandResult> {
@@ -60,16 +56,9 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
   try {
     jobRecord = await (deps.readJobRecord ?? readWorkspaceJobRecord)(workspaceRoot, jobId);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      output.stderr(`job record not found: ${jobId}\n`);
-      return output.result(2);
-    }
-    const malformedResult = jobRecordErrorResult(error);
-    if (malformedResult) {
-      output.stderr(malformedResult.stderr);
-      return output.result(malformedResult.exitCode);
-    }
-    throw error;
+    const lookupResult = jobLookupErrorResult(error, jobId, "job record not found");
+    output.stderr(lookupResult.stderr);
+    return output.result(lookupResult.exitCode);
   }
 
   const invalidReason = validateJobRecord(jobRecord);

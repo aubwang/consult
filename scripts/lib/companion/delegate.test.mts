@@ -305,7 +305,7 @@ test("delegate reports setup guidance when no profiles are configured", async (t
   });
 
   assert.equal(result.exitCode, 2);
-  assert.match(result.stderr, /\(no profiles configured; run \/consult:setup\)/);
+  assert.match(result.stderr, /\(no profiles configured; run 'consult setup'\)/);
 });
 
 test("delegate exits 2 when profiles are malformed", async (t) => {
@@ -427,7 +427,8 @@ test("delegate background writes a queued record and spawns the task worker", as
   );
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /job-bg/);
-  assert.match(result.stdout, /\/consult:status job-bg/);
+  assert.match(result.stdout, /consult status job-bg/);
+  assert.doesNotMatch(result.stdout, /\/consult:status/);
   assert.equal(record.status, "queued");
   assert.equal(record.prompt, "fix later");
   assert.equal(record.mode, "read-only");
@@ -444,6 +445,204 @@ test("delegate background writes a queued record and spawns the task worker", as
   assert.equal((spawns[0].options as { stdio: string }).stdio, "ignore");
   assert.equal((spawns[0].options as { cwd: string }).cwd, workspaceRoot);
   assert.equal(unrefCalled, true);
+});
+
+test("delegate background json mode emits one queued JSON object", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+
+  const result = await runDelegate({
+    args: { positional: ["fix", "later"], flags: { background: true, json: true } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => {
+        throw new Error("broker should not be touched by background spawner");
+      },
+      generateJobId: () => "job-bg-json",
+      spawn: () => ({ unref() {} }),
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(JSON.parse(result.stdout), { status: "queued", jobId: "job-bg-json" });
+});
+
+test("delegate exits 2 when --agent is passed without a value", async () => {
+  const result = await runDelegate({
+    args: { positional: ["fix"], flags: { agent: true } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--agent requires a value\n");
+});
+
+test("delegate honors --no-write as read-only", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+
+  const resultPromise = runDelegate({
+    args: { positional: ["look", "around"], flags: { write: false } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-no-write",
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-no-write",
+    stopReason: "end_turn",
+    sessionId: "session-no-write",
+  });
+  const result = await resultPromise;
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-no-write.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.mode, "read-only");
+  assert.equal(request.params.mode, "read-only");
+});
+
+test("delegate exits 6 when the turn finalizes as failed", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+
+  const resultPromise = runDelegate({
+    args: { positional: ["doomed"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-fail-exit",
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-fail-exit",
+    stopReason: "failed",
+    sessionId: "session-fail",
+    errorMessage: "delegate blew up",
+  });
+  const result = await resultPromise;
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-fail-exit.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 6);
+  assert.match(result.stdout, /consult delegate job-fail-exit failed/);
+  assert.equal(record.status, "failed");
+});
+
+test("delegate defaults the parent job from CONSULT_PARENT_JOB when the flag is absent", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeParentJob(workspaceRoot, {
+    jobId: "job-env-parent",
+    chainId: "job-env-parent",
+    delegationDepth: 0,
+    mode: "write",
+  });
+  const client = new FakeBrokerClient();
+
+  const resultPromise = runDelegate({
+    args: { positional: ["child", "prompt"], flags: {} },
+    env: {
+      CONSULT_HOST: "claude-code",
+      CONSULT_HOST_SESSION_ID: "claude-1",
+      CONSULT_PARENT_JOB: "job-env-parent",
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-env-child",
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-env-child",
+    stopReason: "end_turn",
+    sessionId: "session-env-child",
+  });
+  const result = await resultPromise;
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-env-child.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.parentJobId, "job-env-parent");
+  assert.equal(record.chainId, "job-env-parent");
+  assert.equal(record.delegationDepth, 1);
+});
+
+test("delegate prefers an explicit --parent-job flag over CONSULT_PARENT_JOB", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeParentJob(workspaceRoot, {
+    jobId: "job-env-parent",
+    chainId: "job-env-parent",
+    delegationDepth: 0,
+    mode: "write",
+  });
+  await writeParentJob(workspaceRoot, {
+    jobId: "job-flag-parent",
+    chainId: "job-flag-parent",
+    delegationDepth: 0,
+    mode: "write",
+  });
+  const client = new FakeBrokerClient();
+
+  const resultPromise = runDelegate({
+    args: { positional: ["child", "prompt"], flags: { "parent-job": "job-flag-parent" } },
+    env: {
+      CONSULT_HOST: "claude-code",
+      CONSULT_HOST_SESSION_ID: "claude-1",
+      CONSULT_PARENT_JOB: "job-env-parent",
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-flag-child",
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-flag-child",
+    stopReason: "end_turn",
+    sessionId: "session-flag-child",
+  });
+  const result = await resultPromise;
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-flag-child.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.parentJobId, "job-flag-parent");
+  assert.equal(record.chainId, "job-flag-parent");
 });
 
 test("delegate truncates stored prompts on a UTF-8 boundary", async (t) => {

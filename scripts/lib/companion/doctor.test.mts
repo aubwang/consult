@@ -101,7 +101,8 @@ test("doctor human output reports missing profile setup as not delegate-ready", 
     },
   });
 
-  assert.equal(result.exitCode, 0);
+  // Doctor exits 1 when the workspace is not delegate-ready.
+  assert.equal(result.exitCode, 1);
   assert.match(result.stdout, /Consult doctor/);
   assert.match(result.stdout, /canDelegate: no/);
   assert.match(result.stdout, /profile\/setup:/);
@@ -131,6 +132,7 @@ test("doctor marks bwrap sandbox unready when bwrap is missing from PATH", async
   });
 
   const report = JSON.parse(result.stdout) as DoctorReport;
+  assert.equal(result.exitCode, 1);
   assert.equal(report.canDelegate, false);
   assert.equal(report.sandbox.ok, false);
   assert.equal(report.sandbox.error, "CONSULT_AGENT_SANDBOX=bwrap but bwrap was not found on PATH");

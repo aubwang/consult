@@ -92,16 +92,21 @@ export async function runCodexReview({
           advertiseResolve(advertisedCommands);
         }
       },
-      afterAccepted: async () => {
+      afterAccepted: async ({ client }) => {
         const commands = await waitForAvailableCommands(
           advertised,
           resolveAvailableCommandsTimeoutMs(deps, timeoutOverride),
         );
         if (!commands.some((command) => command.name === kind || command.name === slash)) {
+          try {
+            await client.request("consult/cancel", { jobId });
+          } catch {
+            // best effort: do not mask the advertise failure with a cancel error
+          }
           output.stderr(
             `codex did not advertise ${slash}; the codex-acp version may not support it\n`,
           );
-          return output.result(4);
+          return output.result(8);
         }
         return null;
       },

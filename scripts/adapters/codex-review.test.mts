@@ -46,7 +46,7 @@ test("runCodexReview streams a codex review when review is advertised", async ()
   assert.equal(result.stdout, "review output");
 });
 
-test("runCodexReview exits 4 when the slash is not advertised before timeout", async () => {
+test("runCodexReview exits 8 and cancels the accepted job when the slash is not advertised", async () => {
   const client = new FakeBrokerClient();
   const result = await runCodexReview({
     profile: "codex",
@@ -62,11 +62,13 @@ test("runCodexReview exits 4 when the slash is not advertised before timeout", a
     }),
   });
 
-  assert.equal(result.exitCode, 4);
+  assert.equal(result.exitCode, 8);
   assert.equal(
     result.stderr,
     "codex did not advertise /review; the codex-acp version may not support it\n",
   );
+  const cancelRequest = await client.waitForRequest("consult/cancel");
+  assert.deepEqual(cancelRequest.params, { jobId: "job-review" });
 });
 
 test("runCodexReview passes baseRef to getDiff when provided", async () => {

@@ -83,6 +83,38 @@ test("startAgent rejects when initialize times out", async () => {
   );
 });
 
+test("startAgent surfaces a missing profile binary as AGENT_INIT_FAILED", async () => {
+  await assert.rejects(
+    startAgent({
+      binary: "/nonexistent/consult-missing-agent-binary",
+      cwd: path.dirname(fixturePath),
+      clientHandlers: {},
+      initTimeoutMs: 2000,
+    }),
+    (thrown: unknown) => {
+      const error = thrown as AgentInitError;
+      assert.equal(error.code, "AGENT_INIT_FAILED");
+      return true;
+    },
+  );
+});
+
+test("dispose escalates to SIGKILL when the agent ignores SIGTERM", async () => {
+  const agent = await startAgent({
+    binary: process.execPath,
+    args: [fixturePath, "stubborn"],
+    cwd: path.dirname(fixturePath),
+    clientHandlers: {},
+  });
+  const exit = new Promise((resolve) => {
+    agent.agentChild.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+
+  await agent.dispose();
+
+  assert.deepEqual(await exit, { code: null, signal: "SIGKILL" });
+});
+
 test("startAgent rejects when the agent exits before initialize completes", async () => {
   await assert.rejects(
     startAgent({

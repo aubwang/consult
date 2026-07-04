@@ -10,7 +10,8 @@ export interface GetDiffOptions {
 
 export async function getDiff({ baseRef = null, cwd }: GetDiffOptions): Promise<string> {
   const status = await git(cwd, "status", "--porcelain");
-  const diffArgs = baseRef ? ["diff", `${baseRef}...HEAD`] : ["diff"];
+  // --end-of-options stops a baseRef starting with '-' from injecting git options.
+  const diffArgs = baseRef ? ["diff", "--end-of-options", `${baseRef}...HEAD`] : ["diff"];
   const diff = await git(cwd, ...diffArgs);
   return [status, diff].filter((part) => part.length > 0).join("\n");
 }

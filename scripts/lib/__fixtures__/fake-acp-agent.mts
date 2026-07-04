@@ -40,6 +40,7 @@ const promptLogPath = process.env.CONSULT_FAKE_AGENT_PROMPT_LOG;
 const cancelLogPath = process.env.CONSULT_FAKE_AGENT_CANCEL_LOG;
 const clientLogPath = process.env.CONSULT_FAKE_AGENT_CLIENT_LOG;
 const methodLogPath = process.env.CONSULT_FAKE_AGENT_METHOD_LOG;
+const envLogPath = process.env.CONSULT_FAKE_AGENT_ENV_LOG;
 const targetPath = process.env.CONSULT_FAKE_AGENT_TARGET_PATH;
 const AUTO_APPROVED_EDIT_SCENARIOS = new Set([
   "prompt-auto-approved-edit",
@@ -57,6 +58,16 @@ const pendingClientRequests = new Map<
   (message: FakeAgentMessage) => void
 >();
 
+if (envLogPath) {
+  fs.appendFileSync(
+    envLogPath,
+    `${JSON.stringify({
+      CONSULT_PARENT_JOB: process.env.CONSULT_PARENT_JOB ?? null,
+      CONSULT_WORKSPACE: process.env.CONSULT_WORKSPACE ?? null,
+    })}\n`,
+  );
+}
+
 if (mode === "exit") {
   fs.writeSync(2, "boom\n");
   process.exit(1);
@@ -68,13 +79,20 @@ if (mode === "hang") {
   await new Promise(() => {});
 }
 
-if (mode === "sessions") {
+if (mode === "sessions" || mode === "stubborn") {
+  if (mode === "stubborn") {
+    process.on("SIGTERM", () => {});
+  }
   const buffer = Buffer.alloc(4096);
   let input = "";
 
   while (true) {
     const bytesRead = fs.readSync(0, buffer, 0, buffer.length, null);
     if (bytesRead === 0) {
+      if (mode === "stubborn") {
+        sleep(25);
+        continue;
+      }
       process.exit(0);
     }
 

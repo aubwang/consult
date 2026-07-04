@@ -692,7 +692,7 @@ test("consult/run fails read-only auto-approved edit updates", async (t) => {
     await waitForCancelCount(harness.cancelLog, 1);
 
     assert.deepEqual(
-      await nextClient.request("consult/run", {
+      await runWhenSettled(nextClient, {
         jobId: "job-2",
         prompt: "after policy violation",
         profile: "codex",
@@ -770,7 +770,7 @@ test("consult/run fails write-mode auto-approved edit updates outside the worksp
     assert.equal(record.sessionId, "sess-1");
 
     assert.deepEqual(
-      await nextClient.request("consult/run", {
+      await runWhenSettled(nextClient, {
         jobId: "job-2",
         prompt: "after policy violation",
         profile: "codex",
@@ -1844,6 +1844,25 @@ async function cancelCount(cancelLog: string): Promise<number> {
     throw error;
   }
   return content.trim().split("\n").filter(Boolean).length;
+}
+
+async function runWhenSettled(
+  client: Awaited<ReturnType<typeof connectBroker>>,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  // Busy stays set until the violated prompt turn settles; retry until the
+  // broker frees up instead of racing the settle window.
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    try {
+      return await client.request("consult/run", params);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "BROKER_BUSY" || Date.now() >= deadline) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
 }
 
 async function waitForCancelCount(cancelLog: string, expected: number): Promise<void> {

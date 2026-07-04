@@ -14,6 +14,7 @@ import { installAndVerify as defaultInstallAndVerify } from "../setup-install.mt
 import type { InstallAndVerifyOptions, InstallDeps, InstallResult } from "../setup-install.mts";
 import { buildStatusTable } from "../setup-probe.mts";
 import type { ProbeDeps, StatusRow } from "../setup-probe.mts";
+import { missingFlagValueError, stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import type { CliResult, CodedError } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
@@ -38,6 +39,10 @@ export async function runSetup({
   deps?: SetupDeps;
 }): Promise<CliResult> {
   const profilePath = profilesPath();
+  const usageError = missingFlagValueError(args.flags, ["set-default", "install"]);
+  if (usageError) {
+    return { exitCode: 2, stdout: "", stderr: `${usageError}\n` };
+  }
   const loadRegistry = deps.loadRegistry ?? defaultLoadRegistry;
   const loadProfiles = deps.loadProfiles ?? defaultLoadProfiles;
   let registry: Registry;
@@ -51,15 +56,17 @@ export async function runSetup({
     throw error;
   }
 
-  if (args.flags?.["set-default"]) {
-    return setDefault({ profilePath, name: args.flags["set-default"] as string, deps });
+  const setDefaultName = stringFlag(args.flags?.["set-default"]);
+  if (setDefaultName) {
+    return setDefault({ profilePath, name: setDefaultName, deps });
   }
 
-  if (args.flags?.install) {
+  const installId = stringFlag(args.flags?.install);
+  if (installId) {
     return installProfile({
       profilePath,
       registry,
-      id: args.flags.install as string,
+      id: installId,
       deps,
     });
   }
