@@ -12,7 +12,7 @@ Profile: claude
 Job: job-8tY...
 
 Claude:
-- scripts/lib/host-identity.mjs: the fallback path loses the Host session id
+- scripts/lib/host-identity.mts: the fallback path loses the Host session id
   when only CODEX_THREAD_ID is present.
 - Add a resolver test before changing the CLI surface.
 
@@ -39,9 +39,11 @@ Coding agents have different strengths. Consult lets your current agent ask
 another agent to review a change, debug a failure, inspect a design, or make a
 small patch.
 
-Each delegated prompt becomes a **Job**. Consult starts a short-lived
-job-scoped **Broker**, streams the Profile's work, stores the final output, and
-gives you commands to check status, cancel, resume, and read results.
+Each delegated prompt becomes a **Job**. Consult runs the Profile's agent
+in-process for foreground Jobs (a short-lived job-scoped **Broker** carries
+`--background` Jobs and `review`), streams the Profile's work, stores the
+final output, and gives you commands to check status, cancel, resume, and read
+results.
 
 ## Install
 
@@ -60,20 +62,42 @@ runtime; `npm install` and `npm link` also work if you prefer npm.
 
 ## First Setup
 
-Install or verify at least one Profile:
+Check which Profiles are installed — `consult setup` with no flags only prints
+a status table:
 
 ```sh
 consult setup
 ```
 
+Install and verify a Profile with `--install <id>` (ids come from the status
+table: `codex`, `claude`, `opencode`, `gemini`, `copilot`):
+
+```sh
+consult setup --install claude
+```
+
 Then choose a default Profile if you want one:
 
 ```sh
+consult setup --set-default claude
+# or equivalently:
 consult agents
 consult agents --set claude
 ```
 
-From Claude Code, use the plugin commands instead:
+### Claude Code plugin
+
+This checkout doubles as a Claude Code plugin: the tracked root symlinks
+(`.claude-plugin`, `commands`, `agents`, `hooks`) point into
+`hosts/claude-code/`, so the repo root is a valid plugin directory. The plugin
+is not published to any marketplace; load it from the local checkout, for
+example:
+
+```sh
+claude --plugin-dir /path/to/consult
+```
+
+Once loaded, use the plugin commands instead:
 
 ```text
 /consult:setup
@@ -129,7 +153,7 @@ Claude Code plugin equivalents:
 | Host | Where the request starts: terminal, Codex, opencode, or Claude Code. |
 | Profile | The agent Consult calls: `claude`, `codex`, `opencode`, `gemini`, or `copilot`. |
 | Job | One delegated prompt turn with status, logs, and stored result text. |
-| Broker | The short-lived Consult process that connects one Job to one Profile. |
+| Broker | The short-lived Consult process that connects one background or review Job to one Profile; foreground Jobs run in-process without one. |
 
 Example:
 
@@ -168,16 +192,24 @@ write access.
 | `--read-only` | The Profile may inspect files but must not edit. |
 | `--write` | The Profile may edit files inside the current workspace. |
 
-Consult confines ACP file handlers to the workspace and rejects symlink escapes.
-Network fetch requests and raw execute requests are denied in both modes.
+Consult confines ACP file handlers to the workspace and rejects symlink
+escapes. Raw execute and network fetch permission requests are denied in both
+modes as defense-in-depth — not a guarantee against exfiltration: some
+Profiles run tools without asking permission first, and the delegated agent
+process itself has network access to reach its own LLM API. Treat `--write`
+as trusting the delegated Profile.
 
 Some Profiles report edits after they happen. Consult still marks read-only or
 out-of-workspace edits as failed, but that is defense-in-depth, not a hard
-filesystem boundary. For a stronger boundary, use bubblewrap:
+filesystem boundary. For a stronger filesystem boundary, use bubblewrap:
 
 ```sh
 CONSULT_AGENT_SANDBOX=bwrap consult delegate --agent claude --read-only -- "inspect this module"
 ```
+
+The bubblewrap sandbox confines the filesystem only. It deliberately does not
+isolate the network, because the delegated ACP agent needs network access to
+reach its own LLM API.
 
 ## Supported Profiles
 
@@ -186,7 +218,7 @@ CONSULT_AGENT_SANDBOX=bwrap consult delegate --agent claude --read-only -- "insp
 | `claude` | Supported. Direct, Consult, and bubblewrap probes pass. |
 | `codex` | Supported. Direct, Consult, and bubblewrap probes pass. |
 | `opencode` | Supported with provider auth configured. |
-| `gemini` | Supported via Gemini CLI's native ACP mode. |
+| `gemini` | Unit-verified via Gemini CLI's native ACP mode; live conformance pending local Gemini auth. |
 | `copilot` | Supported unsandboxed; bubblewrap verification is deferred. |
 
 See [docs/conformance/README.md](docs/conformance/README.md) for the live

@@ -62,8 +62,9 @@ Forward user arguments directly to `consult`. Do not inspect
 
 Until an installer exists:
 
-1. Put the Consult CLI on `PATH`, for example by running `npm link` from the
-   Consult repo or by adding the repo's `bin` directory to `PATH`.
+1. Put the Consult CLI on `PATH`, for example by running `bun link` from the
+   Consult repo (`npm link` also works if you prefer npm) or by adding the
+   repo's `bin` directory to `PATH`.
 2. Make this skill visible to the Host by copying or symlinking `skills/consult`
    into the Host's skill directory.
 3. Configure Profiles with the Consult CLI before first delegation, for example:

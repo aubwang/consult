@@ -1,5 +1,8 @@
 {
   "name": "consult",
   "version": "0.1.0",
-  "description": "Delegate work from Claude Code to configured ACP Profiles through job-scoped Brokers."
+  "description": "Delegate work from Claude Code to configured ACP Profiles through job-scoped Brokers.",
+  "homepage": "https://github.com/aubwang/consult",
+  "repository": "https://github.com/aubwang/consult",
+  "license": "Apache-2.0"
 }

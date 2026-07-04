@@ -7,13 +7,16 @@ metadata:
 
 # Consult Runtime
 
-The companion CLI is `node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mjs" <subcommand> ...`.
+The companion CLI is `node "${CLAUDE_PLUGIN_ROOT}/scripts/consult-companion.mts" <subcommand> ...`.
 
 - `setup`: list, install, and select configured Profiles.
 - `agents`: list configured Profiles available in this Workspace.
 - `delegate`: create a Job and run one prompt turn through the scoped Broker.
+- `doctor`: diagnose profile, Host Identity, Job, Broker, and sandbox readiness for the current Workspace.
 - `status`: show queued, running, completed, cancelled, or failed Job state.
 - `result`: render a completed Job result and metadata.
+- `logs`: print or follow rendered logs for one Job.
+- `chain`: show the Delegation Chain rollup for one Job.
 - `cancel`: cancel a queued or running Job.
 - `brokers`: inspect live Broker locators and clean stale Broker state.
 - `review`: run the Codex-only review adapter.

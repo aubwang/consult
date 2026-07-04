@@ -44,7 +44,7 @@ On 2026-05-18, the profile was configured from the already-installed
 `opencode` binary with no package install:
 
 ```sh
-node scripts/consult-companion.mjs setup --install opencode
+node scripts/consult-companion.mts setup --install opencode
 ```
 
 An unsandboxed Consult probe then passed and returned

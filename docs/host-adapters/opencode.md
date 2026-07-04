@@ -19,9 +19,11 @@ Use `--host` / `--host-session` or `CONSULT_HOST` /
 Make the `consult` CLI available from this checkout:
 
 ```text
-npm install
-npm link
+bun install
+bun link
 ```
+
+`npm install` and `npm link` also work if you prefer npm.
 
 Install and select at least one Profile separately. Profile setup is shared
 across Hosts:

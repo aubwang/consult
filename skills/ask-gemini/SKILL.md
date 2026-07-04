@@ -1,6 +1,6 @@
 ---
 name: ask-gemini
-description: Ask Google Gemini CLI through a Consult Profile for a second review, critique, explanation, debugging hypothesis, or design opinion while working in Codex. Use when the user says to consult Gemini, ask Gemini, get a Gemini review, or use Gemini as a supporter.
+description: Ask Google Gemini CLI through a Consult Profile for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Gemini, ask Gemini, get a Gemini review, or use Gemini as a supporter.
 metadata:
   "consult.disable-model-invocation": "true"
   "consult.argument-hint": What should Gemini answer or review?
@@ -56,7 +56,10 @@ reproduction ideas.
 ## Rules
 
 - Default to `--read-only`.
-- Do not ask Gemini to edit files unless the user explicitly asks for that.
+- Do not ask Gemini to edit files unless the user explicitly asks for
+  that.
+- Delegate to the `gemini` Profile only; do not substitute a different
+  Profile.
 - Do not send secrets or PII in the prompt.
-- Report useful findings back to the user, but keep Codex responsible for
-  deciding what to implement.
+- Report useful findings back to the user, but keep the current Host
+  responsible for deciding what to implement.

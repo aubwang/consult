@@ -1,6 +1,6 @@
 ---
 name: ask-opencode
-description: Ask opencode through a Consult Profile for a second review, critique, explanation, debugging hypothesis, or design opinion while working in Codex. Use when the user says to consult opencode, ask opencode, get an opencode review, or use opencode as a supporter.
+description: Ask opencode through a Consult Profile for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult opencode, ask opencode, get an opencode review, or use opencode as a supporter.
 metadata:
   "consult.disable-model-invocation": "true"
   "consult.argument-hint": What should opencode answer or review?
@@ -56,8 +56,10 @@ reproduction ideas.
 ## Rules
 
 - Default to `--read-only`.
-- Do not ask opencode to edit files unless the user explicitly asks for that.
-- Do not use GitHub Copilot for this skill.
+- Do not ask opencode to edit files unless the user explicitly asks for
+  that.
+- Delegate to the `opencode` Profile only; do not substitute a different
+  Profile.
 - Do not send secrets or PII in the prompt.
-- Report useful findings back to the user, but keep Codex responsible for
-  deciding what to implement.
+- Report useful findings back to the user, but keep the current Host
+  responsible for deciding what to implement.

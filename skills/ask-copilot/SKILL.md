@@ -1,6 +1,6 @@
 ---
 name: ask-copilot
-description: Ask GitHub Copilot through a Consult Profile for a second review, critique, explanation, debugging hypothesis, or design opinion while working in Codex. Use when the user says to consult Copilot, ask Copilot, get a Copilot review, or use Copilot as a supporter.
+description: Ask GitHub Copilot through a Consult Profile for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Copilot, ask Copilot, get a Copilot review, or use Copilot as a supporter.
 metadata:
   "consult.disable-model-invocation": "true"
   "consult.argument-hint": What should Copilot answer or review?
@@ -56,7 +56,10 @@ reproduction ideas.
 ## Rules
 
 - Default to `--read-only`.
-- Do not ask Copilot to edit files unless the user explicitly asks for that.
+- Do not ask Copilot to edit files unless the user explicitly asks for
+  that.
+- Delegate to the `copilot` Profile only; do not substitute a different
+  Profile.
 - Do not send secrets or PII in the prompt.
-- Report useful findings back to the user, but keep Codex responsible for
-  deciding what to implement.
+- Report useful findings back to the user, but keep the current Host
+  responsible for deciding what to implement.
