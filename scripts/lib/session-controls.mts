@@ -125,8 +125,10 @@ async function applyModelControl(
     profile,
   }: { sessionId: string; sessionState: SessionControlsState; model: string; profile: string },
 ): Promise<SessionControlsState> {
-  const modelId = normalizeModelControl(profile, model);
   if (sessionState?.models) {
+    const modelId =
+      resolveAdvertisedModel(model, advertisedModelIds(sessionState.models)) ??
+      normalizeModelControl(profile, model);
     await setSessionModel(connection, { sessionId, modelId });
     return sessionState;
   }
@@ -142,9 +144,79 @@ async function applyModelControl(
     sessionId,
     sessionState,
     option,
-    requestedValue: modelId,
+    requestedValue: model,
+    fallbackValue: normalizeModelControl(profile, model),
     controlName: "model",
   });
+}
+
+// SessionModelState in the ACP SDK is { availableModels: ModelInfo[],
+// currentModelId }, with ModelInfo carrying a `modelId` string. Agents vary,
+// so extract advertised ids defensively.
+function advertisedModelIds(models: unknown): string[] {
+  const availableModels = (models as { availableModels?: unknown } | null)?.availableModels;
+  if (!Array.isArray(availableModels)) {
+    return [];
+  }
+  return availableModels.flatMap((entry) => {
+    if (typeof entry === "string") {
+      return [entry];
+    }
+    const modelId = (entry as { modelId?: unknown; id?: unknown } | null)?.modelId;
+    if (typeof modelId === "string") {
+      return [modelId];
+    }
+    const id = (entry as { id?: unknown } | null)?.id;
+    return typeof id === "string" ? [id] : [];
+  });
+}
+
+function resolveAdvertisedModel(requested: string, advertised: string[]): string | null {
+  if (advertised.includes(requested)) {
+    return requested;
+  }
+  const normalized = requested.toLowerCase().replaceAll("_", "-");
+  const relaxed = advertised.find((id) => id.toLowerCase() === normalized);
+  if (relaxed) {
+    return relaxed;
+  }
+  return resolveFamilyLatest(requested, advertised);
+}
+
+// A family alias is a bare family name with no version digits ("sonnet",
+// "claude-sonnet"); resolve it to the newest advertised id containing that
+// token. Newest compares numeric segments parsed from the id, so
+// claude-sonnet-5 beats claude-sonnet-4-6 and a date suffix acts as an extra,
+// less-significant segment.
+export function resolveFamilyLatest(requested: string, candidates: string[]): string | null {
+  const token = requested.toLowerCase().replaceAll("_", "-");
+  if (!token || /\d/.test(token)) {
+    return null;
+  }
+  const matches = candidates.filter((id) => id.toLowerCase().includes(token));
+  if (matches.length === 0) {
+    return null;
+  }
+  return matches.reduce((newest, candidate) =>
+    compareModelVersions(candidate, newest) > 0 ? candidate : newest,
+  );
+}
+
+function compareModelVersions(a: string, b: string): number {
+  const left = versionSegments(a);
+  const right = versionSegments(b);
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = (left[index] ?? -1) - (right[index] ?? -1);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+
+function versionSegments(id: string): number[] {
+  return (id.match(/\d+/g) ?? []).map(Number);
 }
 
 export function normalizeModelControl(profile: string, model: string): string {
@@ -162,8 +234,10 @@ const CLAUDE_MODEL_ALIASES: Record<string, string> = {
   "opus-4-8": "claude-opus-4-8",
   "claude-opus-4.8": "claude-opus-4-8",
   "claude-opus-4-8": "claude-opus-4-8",
-  sonnet: "claude-sonnet-4-6",
-  "claude-sonnet": "claude-sonnet-4-6",
+  sonnet: "claude-sonnet-5",
+  "claude-sonnet": "claude-sonnet-5",
+  "sonnet-5": "claude-sonnet-5",
+  "claude-sonnet-5": "claude-sonnet-5",
   "sonnet-4.6": "claude-sonnet-4-6",
   "sonnet-4-6": "claude-sonnet-4-6",
   "claude-sonnet-4.6": "claude-sonnet-4-6",
@@ -174,6 +248,10 @@ const CLAUDE_MODEL_ALIASES: Record<string, string> = {
   "haiku-4-5": "claude-haiku-4-5",
   "claude-haiku-4.5": "claude-haiku-4-5",
   "claude-haiku-4-5": "claude-haiku-4-5",
+  fable: "claude-fable-5",
+  "claude-fable": "claude-fable-5",
+  "fable-5": "claude-fable-5",
+  "claude-fable-5": "claude-fable-5",
 };
 
 async function applyEffortControl(
@@ -208,12 +286,14 @@ async function setConfigControl(
     sessionState,
     option,
     requestedValue,
+    fallbackValue,
     controlName,
   }: {
     sessionId: string;
     sessionState: SessionControlsState;
     option: SessionConfigOptionLike;
     requestedValue: string;
+    fallbackValue?: string;
     controlName: string;
   },
 ): Promise<SessionControlsState> {
@@ -222,7 +302,7 @@ async function setConfigControl(
       `${controlName} selection requires a select configuration option, got '${option.type}'`,
     );
   }
-  const value = resolveSelectValue(option, requestedValue, controlName);
+  const value = resolveSelectValue(option, requestedValue, controlName, fallbackValue);
   const response = await setSessionConfigOption(connection, {
     sessionId,
     configId: option.id!,
@@ -254,23 +334,47 @@ function resolveSelectValue(
   option: SessionConfigOptionLike,
   requestedValue: string,
   controlName: string,
+  fallbackValue?: string,
 ): string {
   const options = flattenSelectOptions(option.options);
-  const exactMatch = options.find((candidate) => candidate.value === requestedValue);
-  if (exactMatch) {
-    return exactMatch.value;
+  const directMatch = matchSelectOption(options, requestedValue);
+  if (directMatch) {
+    return directMatch.value;
   }
-  const normalized = requestedValue.toLowerCase();
-  const relaxedMatch = options.find(
-    (candidate) =>
-      candidate.value.toLowerCase() === normalized || candidate.name.toLowerCase() === normalized,
+  const familyLatest = resolveFamilyLatest(
+    requestedValue,
+    options.map((candidate) => candidate.value),
   );
-  if (relaxedMatch) {
-    return relaxedMatch.value;
+  if (familyLatest !== null) {
+    return familyLatest;
+  }
+  if (fallbackValue !== undefined && fallbackValue !== requestedValue) {
+    const fallbackMatch = matchSelectOption(options, fallbackValue);
+    if (fallbackMatch) {
+      return fallbackMatch.value;
+    }
   }
   const available = options.map((candidate) => candidate.value).join(", ");
   throw new Error(
     `unsupported ${controlName} '${requestedValue}'${available ? `; available values: ${available}` : ""}`,
+  );
+}
+
+function matchSelectOption(
+  options: SessionConfigSelectOptionLike[],
+  requestedValue: string,
+): SessionConfigSelectOptionLike | null {
+  const exactMatch = options.find((candidate) => candidate.value === requestedValue);
+  if (exactMatch) {
+    return exactMatch;
+  }
+  const normalized = requestedValue.toLowerCase();
+  return (
+    options.find(
+      (candidate) =>
+        candidate.value.toLowerCase() === normalized ||
+        candidate.name.toLowerCase() === normalized,
+    ) ?? null
   );
 }
 

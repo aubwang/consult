@@ -113,11 +113,127 @@ test("applySessionControls expands current Claude model aliases", async () => {
 
 test("normalizeModelControl maps Claude shorthand and leaves other profiles alone", () => {
   assert.equal(normalizeModelControl("claude", "opus-4.8"), "claude-opus-4-8");
-  assert.equal(normalizeModelControl("claude", "sonnet"), "claude-sonnet-4-6");
+  assert.equal(normalizeModelControl("claude", "sonnet"), "claude-sonnet-5");
   assert.equal(normalizeModelControl("claude", "haiku"), "claude-haiku-4-5");
+  assert.equal(normalizeModelControl("claude", "fable"), "claude-fable-5");
   assert.equal(normalizeModelControl("claude", "custom-model"), "custom-model");
   assert.equal(normalizeModelControl("opencode", "opus"), "opus");
 });
+
+test("applySessionControls resolves family aliases to the newest advertised model", async () => {
+  const calls: unknown[] = [];
+  const connection = {
+    async unstable_setSessionModel(params: unknown) {
+      calls.push(params);
+    },
+  } as unknown as AcpConnection;
+  const sessionState = {
+    models: {
+      availableModels: [
+        modelInfo("claude-sonnet-4-6"),
+        modelInfo("claude-sonnet-5"),
+        modelInfo("claude-haiku-4-5"),
+        modelInfo("claude-haiku-4-5-20251001"),
+        modelInfo("claude-opus-4-8"),
+      ],
+      currentModelId: "claude-sonnet-5",
+    },
+  };
+
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState,
+    model: "sonnet",
+    profile: "claude",
+  });
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState,
+    model: "haiku",
+    profile: "claude",
+  });
+
+  assert.deepEqual(calls, [
+    { sessionId: "session-1", modelId: "claude-sonnet-5" },
+    { sessionId: "session-1", modelId: "claude-haiku-4-5-20251001" },
+  ]);
+});
+
+test("applySessionControls passes exact advertised model ids through unchanged", async () => {
+  const calls: unknown[] = [];
+  const connection = {
+    async unstable_setSessionModel(params: unknown) {
+      calls.push(params);
+    },
+  } as unknown as AcpConnection;
+
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState: {
+      models: {
+        availableModels: [modelInfo("claude-sonnet-4-6"), modelInfo("claude-sonnet-5")],
+        currentModelId: "claude-sonnet-5",
+      },
+    },
+    model: "claude-sonnet-4-6",
+    profile: "claude",
+  });
+
+  assert.deepEqual(calls, [{ sessionId: "session-1", modelId: "claude-sonnet-4-6" }]);
+});
+
+test("applySessionControls resolves family aliases against select config options", async () => {
+  const calls: unknown[] = [];
+  const connection = {
+    async setSessionConfigOption(params: unknown) {
+      calls.push(params);
+      return { configOptions: [] };
+    },
+  } as unknown as AcpConnection;
+
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState: {
+      configOptions: [
+        configOption("model", "Model", "model", [
+          "claude-sonnet-4-6",
+          "claude-sonnet-5",
+          "gpt-5",
+        ]),
+      ],
+    },
+    model: "sonnet",
+    profile: "opencode",
+  });
+
+  assert.deepEqual(calls, [
+    { sessionId: "session-1", configId: "model", value: "claude-sonnet-5" },
+  ]);
+});
+
+test("applySessionControls still rejects unsupported models with available values", async () => {
+  const connection = {
+    async setSessionConfigOption() {
+      throw new Error("should not be called");
+    },
+  } as unknown as AcpConnection;
+
+  await assert.rejects(
+    applySessionControls(connection, {
+      sessionId: "session-1",
+      sessionState: {
+        configOptions: [configOption("model", "Model", "model", ["gpt-5", "gpt-5-mini"])],
+      },
+      model: "unknown-model-9",
+      profile: "codex",
+    }),
+    /unsupported model 'unknown-model-9'; available values: gpt-5, gpt-5-mini/,
+  );
+});
+
+function modelInfo(modelId: string) {
+  return { modelId, name: modelId.replaceAll("-", " ") };
+}
 
 function configOption(id: string, name: string, category: string, values: string[]) {
   return {
