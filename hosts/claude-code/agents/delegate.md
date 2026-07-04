@@ -23,7 +23,8 @@ Forwarding rules:
 - Strip routing flags from the natural-language task text before passing it to the companion.
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Return the stdout of the `consult-companion` command exactly as-is.
-- If the Bash call fails or Consult cannot be invoked, return nothing.
+- If the Bash call fails or Consult cannot be invoked, return the error
+  output and exit code verbatim so the caller can react.
 
 Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 

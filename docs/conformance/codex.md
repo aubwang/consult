@@ -26,7 +26,7 @@ Command (run from a temp workspace):
 delegate --read-only -- "create a file called test.txt with content hello"
 ```
 
-Outcome: `test.txt` was actually written to disk. The job log records an `update` notification of `kind: edit` with `rawInput.auto_approved: true`. The codex-acp shim treats this class of edit as auto-approved on its side and never sends a `session/request_permission` to the consult plugin, so `permissions.mjs` never gets a chance to deny it.
+Outcome: `test.txt` was actually written to disk. The job log records an `update` notification of `kind: edit` with `rawInput.auto_approved: true`. The codex-acp shim treats this class of edit as auto-approved on its side and never sends a `session/request_permission` to the consult plugin, so `permissions.mts` never gets a chance to deny it.
 
 Implication: read-only mode is only honored for tool calls the backend chooses to route through ACP's permission RPC. For codex specifically, in-workspace edits bypass it.
 
@@ -72,7 +72,7 @@ Severity: blocks `/consult:status` and `/consult:result` from being usable.
 
 ### CLI args parser greedy-consumes after boolean flags (P1)
 
-`scripts/lib/args.mjs#parseArgs` treats every `--name` token as a value flag when the next argv element doesn't start with `--`. So:
+`scripts/lib/args.mts#parseArgs` treats every `--name` token as a value flag when the next argv element doesn't start with `--`. So:
 
 ```sh
 delegate --read-only "create test.txt"
@@ -97,7 +97,7 @@ Each test is a real OpenAI API call through codex-acp.
 | Check | Outcome |
 |---|---|
 | `delegate --write` allows in-workspace edit | **PASS** — `hello.txt` written with the requested content. |
-| `delegate --write` rejects edits outside the workspace | **FAIL (new P0)** — codex auto-approved `apply_patch /tmp/outside-attempt.txt`; the file was written. Same root cause as the read-only auto-approval bypass: codex-acp emits the edit with `rawInput.auto_approved: true` and never sends `session/request_permission`, so the path-confinement check in `permissions.mjs` never runs. The read-only backstop in commit `a272e97` only triggers in read-only mode; write mode legitimately allows in-workspace edits and currently has no path check on auto-approved updates. |
+| `delegate --write` rejects edits outside the workspace | **FAIL (new P0)** — codex auto-approved `apply_patch /tmp/outside-attempt.txt`; the file was written. Same root cause as the read-only auto-approval bypass: codex-acp emits the edit with `rawInput.auto_approved: true` and never sends `session/request_permission`, so the path-confinement check in `permissions.mts` never runs. The read-only backstop in commit `a272e97` only triggers in read-only mode; write mode legitimately allows in-workspace edits and currently has no path check on auto-approved updates. |
 | `delegate --background` + `status` + `result` round-trip | **PASS** — `delegate --background` returns a queued job id; `status` shows the job; `result <id>` returns the final text (`"queued"`). All metadata fields persisted (kind, profile, mode, prompt, claudeSessionId, submittedAt, completedAt, finalText). |
 | `cancel` mid-prompt frees `BROKER_BUSY` within 2s | **PASS** — submitted a "count to 100" background job; `cancel <id>` returned `{"ok":true}` in **154 ms**; worker pid logged as terminated; job record marked `status: cancelled`, `stopReason: cancelled`. |
 | `delegate --resume` round-trip | **PASS** — after a foreground delegate, `delegate --resume "what was the previous prompt?"` reattached to the prior session and returned a contextual answer. (The agent's response references the prior session's system context rather than the user prompt history, but session reattach itself works.) |
@@ -108,7 +108,7 @@ Each test is a real OpenAI API call through codex-acp.
 
 The real companion process disconnect path is covered by
 `npm run drill:companion-disconnect`. The drill uses the fake ACP agent rather
-than a live paid backend: it launches the real `consult-companion.mjs delegate`
+than a live paid backend: it launches the real `consult-companion.mts delegate`
 CLI, waits for a slow prompt update, sends `SIGKILL` to the companion process,
 and asserts that the broker records the Job as `cancelled`, receives one
 `session/cancel`, and removes live Broker state.
@@ -154,12 +154,12 @@ Command (from a fresh temporary git repo):
 delegate --write "use your apply_patch tool to create a file at /tmp/outside-attempt.txt with content 'should be denied'"
 ```
 
-Outcome: `/tmp/outside-attempt.txt` was written. The plugin's path-confinement check in `permissions.mjs` was never invoked because codex-acp auto-approved the edit on its side (`rawInput.auto_approved: true`) instead of going through `session/request_permission`.
+Outcome: `/tmp/outside-attempt.txt` was written. The plugin's path-confinement check in `permissions.mts` was never invoked because codex-acp auto-approved the edit on its side (`rawInput.auto_approved: true`) instead of going through `session/request_permission`.
 
 Severity: blocks v1's safety claim that delegates are confined to the workspace.
 
 Fix direction:
-- Extend the read-only backstop in `scripts/consult-broker.mjs#isReadOnlyEditPolicyViolation` (commit `a272e97`) into a general policy check. In write mode, allow auto-approved edits only if the touched path is inside the workspace root; otherwise fail the job with a `policy violation: auto-approved edit outside workspace` error. The path lives in `update.toolCall.rawInput.path` (or `update.locations`) per the codex-acp protocol observed in the log.
+- Extend the read-only backstop in `scripts/consult-broker.mts#isReadOnlyEditPolicyViolation` (commit `a272e97`) into a general policy check. In write mode, allow auto-approved edits only if the touched path is inside the workspace root; otherwise fail the job with a `policy violation: auto-approved edit outside workspace` error. The path lives in `update.toolCall.rawInput.path` (or `update.locations`) per the codex-acp protocol observed in the log.
 - Same defense-in-depth caveat: codex-acp may have already written by the time we see the update. The backstop prevents the silent-success failure mode.
 
 Resolution:

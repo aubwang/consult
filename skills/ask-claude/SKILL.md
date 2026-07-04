@@ -1,6 +1,6 @@
 ---
 name: ask-claude
-description: Ask Claude Code through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion while working in Codex. Use when the user says to consult Claude, ask Claude, get Claude's opinion, get a Claude review, or use Claude as a supporter.
+description: Ask Claude Code through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Claude, ask Claude, get Claude's opinion, get a Claude review, or use Claude as a supporter.
 metadata:
   "consult.disable-model-invocation": "true"
   "consult.argument-hint": What should Claude answer or review?
@@ -8,8 +8,8 @@ metadata:
 
 # Ask Claude Through Consult
 
-Use this skill when the user wants Codex to ask Claude Code for an independent
-second opinion while staying inside the current Codex conversation.
+Use this skill when the user wants your host agent to ask Claude Code for an
+independent second opinion while staying inside the current Host conversation.
 
 Run Claude through Consult in read-only mode by default:
 
@@ -27,8 +27,8 @@ consult result <job-id>
 
 ## Model And Effort
 
-Default Claude model: `--model sonnet`, which Consult expands to the current
-Claude Sonnet model.
+Default Claude model: `--model sonnet`, which Consult expands to the newest
+available Sonnet model.
 
 If the user asks for a specific Claude variant, preserve it:
 
@@ -36,9 +36,12 @@ If the user asks for a specific Claude variant, preserve it:
 consult delegate --agent claude --read-only --model opus -- "<prompt for Claude>"
 ```
 
-Consult expands `opus` to `claude-opus-4-8`, `sonnet` to
-`claude-sonnet-4-6`, and `haiku` to `claude-haiku-4-5`. Explicit model ids are
-passed through unchanged.
+Family aliases (`sonnet`, `opus`, `haiku`, `fable`) resolve dynamically to the
+newest matching model the agent advertises. When the agent does not advertise
+its model list, Consult falls back to static ids: `sonnet` expands to
+`claude-sonnet-5`, `opus` to `claude-opus-4-8`, `haiku` to `claude-haiku-4-5`,
+and `fable` to `claude-fable-5`. Explicit model ids are passed through
+unchanged.
 
 If the user asks for effort or another Consult option, pass it through:
 
@@ -65,8 +68,10 @@ would confirm or falsify each one.
 ## Rules
 
 - Default to `--read-only`.
-- Do not ask Claude to edit files unless the user explicitly asks for that.
-- Do not use GitHub Copilot for this skill.
+- Do not ask Claude to edit files unless the user explicitly asks for
+  that.
+- Delegate to the `claude` Profile only; do not substitute a different
+  Profile.
 - Do not send secrets or PII in the prompt.
-- Report Claude's useful findings back to the user, but keep Codex responsible
-  for deciding what to implement.
+- Report useful findings back to the user, but keep the current Host
+  responsible for deciding what to implement.

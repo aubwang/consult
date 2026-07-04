@@ -1,6 +1,6 @@
 ---
 name: ask-codex
-description: Ask a separate Codex Profile through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion while working in Codex. Use when the user says to consult Codex, ask another Codex, get a Codex review, or use Codex as a supporter.
+description: Ask a separate Codex Profile through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Codex, ask another Codex, get a Codex review, or use Codex as a supporter.
 metadata:
   "consult.disable-model-invocation": "true"
   "consult.argument-hint": What should the separate Codex answer or review?
@@ -9,8 +9,8 @@ metadata:
 # Ask Codex Through Consult
 
 Use this skill when the user wants a separate Codex Profile opinion through
-Consult. This is useful as an independent reviewer even when the current host is
-also Codex, because Consult runs it through the configured `codex` Profile.
+Consult. This is useful as an independent reviewer even when the current Host
+is also Codex, because Consult runs it through the configured `codex` Profile.
 
 Run the separate Codex Profile through Consult in read-only mode
 by default:
@@ -58,9 +58,10 @@ and focused checks.
 ## Rules
 
 - Default to `--read-only`.
-- Do not ask the delegated Codex to edit files unless the user explicitly asks
-  for that.
-- Do not use GitHub Copilot for this skill.
+- Do not ask the delegated Codex to edit files unless the user explicitly asks for
+  that.
+- Delegate to the `codex` Profile only; do not substitute a different
+  Profile.
 - Do not send secrets or PII in the prompt.
-- Report useful findings back to the user, but keep the current Codex session
+- Report useful findings back to the user, but keep the current Host
   responsible for deciding what to implement.

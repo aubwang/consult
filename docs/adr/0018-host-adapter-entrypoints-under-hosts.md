@@ -23,3 +23,9 @@ Consequences:
   implementation location.
 - Tests for Host-specific scripts live with the Host Adapter; the package test
   glob includes `hosts/**/*.test.mjs`.
+
+## Amendment (2026-07)
+
+After the TypeScript migration (ADR 0020), source and test files use the `.mts`
+extension; the package test glob is now `hosts/**/*.test.mts`. The decision
+itself is unchanged.
