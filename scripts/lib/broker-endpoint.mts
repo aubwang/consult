@@ -8,6 +8,7 @@ import { safeSegment } from "./path-segments.mts";
 const SOCKET_PATH_MAX_LENGTH = 100;
 // Below this many identity chars, distinct host sessions could collide on one socket.
 const MIN_SOCKET_IDENTITY_LENGTH = 8;
+const SOCKET_LABEL_MAX_LENGTH = 12;
 
 export interface BrokerIdentity {
   workspaceRoot: string;
@@ -70,8 +71,11 @@ export function brokerSocketPath({
   const candidates: Array<[string, string]> = [];
   const identity = jobId ? identityHash("job", jobId) : identityHash(host, hostSessionId);
   const prefixSegments = jobId
-    ? ["job", safeSegment(jobId)]
-    : [safeSegment(host), safeSegment(profile)];
+    ? ["job", safeSegment(jobId, { maxLength: SOCKET_LABEL_MAX_LENGTH })]
+    : [
+        safeSegment(host, { maxLength: SOCKET_LABEL_MAX_LENGTH }),
+        safeSegment(profile, { maxLength: SOCKET_LABEL_MAX_LENGTH }),
+      ];
   const prefix = `${hashPrefix}-${prefixSegments.join("-")}-`;
   if (runtimeDir && canCreateChildDirectory(runtimeDir)) {
     candidates.push([path.join(runtimeDir, "consult"), prefix]);

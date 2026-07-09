@@ -183,9 +183,10 @@ function resolveAdvertisedModel(requested: string, advertised: string[]): string
   return resolveFamilyLatest(requested, advertised);
 }
 
-// A family alias is a bare family name with no version digits ("sonnet",
-// "claude-sonnet"); resolve it to the newest advertised id containing that
-// token. Newest compares numeric segments parsed from the id, so
+// A family or tier alias is a bare name with no version digits ("sonnet",
+// "claude-sonnet", "sol", "terra", "luna"); resolve it to the newest
+// advertised id containing that token. Newest compares numeric segments parsed
+// from the id, so
 // claude-sonnet-5 beats claude-sonnet-4-6 and a date suffix acts as an extra,
 // less-significant segment.
 export function resolveFamilyLatest(requested: string, candidates: string[]): string | null {

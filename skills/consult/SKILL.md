@@ -52,7 +52,8 @@ consult cancel job-id
 ```
 
 For the full operational contract — flag semantics, `--json` output shapes,
-exit codes, and polling and resume behavior — run `consult help --agent`.
+exit codes, model selection, and polling and resume behavior — run
+`consult help`.
 
 Forward user arguments directly to `consult`. Do not inspect
 `~/.consult/workspaces`, job JSON, broker endpoint files, or modules under
