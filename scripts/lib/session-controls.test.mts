@@ -56,7 +56,7 @@ test("openResumedSession prefers resume and falls back to load", async () => {
   assert.deepEqual(calls.map(([method]) => method), ["resume", "load"]);
 });
 
-test("applySessionControls applies model and effort through select config options", async () => {
+test("applySessionControls applies model and max effort through select config options", async () => {
   const calls: unknown[] = [];
   const connection = {
     async setSessionConfigOption(params: unknown) {
@@ -64,7 +64,7 @@ test("applySessionControls applies model and effort through select config option
       return {
         configOptions: [
           configOption("model", "Model", "model", ["gpt-5", "gpt-5-mini"]),
-          configOption("thought", "Reasoning effort", "thought_level", ["low", "high"]),
+          configOption("thought", "Reasoning effort", "thought_level", ["low", "max"]),
         ],
       };
     },
@@ -72,7 +72,7 @@ test("applySessionControls applies model and effort through select config option
   const sessionState = {
     configOptions: [
       configOption("model", "Model", "model", ["gpt-5", "gpt-5-mini"]),
-      configOption("thought", "Reasoning effort", "thought_level", ["low", "high"]),
+      configOption("thought", "Reasoning effort", "thought_level", ["low", "max"]),
     ],
   };
 
@@ -80,13 +80,13 @@ test("applySessionControls applies model and effort through select config option
     sessionId: "session-1",
     sessionState,
     model: "gpt 5 mini",
-    effort: "high",
+    effort: "max",
     profile: "codex",
   });
 
   assert.deepEqual(calls, [
     { sessionId: "session-1", configId: "model", value: "gpt-5-mini" },
-    { sessionId: "session-1", configId: "thought", value: "high" },
+    { sessionId: "session-1", configId: "thought", value: "max" },
   ]);
   assert.deepEqual(nextState.configOptions, sessionState.configOptions);
 });
@@ -157,6 +157,64 @@ test("applySessionControls resolves family aliases to the newest advertised mode
     { sessionId: "session-1", modelId: "claude-sonnet-5" },
     { sessionId: "session-1", modelId: "claude-haiku-4-5-20251001" },
   ]);
+});
+
+test("applySessionControls resolves advertised GPT-5.6 tier aliases", async () => {
+  const calls: unknown[] = [];
+  const connection = {
+    async unstable_setSessionModel(params: unknown) {
+      calls.push(params);
+    },
+  } as unknown as AcpConnection;
+  const sessionState = {
+    models: {
+      availableModels: [
+        modelInfo("gpt-5.6-sol"),
+        modelInfo("gpt-5.6-terra"),
+        modelInfo("gpt-5.6-luna"),
+      ],
+      currentModelId: "gpt-5.6-terra",
+    },
+  };
+
+  for (const model of ["sol", "terra", "luna", "gpt-5.6-sol"]) {
+    await applySessionControls(connection, {
+      sessionId: "session-1",
+      sessionState,
+      model,
+      profile: "codex",
+    });
+  }
+
+  assert.deepEqual(calls, [
+    { sessionId: "session-1", modelId: "gpt-5.6-sol" },
+    { sessionId: "session-1", modelId: "gpt-5.6-terra" },
+    { sessionId: "session-1", modelId: "gpt-5.6-luna" },
+    { sessionId: "session-1", modelId: "gpt-5.6-sol" },
+  ]);
+});
+
+test("applySessionControls keeps the Profile default when model is omitted", async () => {
+  const connection = {
+    async unstable_setSessionModel() {
+      throw new Error("model selection should not be called");
+    },
+  } as unknown as AcpConnection;
+  const sessionState = {
+    models: {
+      availableModels: [modelInfo("gpt-5.6-sol"), modelInfo("gpt-5.6-terra")],
+      currentModelId: "gpt-5.6-sol",
+    },
+  };
+
+  assert.equal(
+    await applySessionControls(connection, {
+      sessionId: "session-1",
+      sessionState,
+      profile: "codex",
+    }),
+    sessionState,
+  );
 });
 
 test("applySessionControls passes exact advertised model ids through unchanged", async () => {
