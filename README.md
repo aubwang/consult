@@ -118,6 +118,33 @@ Let another agent edit inside the workspace:
 consult delegate --agent codex --write -- "add a regression test for broker cleanup"
 ```
 
+Let Codex use its configured/default model by omitting `--model`, or select
+an advertised GPT-5.6 tier dynamically:
+
+```sh
+consult delegate --agent codex --read-only --model sol --effort max -- "review this design"
+consult delegate --agent codex --read-only --model terra -- "trace this bug"
+consult delegate --agent codex --read-only --model luna -- "summarize these changes"
+```
+
+Exact model ids such as `gpt-5.6-sol` are also passed through. Tier aliases
+resolve only against models advertised by the configured Profile, so preview
+models remain subject to the OpenAI account's access.
+
+Claude likewise keeps its configured/default model when `--model` is omitted.
+Its durable aliases select the latest model in a tier:
+
+```sh
+consult delegate --agent claude --read-only --model opus -- "review this architecture"
+```
+
+For OpenCode, omit `--model` to preserve its configured/current selection, or
+use an exact `provider/model` id:
+
+```sh
+consult delegate --agent opencode --read-only --model anthropic/claude-sonnet-5 -- "review this diff"
+```
+
 Run work in the background:
 
 ```sh

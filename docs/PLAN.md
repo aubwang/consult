@@ -199,7 +199,7 @@ The smoke probe step is the load-bearing check: it catches binaries that install
       "install": {
         "type": "github-release",
         "repo": "zed-industries/codex-acp",
-        "version": "v0.14.0",
+        "version": "v0.16.0",
         "assetTemplate": "codex-acp-{versionNoV}-{target}.{ext}",
         "binaryInArchive": "codex-acp"
       },

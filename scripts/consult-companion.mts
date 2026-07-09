@@ -37,7 +37,7 @@ const handlers: Record<string, CompanionHandler> = {
   "task-resume-candidate": taskResumeCandidate,
 };
 
-const usage = `Usage:
+const summaryUsage = `Usage:
   consult help
   consult <command> [options]
 
@@ -62,9 +62,10 @@ Commands:
              Options: --agent <profile>, --read-only, --write, --background,
                       --resume, --resume-job <job-id>, --fresh, --model <name>,
                       --effort <level>, --json
-             --model accepts an exact model id or a family alias (for the
-             claude Profile: sonnet, opus, haiku, fable); a family alias
-             resolves to the newest model the Profile advertises.
+             --model accepts an exact model id or a family/tier alias (for
+             Codex: sol, terra, luna; for Claude: sonnet, opus, haiku, fable).
+             An alias resolves to the newest matching model the Profile
+             advertises. Omit --model to keep the Profile's own default.
   doctor     Diagnose whether Consult can delegate from this workspace.
              Options: --agent <profile>, --profile <profile>, --json
   review     Run the built-in review flow through a supported Profile.
@@ -81,7 +82,6 @@ Commands:
   brokers    Inspect live Broker state.
              Options: --cleanup, --json
   help       Show this help.
-             Options: --agent (print the agent-facing usage contract)
 
 Terms:
   Host       Where you run Consult, such as a terminal, Codex, opencode, or Claude Code.
@@ -91,16 +91,12 @@ Terms:
 
 Run delegated work in read-only mode unless you explicitly need edits. Use --write
 when the Profile should be allowed to change files in the current workspace.
-
-Agents: run 'consult help --agent' for the full delegation contract
-(prompt guidance, JSON output, exit codes, polling and resume semantics).
 `;
 
-const agentUsage = `# Consult: Agent Usage Contract
+const operationalUsage = `Operational contract
 
 Consult delegates one prompt turn to another locally configured agent CLI (a
-Profile) and stores the output as a Job in the current Workspace. This is the
-agent-facing contract; \`consult help\` has the short human summary.
+Profile) and stores the output as a Job in the current Workspace.
 
 ## When to use
 
@@ -126,9 +122,14 @@ sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
 - The delegate starts cold with no access to your conversation. Include file
   paths, the concrete question, and acceptance criteria in the prompt itself.
 - Optional pass-through tuning: \`--model <name>\`, \`--effort <level>\`.
-  \`--model\` takes an exact model id or a family alias (claude Profile:
-  \`sonnet\`, \`opus\`, \`haiku\`, \`fable\`); a family alias resolves to the
-  newest model the Profile advertises at session start.
+  Omit \`--model\` to preserve the Profile's configured/current default.
+  Codex accepts exact ids and advertised tier aliases such as \`sol\`,
+  \`terra\`, and \`luna\`; use \`--model sol --effort max\` for GPT-5.6 Sol
+  at maximum advertised reasoning effort. Claude accepts exact ids and the
+  latest-tier aliases \`sonnet\`, \`opus\`, \`haiku\`, and \`fable\`.
+  OpenCode exact ids use \`provider/model\`; omitting \`--model\` preserves
+  OpenCode's configured or current selection. Aliases resolve only against
+  models the Profile advertises at session start.
 
 ## Modes
 
@@ -210,14 +211,13 @@ sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
 - Capture the Job id from delegate stdout in both modes.
 `;
 
+const usage = `${summaryUsage}\n${operationalUsage}`;
+
 export async function dispatch(
   subcommand: string | undefined,
   parsedArgs: ParsedArgs,
 ): Promise<CliResult> {
   if (!subcommand || subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
-    if (parsedArgs?.flags?.agent !== undefined) {
-      return { exitCode: 0, stdout: agentUsage, stderr: "" };
-    }
     return { exitCode: 0, stdout: usage, stderr: "" };
   }
   const handler = handlers[subcommand];

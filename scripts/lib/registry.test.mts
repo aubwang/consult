@@ -49,6 +49,14 @@ test("Gemini registry entry uses the native ACP mode", async () => {
   assert.deepEqual(gemini.supports, { resume: false, load: true });
 });
 
+test("Codex registry entry installs the current ACP shim", async () => {
+  const registry = await loadRegistry();
+  const codex = findRegistryEntry(registry, "codex")!;
+
+  assert.equal(codex.install.type, "github-release");
+  assert.equal(codex.install.version, "v0.16.0");
+});
+
 test("loadRegistry returns non-empty notes for every shipped registry entry", async () => {
   const registry = await loadRegistry();
 

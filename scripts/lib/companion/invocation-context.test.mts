@@ -106,7 +106,16 @@ test("resolveInvocationContext returns workspace, host identity, profiles, overr
 
 test("loadWorkspaceOverride rejects malformed JSON with a named error", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-override-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const originalDataDir = process.env.CONSULT_DATA_DIR;
+  process.env.CONSULT_DATA_DIR = path.join(root, "data");
+  t.after(async () => {
+    if (originalDataDir === undefined) {
+      delete process.env.CONSULT_DATA_DIR;
+    } else {
+      process.env.CONSULT_DATA_DIR = originalDataDir;
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
   const overridePath = overrideFilePath(root);
   await fs.mkdir(path.dirname(overridePath), { recursive: true });
   await fs.writeFile(overridePath, "{", "utf8");

@@ -64,6 +64,10 @@ test("dispatch prints help for the help subcommand", async () => {
   assert.equal(result.stdout.includes("logs"), true);
   assert.equal(result.stdout.includes("chain"), true);
   assert.equal(result.stdout.includes("brokers"), true);
+  assert.equal(result.stdout.includes("Operational contract"), true);
+  assert.equal(result.stdout.includes("## Exit codes"), true);
+  assert.equal(result.stdout.includes("Omit `--model`"), true);
+  assert.equal(result.stdout.includes("provider/model"), true);
   assert.equal(result.stdout.includes("adversarial-review"), false);
 });
 
@@ -77,30 +81,8 @@ test("dispatch prints help for help aliases", async () => {
   }
 });
 
-test("dispatch help advertises the agent contract", async () => {
+test("help documents the extended exit codes, lineage env, and json coverage", async () => {
   const result = await dispatch("help", { positional: [], flags: {} });
-
-  assert.equal(result.exitCode, 0);
-  assert.equal(result.stdout.includes("consult help --agent"), true);
-});
-
-test("dispatch prints the agent contract for help --agent", async () => {
-  for (const subcommand of [undefined, "--help", "-h", "help"]) {
-    const result = await dispatch(subcommand, { positional: [], flags: { agent: true } });
-
-    assert.equal(result.exitCode, 0);
-    assert.equal(result.stdout.includes("Agent Usage Contract"), true);
-    assert.equal(result.stdout.includes("## Exit codes"), true);
-    assert.equal(result.stdout.includes("--resume-job"), true);
-    assert.equal(result.stdout.includes("consult logs <job-id> --follow"), true);
-    assert.equal(result.stdout.includes("consult chain <job-id>"), true);
-    assert.equal(result.stdout.includes("consult doctor"), true);
-    assert.equal(result.stdout.includes("Common workflow:"), false);
-  }
-});
-
-test("agent contract documents the extended exit codes, lineage env, and json coverage", async () => {
-  const result = await dispatch("help", { positional: [], flags: { agent: true } });
 
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /6 the delegated turn finalized as failed/);

@@ -279,6 +279,9 @@ export function createBrokerJobRuntime({
       job.completedAt = new Date().toISOString();
       sessionJobs.delete(job.sessionId);
       // ACP sessions outlive prompt turns; keep sessionModes until broker shutdown.
+      // Persisted terminal state and finalized notifications are readiness
+      // boundaries: observers may immediately submit the next Job.
+      busy = false;
       await writeJobRecord(job, finalized);
       // Keep finalized jobs for this daemon lifetime; eviction is deferred for v1.
       notifyFinalized(job, finalized);
@@ -298,6 +301,7 @@ export function createBrokerJobRuntime({
         errorMessage,
       };
       sessionJobs.delete(job.sessionId);
+      busy = false;
       await writeFailedJobRecord(job);
       notifyFinalized(job, job.finalized);
       onActivity();
@@ -401,6 +405,7 @@ export function createBrokerJobRuntime({
         };
         sessionJobs.delete(job.sessionId);
         writeFailedJobRecord(job).catch(() => {});
+        busy = false;
         notifyFinalized(job, job.finalized);
       }
       // The job may already be finalized (policy violation) while its prompt
