@@ -1,10 +1,21 @@
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+import {
+  newSession,
+  promptTurn,
+  startAgent,
+} from "./lib/acp-client.mts";
+import { profilesPath } from "./lib/broker-endpoint.mts";
 import {
   listWorkspaceJobRecords,
   readWorkspaceJobRecord,
 } from "./lib/job-records.mts";
+import { loadProfiles } from "./lib/profiles.mts";
+import { extractAgentMessageText } from "./lib/session-update-renderer.mts";
+import { applySessionControls } from "./lib/session-controls.mts";
 import { resolveWorkspaceRoot } from "./lib/workspace.mts";
 
 const companionPath = fileURLToPath(new URL("./consult-companion.mts", import.meta.url));
@@ -16,6 +27,8 @@ interface Options {
   expect: "ready" | "unsupported";
   model?: string;
   turn: boolean;
+  direct: boolean;
+  background: boolean;
 }
 
 interface CommandResult {
@@ -43,6 +56,18 @@ if (process.platform !== "linux" && process.platform !== "darwin") {
 }
 const workspaceRoot = await resolveWorkspaceRoot();
 const jobsBefore = await listWorkspaceJobRecords(workspaceRoot);
+const sandboxRootsBefore = await listSandboxJobRoots();
+
+let directFailed = false;
+const direct = options.direct
+  ? await runDirectProfileControl(workspaceRoot, options).catch((error) => {
+      directFailed = true;
+      return {
+        ok: false,
+        diagnostic: diagnosticMessage(error),
+      };
+    })
+  : null;
 
 const doctorResult = await runCompanion(["doctor", "--agent", options.agent, "--json"]);
 const doctor = parseJson<DoctorPayload>(doctorResult.stdout, "doctor");
@@ -95,7 +120,8 @@ if (options.turn && options.expect !== "ready") {
 
 let turn: Record<string, unknown> | null = null;
 if (options.turn) {
-  const expectedText = `CONFINED_${options.agent.toUpperCase()}_OK`;
+  const sourceExpected = `CONFINED_${options.agent.toUpperCase()}_SOURCE_OK`;
+  const resumeSecret = `RESUME_${options.agent.toUpperCase()}_${crypto.randomBytes(8).toString("hex")}`;
   const args = [
     "delegate",
     "--agent",
@@ -106,13 +132,16 @@ if (options.turn) {
     "--json",
   ];
   if (options.model) args.push("--model", options.model);
-  args.push("--", `Reply with exactly ${expectedText} and do not use tools.`);
+  args.push(
+    "--",
+    `Remember the private marker ${resumeSecret} for the next turn. Reply with exactly ${sourceExpected} and do not use tools.`,
+  );
   const result = await runCompanion(args);
   const payload = parseJson<Record<string, any>>(result.stdout, "delegate");
   if (
     result.code !== 0 ||
     payload.job?.status !== "completed" ||
-    payload.outcome?.finalText?.trim() !== expectedText
+    payload.outcome?.finalText?.trim() !== sourceExpected
   ) {
     throw new Error(
       `confined turn failed (exit ${String(result.code)}): ${redact(
@@ -128,13 +157,13 @@ if (options.turn) {
     "delegate", "--agent", options.agent, "--read-only", "--sandbox", "confined",
     "--resume-job", payload.job.id, "--json",
     ...(options.model ? ["--model", options.model] : []),
-    "--", `Reply with the exact marker from the previous turn: ${expectedText}`,
+    "--", "Reply with only the private marker I asked you to remember in the previous turn. Do not use tools.",
   ]);
   const resumed = parseJson<Record<string, any>>(resumeResult.stdout, "resumed delegate");
   if (
     resumeResult.code !== 0 ||
     resumed.job?.status !== "completed" ||
-    resumed.outcome?.finalText?.trim() !== expectedText
+    resumed.outcome?.finalText?.trim() !== resumeSecret
   ) {
     throw new Error(
       `confined resume failed (exit ${String(resumeResult.code)}): ${redact(
@@ -154,11 +183,25 @@ if (options.turn) {
     status: payload.job.status,
     model: payload.job.model,
     stopReason: payload.outcome.stopReason,
-    finalTextMatched: true,
+    sourceAcknowledged: true,
     sessionStateArchived: true,
     resumedJobId: resumed.job.id,
-    resumeFinalTextMatched: true,
+    restoredSecretMatched: true,
   };
+}
+
+const background = options.background
+  ? await runBackgroundControl(options)
+  : null;
+
+const sandboxRootsAfter = await listSandboxJobRoots();
+const leakedSandboxRoots = sandboxRootsAfter.filter(
+  (entry) => !sandboxRootsBefore.includes(entry),
+);
+if (leakedSandboxRoots.length > 0) {
+  throw new Error(
+    `conformance left ${leakedSandboxRoots.length} confined Job root(s) behind`,
+  );
 }
 
 console.log(JSON.stringify({
@@ -172,6 +215,7 @@ console.log(JSON.stringify({
       : "terminal-or-explicit",
   agent: options.agent,
   expectation: options.expect,
+  direct,
   doctor: {
     exitCode: doctorResult.code,
     selectedProfile: doctor.authority?.selectedProfile ?? null,
@@ -180,13 +224,17 @@ console.log(JSON.stringify({
     diagnostic: confined?.diagnostic ?? null,
   },
   turn,
+  background,
 }));
+if (directFailed) process.exitCode = 1;
 
 function parseOptions(args: string[]): Options {
   let agent: Options["agent"] | undefined;
   let expect: Options["expect"] = "ready";
   let model: string | undefined;
   let turn = false;
+  let direct = false;
+  let background = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--agent") {
@@ -214,14 +262,115 @@ function parseOptions(args: string[]): Options {
       turn = true;
       continue;
     }
+    if (argument === "--direct") {
+      direct = true;
+      continue;
+    }
+    if (argument === "--background") {
+      background = true;
+      continue;
+    }
     throw new Error(`unknown argument: ${argument}`);
   }
   if (!agent) {
     throw new Error(
-      "usage: bun run conformance:job-authority -- --agent <codex|claude> [--expect ready|unsupported] [--turn] [--model <id>]",
+      "usage: bun run conformance:job-authority -- --agent <codex|claude> [--expect ready|unsupported] [--direct] [--turn] [--background] [--model <id>]",
     );
   }
-  return { agent, expect, model, turn };
+  if (expect === "unsupported" && (turn || direct || background)) {
+    throw new Error("--expect unsupported cannot run direct or model-turn controls");
+  }
+  return { agent, expect, model, turn, direct, background };
+}
+
+async function runDirectProfileControl(
+  cwd: string,
+  input: Options,
+): Promise<Record<string, unknown>> {
+  const profiles = await loadProfiles(profilesPath());
+  const profile = profiles.profiles[input.agent];
+  if (!profile || profile.registryId !== input.agent) {
+    throw new Error(
+      `direct control requires configured '${input.agent}' Profile with matching registry identity`,
+    );
+  }
+  const marker = `DIRECT_${input.agent.toUpperCase()}_${crypto.randomBytes(8).toString("hex")}`;
+  const agent = await startAgent({
+    binary: profile.binary,
+    args: profile.args,
+    env: profile.env,
+    cwd,
+    workspaceRoot: cwd,
+    mode: "read-only",
+    sandbox: "off",
+    profileRegistryId: profile.registryId,
+  });
+  let finalText = "";
+  let stopReason: string | null = null;
+  try {
+    const session = await newSession(agent.connection, { cwd });
+    await applySessionControls(agent.connection, {
+      sessionId: session.sessionId,
+      sessionState: session,
+      model: input.model,
+      profile: input.agent,
+    });
+    for await (const event of promptTurn(agent.connection, {
+      sessionId: session.sessionId,
+      prompt: `Reply with exactly ${marker} and do not use tools.`,
+    })) {
+      if (event.type === "update") {
+        finalText += extractAgentMessageText(event.update as any);
+      } else {
+        stopReason = event.stopReason;
+      }
+    }
+  } finally {
+    await agent.dispose();
+  }
+  if (finalText.trim() !== marker) {
+    throw new Error(
+      `direct ${input.agent} control did not return its marker: ${redact(finalText)}`,
+    );
+  }
+  return { ok: true, markerMatched: true, stopReason };
+}
+
+async function runBackgroundControl(input: Options): Promise<Record<string, unknown>> {
+  const marker = `BACKGROUND_${input.agent.toUpperCase()}_${crypto.randomBytes(8).toString("hex")}`;
+  const args = [
+    "delegate", "--agent", input.agent, "--read-only", "--sandbox", "confined",
+    "--background", "--fresh", "--json",
+  ];
+  if (input.model) args.push("--model", input.model);
+  args.push("--", `Reply with exactly ${marker} and do not use tools.`);
+  const queuedResult = await runCompanion(args);
+  const queued = parseJson<Record<string, any>>(queuedResult.stdout, "background delegate");
+  const jobId = queued.job?.id;
+  if (queuedResult.code !== 0 || queued.job?.status !== "queued" || typeof jobId !== "string") {
+    throw new Error("background delegate did not return a queued Job");
+  }
+  const statusResult = await runCompanion(["status", jobId, "--wait", "--json"]);
+  const status = parseJson<Record<string, any>>(statusResult.stdout, "background status");
+  const resultResult = await runCompanion(["result", jobId, "--json"]);
+  const result = parseJson<Record<string, any>>(resultResult.stdout, "background result");
+  if (
+    statusResult.code !== 0 ||
+    resultResult.code !== 0 ||
+    status.job?.status !== "completed" ||
+    result.outcome?.finalText?.trim() !== marker
+  ) {
+    throw new Error(
+      `background ${input.agent} control failed: ${redact(
+        result.outcome?.errorMessage ?? status.outcome?.errorMessage ?? "unknown failure",
+      )}`,
+    );
+  }
+  const record = await readWorkspaceJobRecord(workspaceRoot, jobId);
+  if (record.sessionStateArchived !== true) {
+    throw new Error("background control did not persist a selective Session archive");
+  }
+  return { jobId, queued: true, completed: true, resultMatched: true, sessionStateArchived: true };
 }
 
 function runCompanion(args: string[]): Promise<CommandResult> {
@@ -288,4 +437,24 @@ function redact(value: unknown): string {
     .replace(/(?:sk|sess|eyJ)[-_A-Za-z0-9.]{12,}/gu, "[REDACTED]")
     .replace(/[A-Za-z0-9_-]{64,}/gu, "[REDACTED]")
     .slice(0, 2_000);
+}
+
+function diagnosticMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const stderr =
+    typeof error === "object" &&
+    error !== null &&
+    "stderr" in error &&
+    typeof error.stderr === "string"
+      ? error.stderr.trim()
+      : "";
+  return redact(stderr ? `${message}: ${stderr}` : message);
+}
+
+async function listSandboxJobRoots(): Promise<string[]> {
+  const entries = await fs.readdir("/tmp", { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("consult-srt-job-"))
+    .map((entry) => entry.name)
+    .sort();
 }

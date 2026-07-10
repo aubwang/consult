@@ -36,14 +36,24 @@ is still supported. Gemini and GitHub Copilot are not supported Profiles.
 
 Before graduating portable Job Authority as the default release boundary:
 
-- Run fresh direct, foreground, background, isolated-write, fetch,
-  cancellation, and resume probes for every claimed Profile/OS confinement
-  combination. Flip support per combination; do not infer one from another.
+- Run the deterministic packed adapter matrix for both built-in registry
+  identities on every claimed OS: foreground read-only, write,
+  isolated-write, fetch/no-fetch proxying, direct-egress denial, background,
+  cancellation, resume, and process/Broker/private-root cleanup. This matrix
+  uses a purpose-built ACP fixture so every boundary assertion is mandatory,
+  not dependent on a model choosing a particular tool.
+- Overlay that boundary matrix with fresh real Codex and Claude controls on
+  every claimed OS: direct configured-Profile ACP transport, exact Doctor
+  initialization, foreground model transport, background/result, and a resume
+  challenge that does not reveal the expected prior-turn secret. Flip support
+  per Profile/OS combination; do not infer one from another. Model-directed
+  write/fetch/cancel probes are useful additional compatibility evidence, but
+  are not substitutes for the deterministic boundary matrix.
 - Record the product-level macOS Codex and Claude controls from an unrestricted
   terminal, plus fail-closed nested results from already-confined Hosts. The
   existing macOS spike is evidence, not the final adapter conformance run.
-- Re-run Linux Codex and Claude read/write/fetch/direct-egress/cleanup probes
-  against the packed artifact.
+- Re-run the packed adapter matrix on Linux for both the Codex and Claude
+  registry identities, then run the real Profile overlay for Codex and Claude.
 - Validate package installation through both npm and Bun from a packed tarball.
 - Document any Profile-specific differences that remain observable through the
   common Job result contract.
