@@ -50,6 +50,7 @@
   "devDependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.64",
     "@types/node": "^25.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "zod": "4.4.3"
   }
 }
