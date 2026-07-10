@@ -38,15 +38,19 @@ for await (const line of lines) {
   }
   if (message.method === "session/prompt") {
     const scenario = scenarioFromPrompt(message.params);
-    await assertCredentialBoundary();
-    await ensureTranscript(scenario === "resume" ? "resumed-prompt" : "source");
-    if (scenario === "cancel") {
-      await beginCancellationProbe(message);
-      continue;
+    try {
+      await assertCredentialBoundary();
+      await ensureTranscript(scenario === "resume" ? "resumed-prompt" : "source");
+      if (scenario === "cancel") {
+        await beginCancellationProbe(message);
+        continue;
+      }
+      await runScenario(scenario);
+      sendText(`${scenario}-ok`);
+      respond(message.id, { stopReason: "end_turn" });
+    } catch (error) {
+      respondError(message.id, boundedErrorMessage(error));
     }
-    await runScenario(scenario);
-    sendText(`${scenario}-ok`);
-    respond(message.id, { stopReason: "end_turn" });
     continue;
   }
   if (message.method === "session/cancel" && pendingPrompt) {
@@ -217,6 +221,16 @@ function sendText(text) {
 
 function respond(id, result) {
   write({ jsonrpc: "2.0", id, result });
+}
+
+function respondError(id, message) {
+  write({ jsonrpc: "2.0", id, error: { code: -32000, message } });
+}
+
+function boundedErrorMessage(error) {
+  return (error instanceof Error ? error.message : String(error))
+    .replace(/[\r\n]+/gu, " ")
+    .slice(0, 500);
 }
 
 function write(message) {

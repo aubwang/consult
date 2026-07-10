@@ -63,8 +63,8 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
   assert.equal(transformed.env.SAFE, "1");
   assert.match(transformed.argv[2], /--setenv TMPDIR \/tmp\/consult-job\/temporary/u);
   assert.match(transformed.argv[2], /--setenv NO_PROXY ''/u);
-  assert.match(transformed.argv[2], new RegExp(`http://consult:${TOKEN}@localhost:3128`, "u"));
-  assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@localhost:1080`, "u"));
+  assert.match(transformed.argv[2], new RegExp(`http://consult:${TOKEN}@127\\.0\\.0\\.1:3128`, "u"));
+  assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@127\\.0\\.0\\.1:1080`, "u"));
   assert.doesNotMatch(transformed.argv[2], /--bind \/tmp\/claude \/tmp\/claude/u);
   assert.doesNotMatch(transformed.argv[2], /--bind \/var\/tmp\/shared-target/u);
   assert.ok(
@@ -149,8 +149,8 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
 
   assert.match(transformed.argv[2], /TMPDIR=\/private\/tmp\/consult-job\/temporary/u);
   assert.match(transformed.argv[2], /NO_PROXY= /u);
-  assert.match(transformed.argv[2], new RegExp(`http://consult:${TOKEN}@localhost:41001`, "u"));
-  assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@localhost:41002`, "u"));
+  assert.match(transformed.argv[2], new RegExp(`http://consult:${TOKEN}@127\\.0\\.0\\.1:41001`, "u"));
+  assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@127\\.0\\.0\\.1:41002`, "u"));
   assert.doesNotMatch(transformed.argv[2], /subpath "\/tmp\/claude"/u);
   assert.doesNotMatch(transformed.argv[2], /subpath "\/private\/tmp\/claude"/u);
   assert.doesNotMatch(

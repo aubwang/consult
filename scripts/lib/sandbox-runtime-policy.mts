@@ -4,6 +4,7 @@ export const SANDBOX_RUNTIME_POLICY_ERROR =
   "SRT_POLICY_SHAPE_UNSUPPORTED" as const;
 
 const PROXY_USERNAME = "consult";
+const PROXY_LOOPBACK_HOST = "127.0.0.1";
 const LINUX_HTTP_PROXY_PORT = 3128;
 const LINUX_SOCKS_PROXY_PORT = 1080;
 const DEFAULT_NO_PROXY =
@@ -332,9 +333,9 @@ function authenticateProxyWords(
   return words.map((word) =>
     word
       .split(httpSource)
-      .join(`http://${PROXY_USERNAME}:${token}@localhost:${httpPort}`)
+      .join(`http://${PROXY_USERNAME}:${token}@${PROXY_LOOPBACK_HOST}:${httpPort}`)
       .split(socksSource)
-      .join(`socks5h://${PROXY_USERNAME}:${token}@localhost:${socksPort}`),
+      .join(`socks5h://${PROXY_USERNAME}:${token}@${PROXY_LOOPBACK_HOST}:${socksPort}`),
   );
 }
 
