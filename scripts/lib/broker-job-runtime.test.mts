@@ -70,6 +70,57 @@ test("broker job runtime buffers updates and notifies subscribers on finalize", 
   assert.equal(job.finalText, "hello");
 });
 
+test("broker job runtime reports unconfirmed cleanup as a failed terminal outcome", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => {
+      throw new Error("agent should not be needed");
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) {
+      notifications.push({ method, params });
+    },
+    beforeTerminal: async () => {
+      throw new Error("process target remained alive after SIGKILL");
+    },
+  });
+  const job = runtime.createJob(
+    {
+      jobId: "job-cleanup-unconfirmed",
+      profile: "codex",
+      mode: "read-only",
+      prompt: "inspect",
+    },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-cleanup", job);
+
+  await runtime.finalizeJob(job, {
+    stopReason: "end_turn",
+    sessionId: "session-cleanup",
+  });
+
+  assert.equal(job.finalized?.stopReason, "failed");
+  assert.match(
+    job.finalized?.errorMessage ?? "",
+    /PROFILE_CLEANUP_UNCONFIRMED: process target remained alive after SIGKILL/u,
+  );
+  assert.equal(notifications.at(-1)?.method, "consult/finalized");
+  assert.equal(notifications.at(-1)?.params.stopReason, "failed");
+  const record = await readWorkspaceJobRecord(workspaceRoot, job.jobId);
+  assert.equal(record.status, "failed");
+  assert.match(record.errorMessage ?? "", /PROFILE_CLEANUP_UNCONFIRMED/u);
+});
+
 test("broker job runtime caps accumulated final text", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

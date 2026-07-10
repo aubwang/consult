@@ -184,6 +184,7 @@ export async function serveBroker(
     ensureAgent,
     hashRunPayload,
     writeNotification,
+    beforeTerminal: config.shutdownAfterJob ? async () => await disposeAgent() : undefined,
     onActivity: () => scheduleIdleShutdown(),
     onTerminal: () => scheduleFinalizedShutdown(),
   });
@@ -266,7 +267,7 @@ export async function serveBroker(
     for (const socket of sockets) {
       socket.destroy();
     }
-    await agent?.dispose();
+    await disposeAgent();
     runtime.clearSessions();
     await closeServer(server);
     await fsp.unlink(config.endpoint).catch(() => {});
@@ -318,6 +319,20 @@ export async function serveBroker(
     agentAuthority = authority;
     capabilities = agent.capabilities;
     return agent;
+  }
+
+  async function disposeAgent(): Promise<void> {
+    const current = agent;
+    if (!current) {
+      return;
+    }
+    await current.dispose();
+    agent = null;
+    agentAuthority = null;
+    capabilities = null;
+    socketSessions.clear();
+    socketSessionState.clear();
+    runtime.clearSessions();
   }
 
   function scheduleIdleShutdown() {
