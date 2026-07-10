@@ -14,6 +14,8 @@ import {
 import type { BrokerJobSnapshot, FinalizedJobOutcome } from "./job-records.mts";
 import { isInsideWorkspaceSync } from "./path-safety.mts";
 import { extractAgentMessageText } from "./session-update-renderer.mts";
+import type { JobAuthority } from "./job-authority.mts";
+import { canonicalizeRunParams } from "./job-agent.mts";
 
 import type { ConsultRunParams } from "../consult-broker.mts";
 
@@ -85,6 +87,7 @@ export interface BrokerJob {
   host: string;
   hostSessionId: string;
   profile: string;
+  authority: JobAuthority;
   mode?: string;
   allowExecute: boolean;
   prompt: string;
@@ -116,7 +119,7 @@ export interface BrokerJob {
 
 export interface CreateBrokerJobRuntimeOptions {
   config: BrokerJobRuntimeConfig;
-  ensureAgent(mode?: string): Promise<BrokerAgentHandle>;
+  ensureAgent(authority: JobAuthority): Promise<BrokerAgentHandle>;
   hashRunPayload(params: ConsultRunParams): string;
   writeNotification(socket: BrokerJobSocketLike, method: string, params: unknown): void;
   onActivity?(): void;
@@ -132,9 +135,8 @@ export interface BrokerJobRuntime {
   getJob(jobId: string): BrokerJob | undefined;
   createJob(params: ConsultRunParams, originatorSocket: BrokerJobSocketLike): BrokerJob;
   attachJob(job: BrokerJob, targetSocket: BrokerJobSocketLike): void;
-  trackSession(sessionId: string, job: BrokerJob, mode: string): void;
-  getSessionMode(sessionId: string): string | undefined;
-  getSessionAllowExecute(sessionId: string): boolean;
+  trackSession(sessionId: string, job: BrokerJob): void;
+  getSessionAuthority(sessionId: string): JobAuthority | undefined;
   clearSessions(): void;
   handleSessionUpdate(params: { sessionId: string; update: BrokerSessionUpdate }): Promise<void>;
   notePermissionDecision(params: {
@@ -163,7 +165,6 @@ export function createBrokerJobRuntime({
 }: CreateBrokerJobRuntimeOptions): BrokerJobRuntime {
   const stateWorkspaceRoot = config.stateWorkspaceRoot ?? config.cwd;
   const sessionJobs = new Map<string | null, BrokerJob>();
-  const sessionModes = new Map<string, string>();
   const activeJobs = new Map<string, BrokerJob>();
   let busy = false;
   let tainted = false;
@@ -186,25 +187,27 @@ export function createBrokerJobRuntime({
       return activeJobs.get(jobId);
     },
     createJob(params, originatorSocket) {
+      const canonicalParams = canonicalizeRunParams(params);
       const job: BrokerJob = {
-        jobId: params.jobId,
-        kind: params.kind,
-        host: params.host ?? config.host,
-        hostSessionId: params.hostSessionId ?? config.hostSessionId,
-        profile: params.profile,
-        mode: params.mode,
-        allowExecute: params.allowExecute === true,
-        prompt: params.prompt,
-        submittedAt: params.submittedAt,
-        chainId: params.chainId,
-        parentJobId: params.parentJobId,
-        delegationDepth: params.delegationDepth,
-        model: params.model,
-        effort: params.effort,
-        resumeSessionId: params.resume ?? null,
-        baseRef: params.baseRef,
+        jobId: canonicalParams.jobId,
+        kind: canonicalParams.kind,
+        host: canonicalParams.host ?? config.host,
+        hostSessionId: canonicalParams.hostSessionId ?? config.hostSessionId,
+        profile: canonicalParams.profile,
+        authority: canonicalParams.authority,
+        mode: canonicalParams.authority.mode,
+        allowExecute: canonicalParams.authority.allowExecute,
+        prompt: canonicalParams.prompt,
+        submittedAt: canonicalParams.submittedAt,
+        chainId: canonicalParams.chainId,
+        parentJobId: canonicalParams.parentJobId,
+        delegationDepth: canonicalParams.delegationDepth,
+        model: canonicalParams.model,
+        effort: canonicalParams.effort,
+        resumeSessionId: canonicalParams.resume ?? null,
+        baseRef: canonicalParams.baseRef,
         status: "running",
-        payloadHash: hashRunPayload(params),
+        payloadHash: hashRunPayload(canonicalParams),
         sessionId: null,
           pendingUpdates: [],
           droppedUpdateCount: 0,
@@ -220,7 +223,7 @@ export function createBrokerJobRuntime({
         completedAt: null,
         finalText: "",
       };
-      activeJobs.set(params.jobId, job);
+      activeJobs.set(canonicalParams.jobId, job);
       onActivity();
       return job;
     },
@@ -248,20 +251,15 @@ export function createBrokerJobRuntime({
       job.subscribers.add(targetSocket);
       targetSocket.once("close", () => job.subscribers.delete(targetSocket));
     },
-    trackSession(sessionId, job, mode) {
+    trackSession(sessionId, job) {
       job.sessionId = sessionId;
       sessionJobs.set(sessionId, job);
-      sessionModes.set(sessionId, mode);
     },
-    getSessionMode(sessionId) {
-      return sessionModes.get(sessionId);
-    },
-    getSessionAllowExecute(sessionId) {
-      return sessionJobs.get(sessionId)?.allowExecute === true;
+    getSessionAuthority(sessionId) {
+      return sessionJobs.get(sessionId)?.authority;
     },
     clearSessions() {
       sessionJobs.clear();
-      sessionModes.clear();
     },
     async handleSessionUpdate({ sessionId, update }) {
       const job = sessionJobs.get(sessionId);
@@ -325,7 +323,7 @@ export function createBrokerJobRuntime({
       startCancelAckTimer(job);
       // Reuse the agent that runs this job; a bare ensureAgent() would default to
       // read-only and restart a sandboxed write-mode agent mid-turn.
-      const currentAgent = await ensureAgent(job.mode ?? "read-only");
+      const currentAgent = await ensureAgent(job.authority);
       await cancelPrompt(currentAgent.connection, { sessionId: job.sessionId });
     },
     cancelJobCascade(job) {
@@ -390,7 +388,7 @@ export function createBrokerJobRuntime({
     // timer fires), so a second consult/run cannot interleave prompt turns.
     job.cancelRequested = true;
     startCancelAckTimer(job);
-    ensureAgent(job.mode ?? "read-only")
+    ensureAgent(job.authority)
       .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
       .catch(() => {});
     await writeFailedJobRecord(job);
@@ -475,7 +473,7 @@ function autoApprovedPolicyViolationMessage(job: BrokerJob, update: BrokerSessio
   const rawInput = toolCall?.rawInput ?? update?.rawInput;
   const kind = typeof toolCall?.kind === "string" ? toolCall.kind.toLowerCase() : null;
   const autoApproved = rawInput?.auto_approved === true || rawInput?.autoApproved === true;
-  const mode = job.mode ?? "read-only";
+  const mode = job.authority.mode;
 
   if (mode === "read-only") {
     if (autoApproved) {

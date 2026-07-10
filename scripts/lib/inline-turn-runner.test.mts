@@ -96,6 +96,7 @@ test("inline runner denies opted-in execute until proxy-confined networking exis
     host: "terminal",
     hostSessionId: "default",
     profile: "codex",
+    authority: authority({ mode: "write", allowExecute: true }),
     profileEntry: profileEntryFixture("prompt-permission-execute", {
       CONSULT_FAKE_AGENT_CLIENT_LOG: clientLog,
       CONSULT_FAKE_AGENT_TARGET_PATH: workspaceRoot,
@@ -109,6 +110,7 @@ test("inline runner denies opted-in execute until proxy-confined networking exis
     jobId: "job-inline-execute-no-sandbox",
     prompt: "run tests",
     profile: "codex",
+    authority: authority({ mode: "write", allowExecute: true }),
     mode: "write",
     allowExecute: true,
   });
@@ -133,6 +135,7 @@ test(
       host: "terminal",
       hostSessionId: "default",
       profile: "codex",
+      authority: authority({ mode: "write", allowExecute: true }),
       profileEntry: profileEntryFixture("prompt-permission-execute", {
         CONSULT_FAKE_AGENT_TARGET_PATH: repoRoot,
       }),
@@ -145,6 +148,7 @@ test(
       jobId: "job-inline-execute-bwrap",
       prompt: "run tests",
       profile: "codex",
+      authority: authority({ mode: "write", allowExecute: true }),
       mode: "write",
       allowExecute: true,
     });
@@ -153,6 +157,35 @@ test(
     assert.equal(updates[0].update.content.text, "reject");
   },
 );
+
+test("inline runner rejects stale canonical authority before Profile launch", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const beforeSigintListeners = process.listenerCount("SIGINT");
+  const client = createInlineClient({
+    workspaceRoot,
+    host: "terminal",
+    hostSessionId: "default",
+    profile: "codex",
+    authority: authority(),
+    profileEntry: profileEntryFixture("exit"),
+  });
+
+  await assert.rejects(
+    client.request("consult/run", {
+      jobId: "job-inline-stale-authority",
+      prompt: "hello",
+      profile: "codex",
+      authority: authority({ mode: "write" }),
+      mode: "write",
+    }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "AUTHORITY_MISMATCH");
+      return true;
+    },
+  );
+  assert.equal(process.listenerCount("SIGINT"), beforeSigintListeners);
+});
 
 test("inline runner applies model and effort before prompting", async (t) => {
   const { workspaceRoot, dataDir, dir } = await makeWorkspace();
@@ -450,6 +483,24 @@ function queuedJobRecord(jobId: string, overrides: Record<string, unknown> = {})
     delegationDepth: 0,
     runner: "inline",
     runnerPid: process.pid,
+    ...overrides,
+  };
+}
+
+function authority(
+  overrides: Partial<{
+    mode: "read-only" | "write";
+    confinement: "confined" | "inherit";
+    allowFetch: boolean;
+    allowExecute: boolean;
+  }> = {},
+) {
+  return {
+    schemaVersion: 1 as const,
+    mode: "read-only" as const,
+    confinement: "confined" as const,
+    allowFetch: false,
+    allowExecute: false,
     ...overrides,
   };
 }

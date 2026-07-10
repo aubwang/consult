@@ -11,6 +11,7 @@ import { test, type TestContext } from "node:test";
 import { connectBroker } from "./lib/broker-client.mts";
 import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mts";
 import { DEFAULT_MAX_JSONL_MESSAGE_BYTES } from "./lib/jsonl-framing.mts";
+import type { JobAuthority } from "./lib/job-authority.mts";
 import { listenWithFallback } from "./lib/__fixtures__/socket-transport.mts";
 import { runDelegate } from "./lib/companion/delegate.mts";
 import { type BrokerHandle, serveBroker } from "./consult-broker.mts";
@@ -21,6 +22,22 @@ const fakeAgentPath = fileURLToPath(
 
 type TestBrokerClient = Awaited<ReturnType<typeof connectBroker>>;
 type BrokerHarness = Awaited<ReturnType<typeof startBroker>>;
+
+const EXECUTE_AUTHORITY = {
+  schemaVersion: 1 as const,
+  mode: "write" as const,
+  confinement: "confined" as const,
+  allowFetch: false,
+  allowExecute: true,
+};
+
+const READ_ONLY_AUTHORITY = {
+  schemaVersion: 1 as const,
+  mode: "read-only" as const,
+  confinement: "confined" as const,
+  allowFetch: false,
+  allowExecute: false,
+};
 
 test("consult/ping returns broker health before the ACP agent is connected", async (t) => {
   const harness = await startBroker(t, { agentArgs: ["exit"] });
@@ -65,6 +82,101 @@ test("consult/run accepts a job and streams update and finalized notifications",
       stopReason: "end_turn",
       sessionId: "sess-1",
     });
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/run projects a legacy payload to inherited canonical authority", async (t) => {
+  const harness = await startBroker(t);
+  const client = await connectBroker(harness.endpoint);
+  const finalized = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-legacy-authority",
+      prompt: "hello",
+      profile: "codex",
+      mode: "write",
+    });
+    await finalized;
+    const record = await waitForJobRecord(
+      harness,
+      "job-legacy-authority",
+      (candidate) => candidate.status === "completed",
+    );
+    assert.deepEqual(record.authority, {
+      schemaVersion: 1,
+      mode: "write",
+      confinement: "inherit",
+      allowFetch: false,
+      allowExecute: false,
+    });
+    assert.equal(record.mode, "write");
+    assert.equal(record.allowExecute, false);
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/run rejects stale or malformed canonical authority", async (t) => {
+  const harness = await startBroker(t);
+  const client = await connectBroker(harness.endpoint);
+
+  try {
+    await assert.rejects(
+      client.request("consult/run", {
+        jobId: "job-stale-authority",
+        prompt: "hello",
+        profile: "codex",
+        authority: READ_ONLY_AUTHORITY,
+        mode: "write",
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "AUTHORITY_MISMATCH");
+        return true;
+      },
+    );
+    await assert.rejects(
+      client.request("consult/run", {
+        jobId: "job-malformed-authority",
+        prompt: "hello",
+        profile: "codex",
+        authority: null,
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "AUTHORITY_INVALID");
+        return true;
+      },
+    );
+    assert.equal(await readJobRecord(harness, "job-stale-authority"), null);
+    assert.equal(await readJobRecord(harness, "job-malformed-authority"), null);
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/run rejects authority that differs from the Broker launch grant", async (t) => {
+  const harness = await startBroker(t, { authority: READ_ONLY_AUTHORITY });
+  const client = await connectBroker(harness.endpoint);
+
+  try {
+    await assert.rejects(
+      client.request("consult/run", {
+        jobId: "job-wrong-launch-authority",
+        prompt: "hello",
+        profile: "codex",
+        authority: {
+          ...READ_ONLY_AUTHORITY,
+          mode: "write",
+        },
+        mode: "write",
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "AUTHORITY_MISMATCH");
+        return true;
+      },
+    );
   } finally {
     await client.close();
   }
@@ -609,6 +721,7 @@ test("consult/run denies opted-in execute until proxy-confined networking exists
       jobId: "job-execute-no-sandbox",
       prompt: "run tests",
       profile: "codex",
+      authority: EXECUTE_AUTHORITY,
       mode: "write",
       allowExecute: true,
     });
@@ -643,6 +756,7 @@ test(
         jobId: "job-execute-bwrap",
         prompt: "run tests",
         profile: "codex",
+        authority: EXECUTE_AUTHORITY,
         mode: "write",
         allowExecute: true,
       });
@@ -1705,6 +1819,7 @@ interface StartBrokerOptions {
   jobId?: string;
   workspaceRoot?: string;
   sandbox?: string;
+  authority?: JobAuthority;
 }
 
 async function startBroker(
@@ -1723,6 +1838,7 @@ async function startBroker(
     jobId,
     workspaceRoot,
     sandbox,
+    authority,
   }: StartBrokerOptions = {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "consult-broker-"));
@@ -1780,6 +1896,7 @@ async function startBroker(
       finalizedShutdownGraceMs,
       idleTimeoutMs,
       sandbox,
+      authority,
     },
     {
       listen: (server, socketPath) => listenWithFallback(t, server, socketPath),
