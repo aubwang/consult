@@ -62,22 +62,35 @@ export async function terminateProcessGroup(
   );
 }
 
-async function waitForTargetExit(
+interface WaitForTargetExitDependencies {
+  now?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
+  forceKillGraceMs?: number;
+}
+
+export async function waitForTargetExit(
   isAlive: () => boolean,
   forceKill: () => void,
   timeoutMs: number,
+  dependencies: WaitForTargetExitDependencies = {},
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const now = dependencies.now ?? Date.now;
+  const sleep =
+    dependencies.sleep ?? ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const deadline = now() + timeoutMs;
   while (isAlive()) {
-    if (Date.now() >= deadline) {
+    if (now() >= deadline) {
       forceKill();
       break;
     }
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await sleep(25);
   }
-  const killDeadline = Date.now() + 1000;
-  while (isAlive() && Date.now() < killDeadline) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
+  const killDeadline = now() + (dependencies.forceKillGraceMs ?? 1000);
+  while (isAlive() && now() < killDeadline) {
+    await sleep(25);
+  }
+  if (isAlive()) {
+    throw new Error("process target remained alive after SIGKILL");
   }
 }
 
