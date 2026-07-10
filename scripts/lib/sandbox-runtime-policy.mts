@@ -394,9 +394,12 @@ function replaceEnvAssignmentExactlyOnce(
   words[matches[0].index] = `${name}=${replacement}`;
 }
 
-export function snapshotSandboxRuntimeSharedWritePaths(): string[] {
+export function snapshotSandboxRuntimeSharedWritePaths(
+  additionalPaths: readonly string[] = [],
+): string[] {
   const snapshot = new Set<string>();
-  for (const sharedPath of SHARED_DEFAULT_WRITE_PATHS) {
+  for (const sharedPath of [...SHARED_DEFAULT_WRITE_PATHS, ...additionalPaths]) {
+    assertSafeAbsolutePath(sharedPath, "shared default write path");
     snapshot.add(sharedPath);
     try {
       snapshot.add(fs.realpathSync(sharedPath));
