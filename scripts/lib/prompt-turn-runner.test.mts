@@ -85,6 +85,13 @@ test("runPromptTurn streams updates, writes logs, and finalizes the job record",
     resume: null,
     prompt: "/review\n\ndiff",
     baseRef: "origin/main",
+    authority: {
+      schemaVersion: 1,
+      mode: "read-only",
+      confinement: "inherit",
+      allowFetch: false,
+      allowExecute: false,
+    },
   });
   assert.deepEqual(
     logs.map((entry) => entry.notification.method),
@@ -95,6 +102,7 @@ test("runPromptTurn streams updates, writes logs, and finalizes the job record",
   assert.equal(records.at(-1)!.record.sessionId, "session-turn");
   assert.equal(records.at(-1)!.record.finalText, "review text");
   assert.equal(brokerInput!.jobId, "job-turn");
+  assert.deepEqual(brokerInput!.authority, request.params.authority);
 });
 
 test("runPromptTurn streams and logs tool progress without adding it to finalText", async () => {

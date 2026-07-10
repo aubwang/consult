@@ -10,13 +10,33 @@ const BASE_RUN = {
   mode: "write",
 };
 
-test("hashRunPayload includes the explicit execute opt-in", () => {
-  const defaultHash = hashRunPayload(BASE_RUN);
-  const falseHash = hashRunPayload({ ...BASE_RUN, allowExecute: false });
-  const enabledHash = hashRunPayload({ ...BASE_RUN, allowExecute: true });
+test("hashRunPayload includes canonical execute authority", () => {
+  const authority = {
+    schemaVersion: 1 as const,
+    mode: "write" as const,
+    confinement: "confined" as const,
+    allowFetch: false,
+    allowExecute: false,
+  };
+  const defaultHash = hashRunPayload({ ...BASE_RUN, authority });
+  const enabledHash = hashRunPayload({
+    ...BASE_RUN,
+    authority: { ...authority, allowExecute: true },
+    allowExecute: true,
+  });
 
-  assert.equal(defaultHash, falseHash);
   assert.notEqual(enabledHash, defaultHash);
+});
+
+test("hashRunPayload rejects legacy execute payloads with a stable diagnostic", () => {
+  assert.throws(
+    () => hashRunPayload({ ...BASE_RUN, allowExecute: true }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "AUTHORITY_EXECUTE_UNAVAILABLE");
+      assert.match((error as Error).message, /legacy execute authority is unavailable/);
+      return true;
+    },
+  );
 });
 
 test("hashRunPayload does not treat a string value as execute opt-in", () => {
@@ -49,7 +69,7 @@ test("hashRunPayload includes canonical confinement and fetch authority", () => 
   assert.notEqual(inheritedHash, confinedHash);
 });
 
-test("hashRunPayload canonicalizes authority and lets it override legacy projections", () => {
+test("hashRunPayload canonicalizes authority while ignoring future fields", () => {
   const authority = {
     schemaVersion: 1 as const,
     mode: "read-only" as const,
@@ -59,23 +79,41 @@ test("hashRunPayload canonicalizes authority and lets it override legacy project
   };
   const canonicalHash = hashRunPayload({
     ...BASE_RUN,
-    mode: "write",
-    allowExecute: true,
+    mode: "read-only",
+    allowExecute: false,
     authority,
   });
   const extraFieldHash = hashRunPayload({
     ...BASE_RUN,
     mode: "read-only",
     allowExecute: false,
-    authority: { ...authority, ignoredFutureField: "compatible" },
+    authority: { ...authority, ignoredFutureField: "compatible" } as typeof authority,
   });
 
   assert.equal(canonicalHash, extraFieldHash);
 });
 
+test("hashRunPayload rejects stale flat compatibility fields", () => {
+  const authority = {
+    schemaVersion: 1 as const,
+    mode: "read-only" as const,
+    confinement: "confined" as const,
+    allowFetch: false,
+    allowExecute: false,
+  };
+
+  assert.throws(
+    () => hashRunPayload({ ...BASE_RUN, authority }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "AUTHORITY_MISMATCH");
+      return true;
+    },
+  );
+});
+
 test("hashRunPayload rejects malformed explicit authority", () => {
   assert.throws(
-    () => hashRunPayload({ ...BASE_RUN, authority: null }),
+    () => hashRunPayload({ ...BASE_RUN, authority: null as never }),
     (error: unknown) => {
       assert.equal((error as { code?: string }).code, "AUTHORITY_INVALID");
       return true;

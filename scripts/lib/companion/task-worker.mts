@@ -11,6 +11,7 @@ import {
 import { loadProfiles as defaultLoadProfiles } from "../profiles.mts";
 import type { ProfilesData } from "../profiles.mts";
 import { processStartTime } from "../process-identity.mts";
+import { canonicalRunAuthority } from "../job-agent.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
@@ -128,7 +129,6 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
     renderSummary: false,
     markFailedOnBrokerError: true,
     inline: jobRecord.isolated === true,
-    allowExecute: jobRecord.allowExecute === true,
     isolatedWorkspace,
   });
 }
@@ -149,10 +149,21 @@ function validateJobRecord(record: unknown): string | null {
   if (!record || typeof record !== "object") {
     return "not an object";
   }
-  for (const field of ["jobId", "prompt", "mode", "host", "hostSessionId", "profile"]) {
+  for (const field of ["jobId", "prompt", "host", "hostSessionId", "profile"]) {
     if (typeof (record as Record<string, unknown>)[field] !== "string" || ((record as Record<string, unknown>)[field] as string).length === 0) {
       return `missing ${field}`;
     }
+  }
+  try {
+    const authority = canonicalRunAuthority(record);
+    Object.assign(record, {
+      authority,
+      mode: authority.mode,
+      allowExecute: authority.allowExecute,
+    });
+  } catch (error) {
+    const coded = error as { code?: string; message?: string };
+    return `${coded.code ?? "AUTHORITY_INVALID"}: ${coded.message ?? String(error)}`;
   }
   if (
     (record as JobRecord).isolated === true &&

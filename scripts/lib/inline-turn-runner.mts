@@ -7,11 +7,18 @@ import type { BrokerJob, BrokerJobSocketLike } from "./broker-job-runtime.mts";
 import type { BrokerProfileEntry } from "./broker-lifecycle.mts";
 import {
   agentErrorMessage,
+  canonicalizeRunParams,
   hashRunPayload,
   runAgentJobTurn,
   startJobAgent,
 } from "./job-agent.mts";
-import type { AgentSessionState, CodedAgentError } from "./job-agent.mts";
+import type {
+  AgentSessionState,
+  CanonicalConsultRunParams,
+  CodedAgentError,
+} from "./job-agent.mts";
+import { assertMatchingJobAuthority } from "./job-authority.mts";
+import type { JobAuthority } from "./job-authority.mts";
 import {
   finalizedBrokerJobRecord,
   finalizeJobRecord,
@@ -52,6 +59,7 @@ export function createInlineClient({
   host,
   hostSessionId,
   profile,
+  authority: expectedAuthority,
   profileEntry,
   cancelAckTimeoutMs = INLINE_CANCEL_ACK_TIMEOUT_MS,
 }: EnsureBrokerSessionInput & { cancelAckTimeoutMs?: number }): PromptTurnBrokerClient {
@@ -115,13 +123,19 @@ export function createInlineClient({
   };
 
   async function handleRun(params: ConsultRunParams): Promise<unknown> {
-    pendingJobId = params.jobId;
+    let canonicalParams: CanonicalConsultRunParams;
     try {
-      if (params.resume) {
-        const resumeAgent = await ensureAgent(params.mode ?? "read-only", params.jobId);
+      canonicalParams = canonicalizeRunParams(params);
+      assertMatchingJobAuthority(canonicalParams.authority, expectedAuthority);
+      pendingJobId = canonicalParams.jobId;
+      if (canonicalParams.resume) {
+        const resumeAgent = await ensureAgent(
+          canonicalParams.authority,
+          canonicalParams.jobId,
+        );
         if (!supportsResume(resumeAgent.capabilities) && !supportsLoad(resumeAgent.capabilities)) {
           const error = new Error(
-            `profile '${params.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
+            `profile '${canonicalParams.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
           ) as CodedAgentError;
           error.code = "RESUME_UNSUPPORTED";
           throw error;
@@ -133,10 +147,10 @@ export function createInlineClient({
       throw error;
     }
 
-    const acceptedJob = runtime.createJob(params, sink);
+    const acceptedJob = runtime.createJob(canonicalParams, sink);
     job = acceptedJob;
     runtime.attachJob(acceptedJob, sink);
-    runAgentJobTurn(params, acceptedJob, {
+    runAgentJobTurn(canonicalParams, acceptedJob, {
       config: { cwd: executionRoot },
       ensureAgent,
       getSession: () => sessionId,
@@ -147,7 +161,7 @@ export function createInlineClient({
           sessionState = nextSessionState;
         }
       },
-      trackSession: (id, trackedJob, mode) => runtime.trackSession(id, trackedJob, mode),
+      trackSession: (id, trackedJob) => runtime.trackSession(id, trackedJob),
       finalizeJob: (turnJob, outcome) => runtime.finalizeJob(turnJob, outcome),
       noteTurnSettled: (turnJob) => runtime.noteTurnSettled(turnJob),
     }).catch(async (error) => {
@@ -166,10 +180,13 @@ export function createInlineClient({
         });
       }
     });
-    return { accepted: true, jobId: params.jobId };
+    return { accepted: true, jobId: canonicalParams.jobId };
   }
 
-  async function ensureAgent(mode = "read-only", jobId: string | null = null): Promise<StartedAgent> {
+  async function ensureAgent(
+    authority: JobAuthority,
+    jobId: string | null = null,
+  ): Promise<StartedAgent> {
     // One inline client runs exactly one job in exactly one mode, so unlike
     // the Broker there is never a mode change requiring an agent restart.
     if (!agent) {
@@ -179,7 +196,7 @@ export function createInlineClient({
         env: entry.env ?? {},
         cwd: executionRoot,
         stateWorkspaceRoot: workspaceRoot,
-        mode,
+        authority,
         sandbox,
         profileRegistryId: entry.registryId ?? profile,
         jobId,

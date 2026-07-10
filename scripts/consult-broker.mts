@@ -10,11 +10,18 @@ import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mts";
 import { createBrokerJobRuntime } from "./lib/broker-job-runtime.mts";
 import {
   agentErrorMessage,
+  canonicalizeRunParams,
   hashRunPayload,
   runAgentJobTurn,
   startJobAgent,
 } from "./lib/job-agent.mts";
 import type { AgentSessionState } from "./lib/job-agent.mts";
+import {
+  assertMatchingJobAuthority,
+  jobAuthoritiesEqual,
+  validateJobAuthority,
+} from "./lib/job-authority.mts";
+import type { JobAuthority } from "./lib/job-authority.mts";
 import { readJsonlMessages } from "./lib/jsonl-framing.mts";
 import { processStartTime } from "./lib/process-identity.mts";
 import { normalizeAgentSandbox } from "./lib/process-sandbox.mts";
@@ -40,6 +47,7 @@ export interface ServeBrokerOptions {
   shutdownAfterJob?: boolean;
   idleTimeoutMs?: number | string | null;
   sandbox?: string;
+  authority?: unknown;
 }
 
 export interface BrokerConfig extends ServeBrokerOptions {
@@ -54,6 +62,7 @@ export interface BrokerConfig extends ServeBrokerOptions {
   shutdownAfterJob: boolean;
   idleTimeoutMs: number | null;
   sandbox: string;
+  authority: JobAuthority | null;
 }
 
 export interface BrokerHandle {
@@ -68,6 +77,7 @@ export interface ConsultRunParams {
   jobId: string;
   prompt: string;
   profile: string;
+  authority?: JobAuthority;
   mode?: string;
   allowExecute?: boolean;
   resume?: string | null;
@@ -118,13 +128,13 @@ interface SocketBrokerContext {
   getJob: (jobId: string) => BrokerJob | undefined;
   createJob: (params: ConsultRunParams, originatorSocket: net.Socket) => BrokerJob;
   attachJob: (job: BrokerJob, targetSocket: net.Socket) => void;
-  trackSession: (sessionId: string, job: BrokerJob, mode: string) => void;
+  trackSession: (sessionId: string, job: BrokerJob) => void;
   finalizeJob: (job: BrokerJob, finalized: { stopReason: string; sessionId: string }) => Promise<void>;
   failJob: (job: BrokerJob, errorMessage: string) => Promise<void>;
   cancelJobCascade: (job: BrokerJob) => string[];
   noteTurnSettled: (job: BrokerJob) => void;
   isTainted: () => boolean;
-  ensureAgent: (mode?: string, jobId?: string | null) => Promise<AgentHandle>;
+  ensureAgent: (authority: JobAuthority, jobId?: string | null) => Promise<AgentHandle>;
   isBusy: () => boolean;
   setBusy: (value: boolean) => void;
   shutdown: () => Promise<{ code: number }>;
@@ -156,12 +166,13 @@ export async function serveBroker(
     host: config.host,
     hostSessionId: config.hostSessionId,
     profile: config.profile,
+    authority: config.authority,
     startedAt,
   };
   let shuttingDown = false;
   let agent: AgentHandle | null | undefined;
   let capabilities: AgentCapabilities | null = null;
-  let agentMode: string | null = null;
+  let agentAuthority: JobAuthority | null = null;
   let idleTimer: NodeJS.Timeout | null = null;
   let finalizedShutdownTimer: NodeJS.Timeout | null = null;
   let closeResolve!: (result: { code: number }) => void;
@@ -210,7 +221,7 @@ export async function serveBroker(
       getJob: (jobId) => runtime.getJob(jobId),
       createJob: (params, originatorSocket) => runtime.createJob(params, originatorSocket),
       attachJob: (job, targetSocket) => runtime.attachJob(job, targetSocket),
-      trackSession: (sessionId, job, mode) => runtime.trackSession(sessionId, job, mode),
+      trackSession: (sessionId, job) => runtime.trackSession(sessionId, job),
       finalizeJob: (job, finalized) => runtime.finalizeJob(job, finalized),
       failJob: (job, errorMessage) => runtime.failJob(job, errorMessage),
       cancelJobCascade: (job) => runtime.cancelJobCascade(job),
@@ -277,11 +288,14 @@ export async function serveBroker(
     shutdown,
   };
 
-  async function ensureAgent(mode = "read-only", jobId: string | null = null): Promise<AgentHandle> {
-    if (agent && config.sandbox !== "off" && agentMode !== mode) {
+  async function ensureAgent(
+    authority: JobAuthority,
+    jobId: string | null = null,
+  ): Promise<AgentHandle> {
+    if (agent && agentAuthority && !jobAuthoritiesEqual(agentAuthority, authority)) {
       await agent.dispose();
       agent = null;
-      agentMode = null;
+      agentAuthority = null;
       capabilities = null;
       socketSessions.clear();
       socketSessionState.clear();
@@ -295,13 +309,13 @@ export async function serveBroker(
       args: config.args,
       env: config.env,
       cwd: config.cwd,
-      mode,
+      authority,
       sandbox: config.sandbox,
       profileRegistryId: config.profileRegistryId,
       jobId,
       runtime,
     });
-    agentMode = mode;
+    agentAuthority = authority;
     capabilities = agent.capabilities;
     return agent;
   }
@@ -506,7 +520,11 @@ async function handleRunMessage(
     });
     return;
   }
-  const existingJob = broker.getJob(message.params.jobId);
+  const params = canonicalizeRunParams(message.params);
+  if (broker.config.authority) {
+    assertMatchingJobAuthority(params.authority, broker.config.authority);
+  }
+  const existingJob = broker.getJob(params.jobId);
   if (existingJob) {
     if (existingJob.status === "finalized") {
       writeError(socket, message.id, {
@@ -515,7 +533,7 @@ async function handleRunMessage(
       });
       return;
     }
-    if (existingJob.payloadHash !== hashRunPayload(message.params)) {
+    if (existingJob.payloadHash !== hashRunPayload(params)) {
       writeError(socket, message.id, {
         code: "JOB_CONFLICT",
         message: "jobId is already running with a different payload",
@@ -524,7 +542,7 @@ async function handleRunMessage(
     }
     writeResult(socket, message.id, {
       accepted: true,
-      jobId: message.params.jobId,
+      jobId: params.jobId,
     });
     broker.attachJob(existingJob, socket);
     return;
@@ -540,12 +558,12 @@ async function handleRunMessage(
 
   broker.setBusy(true);
   try {
-    if (message.params.resume) {
-      const agent = await broker.ensureAgent(message.params.mode ?? "read-only", message.params.jobId);
+    if (params.resume) {
+      const agent = await broker.ensureAgent(params.authority, params.jobId);
       if (!supportsResume(agent.capabilities) && !supportsLoad(agent.capabilities)) {
         writeError(socket, message.id, {
           code: "RESUME_UNSUPPORTED",
-          message: `profile '${message.params.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
+          message: `profile '${params.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
         });
         broker.setBusy(false);
         return;
@@ -556,13 +574,13 @@ async function handleRunMessage(
     throw error;
   }
 
-  const job = broker.createJob(message.params, socket);
+  const job = broker.createJob(params, socket);
   broker.attachJob(job, socket);
   writeResult(socket, message.id, {
     accepted: true,
-    jobId: message.params.jobId,
+    jobId: params.jobId,
   });
-  runAgentJobTurn(message.params, job, broker)
+  runAgentJobTurn(params, job, broker)
     .catch((error) => broker.failJob(job, agentErrorMessage(error)).catch(() => {}))
     .finally(() => {
       broker.setBusy(false);
@@ -617,7 +635,24 @@ function normalizeOptions(options: ServeBrokerOptions): BrokerConfig {
       process.env.CONSULT_BROKER_IDLE_TIMEOUT_MS,
     ),
     sandbox: normalizeAgentSandbox(options.sandbox ?? process.env.CONSULT_AGENT_SANDBOX),
+    authority: normalizeBrokerAuthority(options.authority),
   };
+}
+
+function normalizeBrokerAuthority(value: unknown): JobAuthority | null {
+  if (value === undefined) {
+    return null;
+  }
+  const result = validateJobAuthority(value);
+  if (result.ok) {
+    return result.authority;
+  }
+  const error = new Error(result.diagnostic.message) as CodedError & {
+    diagnostic?: unknown;
+  };
+  error.code = result.diagnostic.code;
+  error.diagnostic = result.diagnostic;
+  throw error;
 }
 
 function resolveIdleTimeoutMs(
@@ -686,6 +721,7 @@ export function parseArgs(argv: string[]): ServeBrokerOptions {
     pidFile: parsed.pid_file,
     host: parsed.host,
     hostSessionId: parsed.host_session_id,
+    authority: parsed.authority ? JSON.parse(parsed.authority) : undefined,
   };
 }
 

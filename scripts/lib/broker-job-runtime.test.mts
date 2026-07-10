@@ -42,7 +42,7 @@ test("broker job runtime buffers updates and notifies subscribers on finalize", 
     fakeSocket("originator"),
   );
   runtime.attachJob(job, subscriber);
-  runtime.trackSession("session-1", job, "write");
+  runtime.trackSession("session-1", job);
 
   await runtime.handleSessionUpdate({
     sessionId: "session-1",
@@ -91,7 +91,7 @@ test("broker job runtime caps accumulated final text", async (t: TestContext) =>
     },
     fakeSocket("originator"),
   );
-  runtime.trackSession("session-1", job, "write");
+  runtime.trackSession("session-1", job);
 
   await runtime.handleSessionUpdate({
     sessionId: "session-1",
@@ -135,7 +135,7 @@ test("broker job runtime keeps tool progress out of accumulated final text", asy
     fakeSocket("originator"),
   );
   runtime.attachJob(job, fakeSocket("subscriber"));
-  runtime.trackSession("session-progress", job, "write");
+  runtime.trackSession("session-progress", job);
 
   await runtime.handleSessionUpdate({
     sessionId: "session-progress",
@@ -153,7 +153,7 @@ test("broker job runtime keeps tool progress out of accumulated final text", asy
   assert.equal(notifications.length, 2);
 });
 
-test("broker job runtime carries only an explicit execute opt-in to the tracked session", async (t: TestContext) => {
+test("broker job runtime carries canonical authority to the tracked session", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   const runtime = createBrokerJobRuntime({
@@ -174,6 +174,7 @@ test("broker job runtime carries only an explicit execute opt-in to the tracked 
       jobId: "job-execute-enabled",
       profile: "codex",
       mode: "write",
+      authority: authority({ mode: "write", allowExecute: true }),
       prompt: "run tests",
       allowExecute: true,
     },
@@ -184,19 +185,31 @@ test("broker job runtime carries only an explicit execute opt-in to the tracked 
       jobId: "job-execute-default",
       profile: "codex",
       mode: "write",
+      authority: authority({ mode: "write" }),
       prompt: "run tests",
     },
     fakeSocket("default-originator"),
   );
+  const fetchJob = runtime.createJob(
+    {
+      jobId: "job-fetch-enabled",
+      profile: "codex",
+      authority: authority({ allowFetch: true }),
+      prompt: "research",
+    },
+    fakeSocket("fetch-originator"),
+  );
 
-  runtime.trackSession("session-enabled", enabledJob, "write");
-  runtime.trackSession("session-default", defaultJob, "write");
+  runtime.trackSession("session-enabled", enabledJob);
+  runtime.trackSession("session-default", defaultJob);
+  runtime.trackSession("session-fetch", fetchJob);
 
   assert.equal(enabledJob.allowExecute, true);
   assert.equal(defaultJob.allowExecute, false);
-  assert.equal(runtime.getSessionAllowExecute("session-enabled"), true);
-  assert.equal(runtime.getSessionAllowExecute("session-default"), false);
-  assert.equal(runtime.getSessionAllowExecute("session-unknown"), false);
+  assert.deepEqual(runtime.getSessionAuthority("session-enabled"), enabledJob.authority);
+  assert.deepEqual(runtime.getSessionAuthority("session-default"), defaultJob.authority);
+  assert.equal(runtime.getSessionAuthority("session-fetch")?.allowFetch, true);
+  assert.equal(runtime.getSessionAuthority("session-unknown"), undefined);
 });
 
 test("cancelJob ensures the agent with the running job's own mode", async (t: TestContext) => {
@@ -211,8 +224,8 @@ test("cancelJob ensures the agent with the running job's own mode", async (t: Te
       hostSessionId: "default",
       cancelAckTimeoutMs: 2000,
     },
-    ensureAgent: async (mode?: string) => {
-      modes.push(mode);
+    ensureAgent: async (authority) => {
+      modes.push(authority.mode);
       return {
         connection: {
           cancel: async ({ sessionId }: { sessionId: string }) => {
@@ -234,7 +247,7 @@ test("cancelJob ensures the agent with the running job's own mode", async (t: Te
     },
     fakeSocket("originator"),
   );
-  runtime.trackSession("session-1", job, "write");
+  runtime.trackSession("session-1", job);
 
   await runtime.cancelJob(job);
 
@@ -253,6 +266,24 @@ function fakeSocket(name: string): FakeSocket {
   return {
     name,
     once() {},
+  };
+}
+
+function authority(
+  overrides: Partial<{
+    mode: "read-only" | "write";
+    confinement: "confined" | "inherit";
+    allowFetch: boolean;
+    allowExecute: boolean;
+  }> = {},
+) {
+  return {
+    schemaVersion: 1 as const,
+    mode: "read-only" as const,
+    confinement: "confined" as const,
+    allowFetch: false,
+    allowExecute: false,
+    ...overrides,
   };
 }
 
