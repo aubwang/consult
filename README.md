@@ -25,11 +25,10 @@ with status, logs, lineage, result text, and optional artifacts.
 
 ## Install
 
-Node.js 24 or newer is required. Until the npm package is published, install
-the current GitHub version in one command:
+Node.js 24 or newer is required. Install the supported npm package:
 
 ```sh
-npm install --global github:aubwang/consult
+npm install --global @aubwang/consult
 ```
 
 Then verify the CLI and configure a Profile:
@@ -43,8 +42,7 @@ consult agents --set claude
 
 Consult uses Bun for dependency management when developing the repository, but
 the installed CLI runs on Node and does not require Bun. See
-[docs/INSTALL.md](docs/INSTALL.md) for linking a checkout and the future npm
-install command.
+[docs/INSTALL.md](docs/INSTALL.md) for linking a development checkout.
 
 ## Profiles
 
@@ -121,13 +119,17 @@ traffic goes through an authenticated allowlist proxy. Preflight initializes
 the exact configured Profile before creating a Job.
 
 Use `--allow-fetch` only when the Profile should perform task-specific web
-research itself. It permits arbitrary public HTTPS through the proxy. Because
-the Profile also holds its model credential, fetch increases the blast radius
+research itself. It permits arbitrary public TCP/443 through the proxy (the
+transport used by HTTPS clients, without TLS termination or application-
+protocol inspection). Because the Profile also holds its model credential,
+fetch increases the blast radius
 of prompt injection; Consult does not currently broker credentials.
 
 `--sandbox inherit` is the explicit escape hatch when the trusted Host accepts
 ambient authority. It adds no Consult OS boundary and is never selected as an
-automatic retry. Confined nested delegation is unsupported. Custom and
+automatic retry. Under inheritance, read-only and path policy are cooperative
+and detective rather than OS-preventive; a Profile backend may act before
+Consult observes a violation. Confined nested delegation is unsupported. Custom and
 `opencode` Profiles currently require inheritance. Native Windows is not
 supported, including inherited mode. Check the exact combination first:
 
@@ -190,7 +192,11 @@ consult cancel <job-id>
 
 Use `--resume` to continue the latest finalized Job for the selected Profile
 in the current Host Session, `--resume-job <id>` for an explicit prior Job, or
-`--fresh` to force a new ACP Session. Resume is useful for a follow-up turn;
+`--fresh` to start over. Confined Codex/Claude Jobs archive only the completed
+Session transcript and restore that one hash-verified file into the next fresh
+Job home. Missing or incompatible state fails before creating a resume Job;
+confined resume with `--isolated` is currently unsupported because its
+Execution Workspace cwd changes. Resume is useful for a follow-up turn;
 Consult intentionally does not attempt to transfer native conversation state
 between unrelated agent CLIs.
 
@@ -220,6 +226,11 @@ Consult resolves Host Identity in this order:
 3. `CODEX_THREAD_ID` for Codex, or `OPENCODE_SESSION_ID` /
    `OPENCODE_RUN_ID` for opencode.
 4. `terminal/default`.
+
+Claude Code is not auto-detected. A Claude spawning Host should pass
+`--host claude-code --host-session <stable-session-id>` or set
+`CONSULT_HOST` / `CONSULT_HOST_SESSION_ID`; otherwise its Jobs use the shared
+`terminal/default` scope.
 
 Host Identity scopes defaults, resume lookup, lineage, and lifecycle metadata.
 The same `consult` CLI is the product interface from every Host.

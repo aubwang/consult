@@ -22,7 +22,7 @@ without making direct egress the default.
 
 Consult defines canonical Job Authority schema v1 with mode, confinement,
 fetch, and execute fields. The default is read-only, confined, no fetch, and no
-execute. Write, public-HTTPS fetch, and ambient inheritance require explicit
+execute. Write, public-TCP/443 fetch, and ambient inheritance require explicit
 Host choices. The canonical object is persisted and included in Job payload
 identity; runtime boundaries compare it rather than reconstructing authority
 from legacy flags.
@@ -67,10 +67,19 @@ preflights/launches remove roots older than the Job wall-clock limit plus a
 grace period when their owner pid is gone. This bounds credential artifacts
 left by SIGKILL/OOM crashes without sweeping concurrent live Jobs.
 
+Confined Session continuity uses a selective Job-scoped archive rather than a
+shared Profile home. After confirmed process-tree termination, Consult archives
+exactly one bounded, hash-verified Codex or Claude transcript before deleting
+the private home. A resume request is bound to both source Job id and Session
+id, verifies the archive before creating the new Job, and restores only that
+transcript. Confined isolated resume fails closed while Execution Workspace
+cwd continuity cannot be proven.
+
 Direct networking is denied. An authenticated Host proxy allows pinned public
 port-443 destinations from each Profile's model/auth inventory. `--allow-fetch`
-broadens this to arbitrary public HTTPS while continuing to reject private,
-link-local, metadata, and mixed DNS answers. Consult does not add a credential
+broadens this to arbitrary public TCP/443 while continuing to reject private,
+link-local, metadata, and mixed DNS answers. This supports HTTPS clients, but
+Consult does not inspect the encrypted application protocol. Consult does not add a credential
 broker in this version, so fetch explicitly carries prompt-injection
 exfiltration risk.
 

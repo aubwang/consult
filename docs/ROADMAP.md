@@ -26,15 +26,15 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
   confined nesting are unsupported.
 - Execute permission remains fail-closed pending execute-specific resource
   containment and cross-Profile conformance.
-- One-command GitHub installation now; scoped npm publication packaging is
-  ready for a future registry release.
+- Scoped npm releases ship as `@aubwang/consult`; GitHub-clone installation is
+  not a supported distribution path.
 
 Consult no longer ships a Claude Code plugin/Host Adapter. The Claude Profile
 is still supported. Gemini and GitHub Copilot are not supported Profiles.
 
-## Release Readiness
+## Release Hardening
 
-Before the first published npm release:
+Before graduating portable Job Authority as the default release boundary:
 
 - Run fresh direct, foreground, background, isolated-write, fetch,
   cancellation, and resume probes for every claimed Profile/OS confinement

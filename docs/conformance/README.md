@@ -77,7 +77,9 @@ read-only confined Job Authority. Built-in Codex and Claude launches receive a
 private Job home/temp directory, a copied credential file or one selected
 credential environment variable, Workspace access according to mode, and no
 direct network. Model traffic uses an authenticated pinned-address proxy;
-`--allow-fetch` deliberately broadens it to public HTTPS.
+`--allow-fetch` deliberately broadens it to public TCP/443. That supports normal
+HTTPS clients, but the proxy does not terminate TLS or prove the tunneled
+application protocol is HTTP.
 
 Whole Host config is not staged: Codex `config.toml` and Claude `settings.json`
 are absent. Exact Profile initialization happens before Job creation, and

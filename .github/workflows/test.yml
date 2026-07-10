@@ -34,3 +34,5 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run test
+      - name: Verify packed npm and Bun installs through confinement
+        run: CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check

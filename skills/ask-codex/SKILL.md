@@ -62,7 +62,7 @@ and focused checks.
 - Keep the default confined authority. If preflight fails in the current Host
   context, report it; do not retry with `--sandbox inherit` silently.
 - Add `--allow-fetch` only when the delegated Codex itself needs task-specific
-  public HTTPS research and the increased prompt-injection exfiltration risk is
+  public TCP/443 research and the increased prompt-injection exfiltration risk is
   acceptable.
 - Do not ask the delegated Codex to edit files unless the user explicitly asks for
   that.

@@ -73,7 +73,7 @@ would confirm or falsify each one.
 - Default to `--read-only`.
 - Keep the default confined authority. If preflight fails in the current Host
   context, report it; do not retry with `--sandbox inherit` silently.
-- Add `--allow-fetch` only when Claude itself needs task-specific public HTTPS
+- Add `--allow-fetch` only when Claude itself needs task-specific public TCP/443
   research and the increased prompt-injection exfiltration risk is acceptable.
 - Do not ask Claude to edit files unless the user explicitly asks for
   that.

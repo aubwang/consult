@@ -18,17 +18,16 @@ nvm alias default 24
 
 Open a new shell and confirm `node --version` before installing Consult.
 
-## Install From GitHub
+## Install From npm
 
-Until the npm package is published, install the current GitHub version globally
-with one command:
+Install the supported package globally with one command:
 
 ```sh
-npm install --global github:aubwang/consult
+npm install --global @aubwang/consult
 ```
 
-This installs the `consult` command and its runtime dependency. Re-run the same
-command to update to the latest default branch.
+This installs the `consult` command and its runtime dependencies. Re-run the
+same command to update to the latest published release.
 
 To develop Consult itself, clone the repository and link the checkout. Bun owns
 the development lockfile and package installation; Node still executes the CLI
@@ -41,15 +40,9 @@ bun install --frozen-lockfile
 bun link
 ```
 
-## Install From npm
+## Package name
 
-Once releases are published to npm:
-
-```sh
-npm install --global @aubwang/consult
-# or
-bun install --global @aubwang/consult
-```
+`bun install --global @aubwang/consult` is also supported.
 
 The package is scoped because the unscoped npm name `consult` belongs to an
 unrelated project. The installed command is still named `consult`.
