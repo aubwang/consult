@@ -85,6 +85,11 @@ Host Identity resolution order:
 3. `CODEX_THREAD_ID`, or `OPENCODE_SESSION_ID` / `OPENCODE_RUN_ID`.
 4. `terminal/default`.
 
+Claude Code is deliberately not auto-detected after the CLI-only product-scope
+decision. A Claude spawning Host must supply explicit Host and Host Session
+identity (flags or `CONSULT_*` environment) when it needs isolated defaults and
+resume lookup; otherwise it shares `terminal/default`.
+
 Profile selection order:
 
 1. Explicit `--agent` / `--profile`.
@@ -213,6 +218,18 @@ The new transport then uses:
 Resume stays within one Profile. A different Profile receives a self-contained
 new prompt rather than an attempted native session conversion.
 
+Confined resume does not mount a shared Profile home. After confirmed Profile
+tree termination and before private-home deletion, a Profile-specific adapter
+selects exactly one Codex rollout or Claude project transcript, bounds and
+hashes it, and atomically commits it beneath the source Job's private artifact
+directory. The new Job carries both source Job id and native Session id;
+preflight verifies the archive before Job creation and launch restores the same
+relative transcript path into the fresh home. Missing, malformed, tampered,
+cross-Profile, or cwd-mismatched archives fail closed. Confined isolated resume
+remains unavailable because each detached Execution Workspace has a new cwd.
+Transcripts can contain sensitive conversation content and live as long as
+their Job artifacts; credentials and shared Profile indexes are never copied.
+
 ## Pinned Diff and Review
 
 `delegate --include-diff [--base <ref>]` resolves the review material before
@@ -328,7 +345,8 @@ Direct networking is denied. An authenticated loopback HTTP/SOCKS proxy allows
 only port 443, resolves all addresses in the Host, rejects private or mixed
 answers, and dials one approved literal address. Without `--allow-fetch`, only
 the Profile's model/auth host inventory is allowed. `--allow-fetch` permits
-arbitrary public HTTPS for task-specific research. Because the Profile also
+arbitrary public TCP/443 for task-specific research. This supports HTTPS but
+does not inspect or prove the encrypted application protocol. Because the Profile also
 holds its model credential, that grant increases prompt-injection exfiltration
 risk; Consult deliberately does not add a credential broker in this version.
 
@@ -339,7 +357,7 @@ Execution Workspace and reject symlink escapes:
 | --- | --- | --- | --- | --- |
 | read/search/think | allow, path-confined | allow, path-confined | allow, path-confined | allow, path-confined |
 | edit/delete/move | deny | allow, path-confined | allow, path-confined | allow, path-confined |
-| fetch | deny | deny | allow via public-HTTPS proxy | deny |
+| fetch | deny | deny | allow via public-TCP/443 proxy | deny |
 | execute | deny | deny | deny | preflight rejects the Job |
 | switch_mode/other | deny | allow | allow | deny |
 

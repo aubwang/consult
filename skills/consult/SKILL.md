@@ -27,6 +27,11 @@ The CLI resolves Host identity in this order:
    - `CODEX_THREAD_ID` -> `codex`
 4. `terminal/default`.
 
+Claude Code has no product Host Adapter or stable auto-detected session
+variable. A Claude spawning Host must pass `--host claude-code
+--host-session <stable-session-id>` (or set the two `CONSULT_*` variables), or
+its Jobs intentionally fall into the shared `terminal/default` scope.
+
 ## Commands
 
 Supported first:
@@ -44,7 +49,7 @@ Examples:
 
 ```sh
 consult delegate --agent claude --read-only -- "review this diff"
-consult delegate --agent opencode --read-only -- "summarize this repo"
+consult delegate --agent opencode --read-only --sandbox inherit -- "summarize this repo"
 consult delegate --agent codex --read-only --include-diff -- "look for missed edge cases"
 consult review --agent claude --base main
 consult delegate --agent codex --write --isolated -- "implement the focused fix"
@@ -63,9 +68,9 @@ Forward user arguments directly to `consult`. Do not inspect
 
 ## Manual Setup
 
-1. Put the Consult CLI on `PATH`. Until the npm package is published, install
-   it with `npm install --global github:aubwang/consult`; repository developers
-   may instead run `bun link` from a checkout.
+1. Put the Consult CLI on `PATH` with
+   `npm install --global @aubwang/consult`; repository developers may instead
+   run `bun link` from a checkout.
 2. Make this skill visible to the Host by copying or symlinking `skills/consult`
    into the Host's skill directory.
 3. Configure Profiles with the Consult CLI before first delegation, for example:
@@ -88,11 +93,13 @@ consult doctor --agent codex
   of current changes.
 - When edits are explicitly requested, prefer `--write --isolated`; Consult
   returns a patch artifact without changing the invoking checkout.
-- Add `--allow-fetch` only when task-specific public HTTPS research is worth
+- Add `--allow-fetch` only when task-specific public TCP/443 research is worth
   delegating. The Profile holds its selected model credential, so fetch
   increases prompt-injection exfiltration risk; the Host may search instead.
 - `--sandbox inherit` is a deliberate trusted-Host escape hatch with no Consult
-  OS boundary. Never retry with it silently after confined preflight fails.
+  OS boundary. Read-only and path checks are then cooperative/detective: a
+  Profile backend may act before Consult observes a violation. Never retry with
+  inheritance silently after confined preflight fails.
 - Custom and `opencode` Profiles currently require explicit inheritance.
   Confined nested delegation and native Windows (including inheritance) are
   unsupported.

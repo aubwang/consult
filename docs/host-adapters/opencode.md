@@ -41,7 +41,7 @@ consult delegate --agent claude --read-only -- "review this diff"
 Run a background Job:
 
 ```text
-consult delegate --agent opencode --read-only --background -- "audit the permissions code"
+consult delegate --agent opencode --read-only --sandbox inherit --background -- "audit the permissions code"
 ```
 
 Check status, read results, or cancel:
