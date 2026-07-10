@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -14,12 +15,20 @@ interface ProbeCheck {
 }
 
 interface SpikeReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   runtime: { package: "@anthropic-ai/sandbox-runtime"; version: string };
   target: {
     profile: "codex";
-    context: "codex-host" | "standalone-control";
+    context:
+      | "codex-host-confined"
+      | "codex-host-confined-network-disabled"
+      | "codex-host-confined-full-network"
+      | "codex-host-unrestricted"
+      | "standalone-control"
+      | "unknown";
+    contextDeclared: boolean;
     contextEvidence: string;
+    kernelPolicyEvidence: string;
     platform: NodeJS.Platform;
     arch: string;
     release: string;
@@ -34,41 +43,48 @@ const RUNTIME_VERSION = "0.0.64";
 async function main(): Promise<void> {
   const checks: ProbeCheck[] = [];
   const dependencies = SandboxManager.checkDependencies();
+  const dependencyReady =
+    SandboxManager.isSupportedPlatform() &&
+    dependencies.errors.length === 0 &&
+    dependencies.warnings.length === 0;
   checks.push({
     id: "runtime-preflight",
-    status:
-      SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0 ? "pass" : "fail",
+    status: dependencyReady ? "pass" : "fail",
     detail: JSON.stringify({
       supported: SandboxManager.isSupportedPlatform(),
       dependencies,
     }),
   });
 
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" && process.platform !== "linux") {
     checks.push({
-      id: "macos-nested-seatbelt",
+      id: "native-nesting",
       status: "skip",
-      detail: `requires native macOS; current platform is ${process.platform}`,
+      detail: `Consult confinement is scoped to native macOS and Linux; current platform is ${process.platform}`,
     });
     printReport(checks);
     return;
   }
 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-srt-codex-spike-"));
-  const nativeNesting = await run(
-    [
-      "/usr/bin/sandbox-exec",
-      "-p",
-      "(version 1)\n(allow default)",
-      "/usr/bin/true",
-    ],
-    { cwd: root, env: process.env },
-  );
-  checks.push({
-    id: "native-nested-seatbelt",
-    status: nativeNesting.code === 0 ? "pass" : "fail",
-    detail: JSON.stringify(nativeNesting),
-  });
+  if (process.platform === "darwin") {
+    const seatbelt = await run(
+      [
+        "/usr/bin/sandbox-exec",
+        "-p",
+        "(version 1)\n(allow default)",
+        "/usr/bin/true",
+      ],
+      { cwd: root, env: process.env },
+    );
+    checks.push({
+      id: "native-seatbelt",
+      status: seatbelt.code === 0 ? "pass" : "fail",
+      detail: JSON.stringify(seatbelt),
+    });
+  } else {
+    await runLinuxNativeChecks(root, checks);
+  }
 
   let initialized = false;
   let proxyPort: number | undefined;
@@ -108,7 +124,8 @@ async function main(): Promise<void> {
 
   if (initialized) {
     try {
-      const wrapped = await SandboxManager.wrapWithSandboxArgv("/usr/bin/true", "/bin/zsh");
+      const shell = process.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
+      const wrapped = await SandboxManager.wrapWithSandboxArgv("/usr/bin/true", shell);
       const result = await run(wrapped.argv, { cwd: root, env: wrapped.env });
       checks.push({
         id: "runtime-wrapped-launch",
@@ -121,12 +138,14 @@ async function main(): Promise<void> {
         status: "fail",
         detail: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      SandboxManager.cleanupAfterCommand();
     }
   } else {
     checks.push({
       id: "runtime-wrapped-launch",
       status: "skip",
-      detail: "runtime initialization failed before Profile launch",
+      detail: "runtime initialization failed before wrapped command launch",
     });
   }
 
@@ -157,34 +176,63 @@ async function main(): Promise<void> {
 }
 
 function printReport(checks: ProbeCheck[]): void {
-  const context = process.env.CODEX_SANDBOX ? "codex-host" : "standalone-control";
+  const { context, contextDeclared, evidence } = detectContext();
   const preflight = checks.find((check) => check.id === "runtime-preflight");
-  const nesting = checks.find((check) => check.id === "native-nested-seatbelt");
+  const nativeChecks =
+    process.platform === "darwin"
+      ? checks.filter((check) => check.id === "native-seatbelt")
+      : checks.filter((check) => check.id.startsWith("native-linux-"));
+  const nativeReady =
+    nativeChecks.length > 0 && nativeChecks.every((check) => check.status === "pass");
+  const seatbelt = checks.find((check) => check.id === "native-seatbelt");
   const initialization = checks.find((check) => check.id === "runtime-initialize");
-  const observedCodexHostFailure =
-    context === "codex-host" &&
+  const wrappedLaunch = checks.find((check) => check.id === "runtime-wrapped-launch");
+  const cleanup = checks.find((check) => check.id === "runtime-proxy-cleanup");
+  const observedMacosCodexHostFailure =
+    process.platform === "darwin" &&
+    context === "codex-host-confined" &&
     preflight?.status === "pass" &&
-    nesting?.status === "fail" &&
-    nesting.detail.includes('\"code\":71') &&
-    nesting.detail.includes("sandbox_apply: Operation not permitted") &&
+    seatbelt?.status === "fail" &&
+    seatbelt.detail.includes('\"code\":71') &&
+    seatbelt.detail.includes("sandbox_apply: Operation not permitted") &&
     initialization?.status === "fail" &&
     initialization.detail.includes("EPERM");
-  const decision = observedCodexHostFailure ? "kill" : "inconclusive";
+  const technicalCompatibilityPassed =
+    preflight?.status === "pass" &&
+    nativeReady &&
+    initialization?.status === "pass" &&
+    wrappedLaunch?.status === "pass" &&
+    cleanup?.status === "pass";
+  const compatibilityPassed =
+    contextDeclared && context !== "unknown" && technicalCompatibilityPassed;
+  const knownContextFailure =
+    contextDeclared && context !== "unknown" && !technicalCompatibilityPassed;
+  const decision = observedMacosCodexHostFailure
+    ? "kill"
+    : compatibilityPassed
+      ? "keep"
+      : knownContextFailure
+        ? "kill"
+        : "inconclusive";
   const decisionBasis =
-    decision === "kill"
-      ? "Kill for the marked macOS Codex Host path: nested Seatbelt exited 71 and runtime proxy initialization failed with EPERM before Codex model transport."
-      : context === "standalone-control"
-        ? "Standalone control only; success here does not establish compatibility with a sandboxed Codex Host."
-        : "The observed failures did not match the specific macOS Codex Host incompatibility signature.";
+    observedMacosCodexHostFailure
+      ? "Kill for the marked confined macOS Codex Host path: nested Seatbelt exited 71 and runtime proxy initialization failed with EPERM before Codex model transport."
+      : knownContextFailure
+        ? "Kill this runtime/context combination: one or more required native or runtime compatibility gates failed, so Consult must not integrate it or fall back to ambient authority implicitly."
+        : decision === "keep"
+          ? "Keep this runtime/context combination for deeper policy and Profile conformance. Compatibility gates passed; this is not evidence that filesystem policy, model transport, egress filtering, or process-tree cleanup meets Consult's product requirements."
+          : technicalCompatibilityPassed && (!contextDeclared || context === "unknown")
+            ? "Compatibility gates passed, but the Host confinement context was not explicitly declared; the result is inconclusive rather than attributing success to the wrong context."
+            : "Compatibility gates did not all pass, and the observed failures did not match the specific confined macOS Codex Host kill signature.";
   const report: SpikeReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runtime: { package: "@anthropic-ai/sandbox-runtime", version: RUNTIME_VERSION },
     target: {
       profile: "codex",
       context,
-      contextEvidence: process.env.CODEX_SANDBOX
-        ? "CODEX_SANDBOX marker present; informational classification only"
-        : "CODEX_SANDBOX marker absent; informational classification only",
+      contextDeclared,
+      contextEvidence: evidence,
+      kernelPolicyEvidence: kernelPolicyEvidence(),
       platform: process.platform,
       arch: process.arch,
       release: os.release(),
@@ -194,6 +242,166 @@ function printReport(checks: ProbeCheck[]): void {
     decisionBasis,
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+}
+
+function kernelPolicyEvidence(): string {
+  if (process.platform !== "linux") {
+    return "not collected on this platform";
+  }
+  try {
+    const status = readFileSync("/proc/self/status", "utf8");
+    const fields = ["NoNewPrivs", "Seccomp", "Seccomp_filters"].flatMap((field) => {
+      const value = status.match(new RegExp(`^${field}:\\s+(.+)$`, "m"))?.[1]?.trim();
+      return value ? [`${field}=${value}`] : [];
+    });
+    let appArmor = "unknown";
+    try {
+      appArmor = readFileSync("/proc/self/attr/current", "utf8").trim();
+    } catch {
+      // The other kernel fields still provide useful evidence.
+    }
+    return [...fields, `AppArmor=${appArmor}`].join(", ");
+  } catch (error) {
+    return `unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function detectContext(): {
+  context: SpikeReport["target"]["context"];
+  contextDeclared: boolean;
+  evidence: string;
+} {
+  const declared = process.env.CONSULT_SPIKE_HOST_CONTEXT;
+  const allowed = new Set<SpikeReport["target"]["context"]>([
+    "codex-host-confined",
+    "codex-host-confined-network-disabled",
+    "codex-host-confined-full-network",
+    "codex-host-unrestricted",
+    "standalone-control",
+    "unknown",
+  ]);
+  if (declared && allowed.has(declared as SpikeReport["target"]["context"])) {
+    return {
+      context: declared as SpikeReport["target"]["context"],
+      contextDeclared: true,
+      evidence:
+        "CONSULT_SPIKE_HOST_CONTEXT declaration; informational label only, not proof of kernel policy",
+    };
+  }
+  if (process.env.CODEX_SANDBOX) {
+    return {
+      context: "codex-host-confined",
+      contextDeclared: false,
+      evidence: "CODEX_SANDBOX marker present; informational label only, not proof of kernel policy",
+    };
+  }
+  if (process.platform === "linux") {
+    try {
+      const ancestorNames = linuxAncestorNames(process.ppid);
+      if (ancestorNames.includes("codex")) {
+        return {
+          context: "unknown",
+          contextDeclared: false,
+          evidence:
+            "process ancestry includes codex but no Host confinement context was declared; marker absence is not evidence of unrestricted execution",
+        };
+      }
+    } catch {
+      // Fall through to an unknown context rather than treating missing evidence as proof.
+    }
+  }
+  return {
+    context: "unknown",
+    contextDeclared: false,
+    evidence:
+      "no explicit context declaration or recognized Host marker; native probes are the only confinement evidence",
+  };
+}
+
+async function runLinuxNativeChecks(root: string, checks: ProbeCheck[]): Promise<void> {
+  const userNamespace = await run(
+    ["unshare", "--user", "--map-root-user", "/usr/bin/true"],
+    { cwd: root, env: process.env },
+  );
+  checks.push({
+    id: "native-linux-user-namespace",
+    status: userNamespace.code === 0 ? "pass" : "fail",
+    detail: JSON.stringify(userNamespace),
+  });
+
+  const bwrapBaseArgs = [
+    "bwrap",
+    "--new-session",
+    "--die-with-parent",
+    "--ro-bind",
+    "/",
+    "/",
+    "--dev",
+    "/dev",
+    "--unshare-pid",
+    "--proc",
+    "/proc",
+  ];
+  const bwrapBase = await run([...bwrapBaseArgs, "--", "/usr/bin/true"], {
+    cwd: root,
+    env: process.env,
+  });
+  checks.push({
+    id: "native-linux-bwrap-base",
+    status: bwrapBase.code === 0 ? "pass" : "fail",
+    detail: JSON.stringify(bwrapBase),
+  });
+
+  const bwrapNetwork = await run(
+    [...bwrapBaseArgs, "--unshare-net", "--", "/usr/bin/true"],
+    { cwd: root, env: process.env },
+  );
+  checks.push({
+    id: "native-linux-bwrap-network",
+    status: bwrapNetwork.code === 0 ? "pass" : "fail",
+    detail: JSON.stringify(bwrapNetwork),
+  });
+
+  const socketPath = path.join(root, "native-listener.sock");
+  const unixListener = await run(
+    [
+      process.execPath,
+      "-e",
+      [
+        'const net = require("node:net")',
+        "const socketPath = process.argv[1]",
+        "const server = net.createServer()",
+        'server.once("error", (error) => { console.error(error.message); process.exitCode = 1 })',
+        'server.listen(socketPath, () => server.close(() => {}))',
+      ].join(";"),
+      socketPath,
+    ],
+    { cwd: root, env: process.env },
+  );
+  await fs.rm(socketPath, { force: true });
+  checks.push({
+    id: "native-linux-unix-listener",
+    status: unixListener.code === 0 ? "pass" : "fail",
+    detail: JSON.stringify(unixListener),
+  });
+}
+
+function linuxAncestorNames(startPid: number): string[] {
+  const names: string[] = [];
+  let pid = startPid;
+  for (let depth = 0; depth < 12 && pid > 1; depth += 1) {
+    const status = readFileSync(`/proc/${pid}/status`, "utf8");
+    const name = status.match(/^Name:\s+(.+)$/m)?.[1]?.trim();
+    const parent = status.match(/^PPid:\s+(\d+)$/m)?.[1];
+    if (name) {
+      names.push(name);
+    }
+    if (!parent) {
+      break;
+    }
+    pid = Number(parent);
+  }
+  return names;
 }
 
 async function canConnect(port: number): Promise<boolean> {
