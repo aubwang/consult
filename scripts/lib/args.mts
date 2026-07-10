@@ -7,6 +7,7 @@ export const BOOLEAN_FLAGS = new Set([
   "fresh",
   "include-diff",
   "isolated",
+  "allow-fetch",
   "allow-exec",
   "follow",
   "json",
