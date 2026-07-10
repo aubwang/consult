@@ -62,6 +62,7 @@ export interface DecidePermissionOptions {
   request: Pick<RequestPermissionRequest, "toolCall">;
   mode: PermissionMode;
   workspaceRoot: string;
+  allowFetch?: boolean;
   allowExecute?: boolean;
   sandbox?: AgentSandboxMode;
 }
@@ -71,6 +72,7 @@ export async function decidePermission(
     request,
     mode,
     workspaceRoot,
+    allowFetch = false,
     allowExecute = false,
     sandbox = "off",
   }: DecidePermissionOptions,
@@ -113,10 +115,12 @@ export async function decidePermission(
   }
 
   if (kind === "fetch") {
-    return {
-      allowed: false,
-      reason: `fetch denied in ${mode} mode (exfil vector)`,
-    };
+    return allowFetch
+      ? { allowed: true }
+      : {
+          allowed: false,
+          reason: `fetch denied in ${mode} mode (explicit opt-in required)`,
+        };
   }
 
   if (mode === "write") {
