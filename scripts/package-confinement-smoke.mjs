@@ -311,7 +311,12 @@ async function assertFileStoppedChanging(file) {
 async function readJobRecord(data, jobId) {
   const matches = [];
   await walk(data, (file) => {
-    if (path.basename(file) === `${jobId}.json`) matches.push(file);
+    if (
+      path.basename(file) === `${jobId}.json` &&
+      path.basename(path.dirname(file)) === "jobs"
+    ) {
+      matches.push(file);
+    }
   });
   assert.equal(matches.length, 1, `expected one record for ${jobId}, found ${matches.length}`);
   return await readJson(matches[0]);
