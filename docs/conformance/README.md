@@ -47,10 +47,14 @@ CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check
 bun run conformance:job-authority -- --agent codex --expect ready
 bun run conformance:job-authority -- --agent claude --expect ready
 bun run conformance:job-authority -- --agent codex --expect ready \
-  --direct --turn --background --model <known-supported-codex-model>
+  --direct --turn --background
 bun run conformance:job-authority -- --agent claude --expect ready \
-  --direct --turn --background --model <known-supported-claude-model>
+  --direct --turn --background
 ```
+
+The real controls use each Profile's advertised default model. Add `--model`
+only with an actual supported model id or family alias; do not paste shell
+angle-bracket placeholders as arguments.
 
 Then run the fail-closed control from the already-sandboxed macOS Codex Host:
 
