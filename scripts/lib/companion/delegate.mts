@@ -34,7 +34,8 @@ import type { InvocationContext, ResolveInvocationContextDeps } from "./invocati
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 import type { CliResult } from "./job-record-errors.mts";
 import { createOutput } from "./output.mts";
-import type { OutputDeps, OutputHandle } from "./output.mts";
+import type { OutputDeps } from "./output.mts";
+import { writeAuthorityDiagnostic } from "./authority-diagnostic.mts";
 import {
   findResumeCandidate,
   findResumeJobCandidate,
@@ -422,20 +423,6 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     allowFetch,
     allowExecute,
   };
-}
-
-export function writeAuthorityDiagnostic(
-  output: Pick<OutputHandle, "stderr">,
-  diagnostic: JobAuthorityDiagnostic,
-  json: boolean,
-): void {
-  if (json) {
-    output.stderr(`${JSON.stringify({ schemaVersion: 1, error: diagnostic })}\n`);
-    return;
-  }
-  output.stderr(
-    `${diagnostic.code}: ${diagnostic.message}\nRemediation: ${diagnostic.remediation}\n`,
-  );
 }
 
 function truncatePrompt(prompt: string): string {
