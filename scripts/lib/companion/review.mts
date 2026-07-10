@@ -13,6 +13,7 @@ import {
 } from "../job-records.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import { processStartTime } from "../process-identity.mts";
+import { resolveJobAuthority } from "../job-authority.mts";
 import type { ProfileRecord, ProfilesData } from "../profiles.mts";
 import { findRegistryEntry, loadRegistry as defaultLoadRegistry } from "../registry.mts";
 import type { Registry } from "../registry.mts";
@@ -22,6 +23,7 @@ import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import { createOutput } from "./output.mts";
 import type { CommandResult } from "./output.mts";
+import { writeAuthorityDiagnostic } from "./authority-diagnostic.mts";
 
 export const REVIEW_PROMPT = `Review the pinned Git changes for defects and regressions.
 
@@ -63,11 +65,25 @@ export async function runReview({
     "host-session",
     "host-session-id",
     "base",
+    "sandbox",
   ]);
   if (usageError) {
     output.stderr(`${usageError}\n`);
     return output.result(2);
   }
+  const json = boolFlag(args.flags?.json);
+  const authorityResult = resolveJobAuthority({
+    mode: "read-only",
+    confinement: stringFlag(args.flags?.sandbox),
+    allowFetch: false,
+    allowExecute: false,
+    isolated: false,
+  });
+  if (!authorityResult.ok) {
+    writeAuthorityDiagnostic(output, authorityResult.diagnostic, json);
+    return output.result(2);
+  }
+  const authority = authorityResult.authority;
   const { context, errorResult } = await tryResolveInvocationContext({
     args,
     env,
@@ -107,7 +123,8 @@ export async function runReview({
       baseRef,
       diff,
       kind: "review",
-      json: boolFlag(args.flags?.json),
+      json,
+      authority,
       deps,
     });
   }
@@ -123,6 +140,7 @@ export async function runReview({
     chainId: jobId,
     parentJobId: null,
     delegationDepth: 0,
+    authority,
     mode: "read-only",
     host: hostIdentity.host,
     hostSessionId: hostIdentity.hostSessionId,
@@ -144,7 +162,7 @@ export async function runReview({
     kind: "review",
     deps,
     output,
-    json: boolFlag(args.flags?.json),
+    json,
     renderSummary: true,
     inline: true,
   });
