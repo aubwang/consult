@@ -32,17 +32,18 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
     "--setenv CLAUDE_CODE_HOST_HTTP_PROXY_PORT 41001",
     "--setenv CLAUDE_CODE_HOST_SOCKS_PROXY_PORT 41002",
     "--ro-bind / /",
+    "--tmpfs /home --tmpfs /root --tmpfs /var --tmpfs /etc",
     "--bind /tmp/claude-http-0123456789abcdef.sock /tmp/claude-http-0123456789abcdef.sock",
     "--bind /tmp/claude-socks-fedcba9876543210.sock /tmp/claude-socks-fedcba9876543210.sock",
     "--bind /tmp/claude /tmp/claude",
     "--bind /var/tmp/shared-target /var/tmp/shared-target",
     "--tmpfs /tmp",
     "--bind /tmp/claude /tmp/claude",
-    "--unshare-pid --proc /proc -- /bin/bash -c agent",
+    "--unshare-pid --proc /proc -- /bin/bash -c /vendor/seccomp/x64/apply-seccomp",
   ].join(" ");
-  const transformed = transformSandboxRuntimeLaunch({
+  const input = {
     launch: { argv: ["/bin/bash", "-c", source], env: { SAFE: "1" } },
-    platform: "linux",
+    platform: "linux" as const,
     runtimeVersion: SANDBOX_RUNTIME_VERSION,
     jobTempDir: "/tmp/consult-job/temporary",
     proxyToken: TOKEN,
@@ -53,7 +54,9 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
       "/private/tmp/claude",
       "/var/tmp/shared-target",
     ],
-  });
+    allowedWritePaths: ["/tmp/consult-job/home", "/tmp/consult-job/temporary"],
+  };
+  const transformed = transformSandboxRuntimeLaunch(input);
 
   assert.equal(transformed.argv[0], "/bin/bash");
   assert.equal(transformed.argv[1], "-c");
@@ -67,6 +70,24 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
   assert.ok(
     transformed.argv[2].indexOf("--tmpfs /tmp") <
       transformed.argv[2].indexOf("--bind /tmp/claude-http-0123456789abcdef.sock"),
+  );
+  assert.throws(
+    () =>
+      transformSandboxRuntimeLaunch({
+        ...input,
+        launch: {
+          ...input.launch,
+          argv: [
+            "/bin/bash",
+            "-c",
+            source.replace(
+              "--unshare-pid",
+              "--bind /etc /etc --unshare-pid",
+            ),
+          ],
+        },
+      }),
+    /unexpected Linux writable bind remained for \/etc/u,
   );
 });
 
@@ -92,16 +113,21 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
     ...rules,
     "' /bin/zsh -c agent",
   ].join("\n");
-  const transformed = transformSandboxRuntimeLaunch({
+  const input = {
     launch: { argv: ["/bin/zsh", "-c", source], env: {} },
-    platform: "darwin",
+    platform: "darwin" as const,
     runtimeVersion: SANDBOX_RUNTIME_VERSION,
     jobTempDir: "/private/tmp/consult-job/temporary",
     proxyToken: TOKEN,
     externalHttpPort: 41001,
     externalSocksPort: 41002,
     sharedDefaultWritePaths: ["/tmp/claude", "/private/tmp/claude"],
-  });
+    allowedWritePaths: [
+      "/private/tmp/consult-job/home",
+      "/private/tmp/consult-job/temporary",
+    ],
+  };
+  const transformed = transformSandboxRuntimeLaunch(input);
 
   assert.match(transformed.argv[2], /TMPDIR=\/private\/tmp\/consult-job\/temporary/u);
   assert.match(transformed.argv[2], /NO_PROXY= /u);
@@ -109,6 +135,22 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
   assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@localhost:41002`, "u"));
   assert.doesNotMatch(transformed.argv[2], /subpath "\/tmp\/claude"/u);
   assert.doesNotMatch(transformed.argv[2], /subpath "\/private\/tmp\/claude"/u);
+  const unexpectedRule = `(allow file-write*\n  (subpath "/etc")\n  (with message "${tag}"))`;
+  assert.throws(
+    () =>
+      transformSandboxRuntimeLaunch({
+        ...input,
+        launch: {
+          ...input.launch,
+          argv: [
+            "/bin/zsh",
+            "-c",
+            source.replace("; File write", `; File write\n${unexpectedRule}`),
+          ],
+        },
+      }),
+    /unexpected macOS writable subpath remained for \/etc/u,
+  );
 });
 
 test("fails closed for version, shape, token, and unexpected macOS rule drift", () => {
@@ -121,6 +163,7 @@ test("fails closed for version, shape, token, and unexpected macOS rule drift", 
     externalHttpPort: 41001,
     externalSocksPort: 41002,
     sharedDefaultWritePaths: ["/tmp/claude", "/private/tmp/claude"],
+    allowedWritePaths: ["/tmp/consult-job/home", "/tmp/consult-job/temp"],
   };
   for (const input of [
     { ...base, runtimeVersion: "0.0.65" },

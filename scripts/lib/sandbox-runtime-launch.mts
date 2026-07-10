@@ -359,6 +359,7 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       externalHttpPort: proxy.httpPort,
       externalSocksPort: proxy.socksPort,
       sharedDefaultWritePaths: snapshotSandboxRuntimeSharedWritePaths(hostDefaultWritePaths),
+      allowedWritePaths: runtimeConfig.filesystem?.allowWrite ?? [],
     });
     const childEnv = sanitizedChildEnv({
       source: hostEnv,

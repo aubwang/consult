@@ -551,6 +551,7 @@ test("foreground delegate persists a complete finalized job record", async (t) =
       },
       now: fixedClock(["2026-05-14T10:00:00.000Z"]),
       generateJobId: () => "job-foreground",
+      preflightAuthority: async ({ authority }) => ({ ok: true, authority }),
       stdoutWrite: () => {},
       stderrWrite: () => {},
     },
@@ -608,6 +609,7 @@ test("foreground delegate captures a response chunk delayed after prompt complet
       },
       now: fixedClock(["2026-05-14T10:00:00.000Z"]),
       generateJobId: () => "job-delayed-response",
+      preflightAuthority: async ({ authority }) => ({ ok: true, authority }),
       stdoutWrite: () => {},
       stderrWrite: () => {},
     },
@@ -712,7 +714,7 @@ test("consult/run denies an edit permission request outside the workspace", asyn
 });
 
 test(
-  "consult/run denies opted-in execute under filesystem-only bwrap",
+  "consult/run rejects persisted execute authority again at the launch boundary",
   { skip: !fs.existsSync("/usr/bin/bwrap") },
   async (t) => {
     const repoRoot = path.resolve(path.dirname(fakeAgentPath), "../../..");
@@ -736,8 +738,10 @@ test(
         allowExecute: true,
       });
 
-      assert.equal((await finalizedPromise).stopReason, "end_turn");
-      assert.equal(updates[0].update.content.text, "reject");
+      const finalized = await finalizedPromise;
+      assert.equal(finalized.stopReason, "failed");
+      assert.match(finalized.errorMessage, /AUTHORITY_EXECUTE_UNAVAILABLE/u);
+      assert.equal(updates.length, 0);
     } finally {
       await client.close();
     }

@@ -581,6 +581,44 @@ test("delegate resume-job resumes an explicit job across Host sessions", async (
   assert.equal(request.params.resumeJobId, "job-other-chat");
 });
 
+test("confined resume rejects an unavailable archive before creating a Job", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await fs.mkdir(jobsDir(workspaceRoot), { recursive: true });
+  await fs.writeFile(
+    path.join(jobsDir(workspaceRoot), "job-source.json"),
+    JSON.stringify({
+      jobId: "job-source",
+      status: "completed",
+      profile: "codex",
+      completedAt: "2026-05-14T10:00:00.000Z",
+      sessionId: "session-source",
+    }),
+  );
+
+  const result = await runDelegate({
+    args: { positional: ["continue"], flags: { "resume-job": "job-source" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-must-not-exist",
+      validateSessionStateArchive: async () => {
+        throw new Error("archive missing");
+      },
+      ensureBrokerSession: async () => {
+        throw new Error("Broker should not start");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /RESUME_STATE_UNAVAILABLE.*archive missing/u);
+  await assert.rejects(
+    fs.access(path.join(jobsDir(workspaceRoot), "job-must-not-exist.json")),
+  );
+});
+
 test("delegate resume-job rejects jobs from another profile", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

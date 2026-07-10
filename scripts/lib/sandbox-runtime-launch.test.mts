@@ -130,7 +130,7 @@ test("confined launch falls back to one credential environment variable", async 
   }
 });
 
-test("write and fetch authority only broaden Workspace writes and public HTTPS proxying", async (t) => {
+test("write and fetch authority only broaden Workspace writes and public TCP/443 proxying", async (t) => {
   const fixture = await makeFixture(t);
   const harness = fakeRuntime();
   const lease = await acquireConfinedSandboxRuntimeLaunch({
@@ -381,11 +381,12 @@ function linuxArtifact(): string {
     "--setenv CLAUDE_CODE_HOST_HTTP_PROXY_PORT 41001",
     "--setenv CLAUDE_CODE_HOST_SOCKS_PROXY_PORT 41002",
     "--ro-bind / /",
+    "--tmpfs /home --tmpfs /root --tmpfs /var --tmpfs /etc",
     "--bind /tmp/claude-http-0123456789abcdef.sock /tmp/claude-http-0123456789abcdef.sock",
     "--bind /tmp/claude-socks-fedcba9876543210.sock /tmp/claude-socks-fedcba9876543210.sock",
     "--bind /tmp/claude /tmp/claude",
     "--tmpfs /tmp",
-    "--unshare-pid --proc /proc -- /bin/bash -c agent",
+    "--unshare-pid --proc /proc -- /bin/bash -c /vendor/seccomp/x64/apply-seccomp",
   ].join(" ");
 }
 

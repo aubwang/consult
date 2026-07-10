@@ -303,7 +303,7 @@ export async function serveBroker(
     jobId: string | null = null,
     resumeSourceJobId: string | null = null,
     resumeSessionId: string | null = null,
-    _parentJobId: string | null = null,
+    parentJobId: string | null = null,
   ): Promise<AgentHandle> {
     if (agent && agentAuthority && !jobAuthoritiesEqual(agentAuthority, authority)) {
       await agent.dispose();
@@ -328,6 +328,7 @@ export async function serveBroker(
       jobId,
       resumeSourceJobId,
       resumeSessionId,
+      parentJobId,
       runtime,
     });
     agentAuthority = authority;

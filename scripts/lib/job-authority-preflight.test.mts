@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { preflightJobAuthority } from "./job-authority-preflight.mts";
+import {
+  preflightJobAuthority,
+  validateJobAuthorityRuntimeBoundary,
+} from "./job-authority-preflight.mts";
 import type { JobAuthority } from "./job-authority.mts";
 
 const CONFINED: JobAuthority = {
@@ -20,7 +23,10 @@ const BASE = {
 
 test("preflight accepts explicit inheritance on supported platforms", async () => {
   assert.deepEqual(
-    await preflightJobAuthority({ ...BASE, authority: INHERIT, platform: "linux" }),
+    await preflightJobAuthority(
+      { ...BASE, authority: INHERIT, platform: "linux" },
+      { probeInherited: async ({ authority }) => ({ ok: true, authority }) },
+    ),
     { ok: true, authority: INHERIT },
   );
 });
@@ -30,9 +36,29 @@ test("preflight rejects native Windows including inheritance", async () => {
     ...BASE,
     authority: INHERIT,
     platform: "win32",
-  });
+  }, { probeInherited: async ({ authority }) => ({ ok: true, authority }) });
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
+});
+
+test("runtime boundary rejects persisted execute grants and native Windows", () => {
+  const execute = validateJobAuthorityRuntimeBoundary({
+    authority: { ...CONFINED, mode: "write", allowExecute: true },
+    platform: "linux",
+  });
+  assert.equal(execute.ok, false);
+  if (!execute.ok) {
+    assert.equal(execute.diagnostic.code, "AUTHORITY_EXECUTE_UNAVAILABLE");
+  }
+
+  const windows = validateJobAuthorityRuntimeBoundary({
+    authority: INHERIT,
+    platform: "win32",
+  });
+  assert.equal(windows.ok, false);
+  if (!windows.ok) {
+    assert.equal(windows.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
+  }
 });
 
 test("preflight rejects every chain involving confined authority", async () => {
@@ -55,12 +81,15 @@ test("preflight rejects every chain involving confined authority", async () => {
 });
 
 test("preflight retains cooperative inherit-to-inherit chains", async () => {
-  const result = await preflightJobAuthority({
-    ...BASE,
-    authority: INHERIT,
-    platform: "linux",
-    parentJob: { mode: "read-only" },
-  });
+  const result = await preflightJobAuthority(
+    {
+      ...BASE,
+      authority: INHERIT,
+      platform: "linux",
+      parentJob: { mode: "read-only" },
+    },
+    { probeInherited: async ({ authority }) => ({ ok: true, authority }) },
+  );
   assert.deepEqual(result, { ok: true, authority: INHERIT });
 });
 

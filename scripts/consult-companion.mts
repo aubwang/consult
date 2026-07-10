@@ -73,7 +73,9 @@ Commands:
              Options: --agent <profile>, --base <ref>,
                       --sandbox <confined|inherit>, --json
   doctor     Diagnose Profile, Host Identity, Job, Broker, and Job Authority.
-             Options: --agent <profile>, --profile <profile>, --json
+             Options: --agent <profile>, --profile <profile>, --read-only,
+                      --write, --isolated, --sandbox <confined|inherit>,
+                      --allow-fetch, --allow-exec, --json
   status     Show all Workspace Jobs or inspect one Job.
              Options: --wait, --follow, --json
   result     Print stored final agent text for a finished Job.
@@ -122,13 +124,14 @@ models advertised at Session start. OpenCode exact model ids use provider/model.
 - --sandbox confined (default): launch built-in codex or claude Profiles inside
   Consult-managed native confinement on Linux or macOS. Direct networking is
   blocked; model traffic uses an authenticated model-host allowlist proxy.
-- --allow-fetch: additionally permit arbitrary public HTTPS through that proxy.
+- --allow-fetch: additionally permit arbitrary public TCP/443 through that proxy
+  for HTTPS-oriented research; Consult does not inspect the encrypted protocol.
   This is task-specific authority, not a harmless convenience: the Profile also
   holds its selected model credential, so prompt-injected content could send
   readable data to a public host.
 - --sandbox inherit: deliberately add no Consult OS boundary and use only the
-  trusted Host's ambient authority. Consult never retries with inheritance
-  implicitly.
+  trusted Host's ambient authority. Read-only/path checks are then cooperative
+  and detective, not OS-preventive. Consult never retries with inheritance implicitly.
 - --allow-exec: currently fails preflight while execute-specific resource and
   cross-Profile conformance work remains incomplete.
 

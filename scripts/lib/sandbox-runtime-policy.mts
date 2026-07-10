@@ -27,6 +27,7 @@ export interface TransformSandboxRuntimeLaunchInput {
   externalHttpPort: number;
   externalSocksPort: number;
   sharedDefaultWritePaths: readonly string[];
+  allowedWritePaths: readonly string[];
 }
 
 export interface SandboxRuntimePolicyError extends Error {
@@ -47,6 +48,7 @@ export function transformSandboxRuntimeLaunch({
   externalHttpPort,
   externalSocksPort,
   sharedDefaultWritePaths,
+  allowedWritePaths,
 }: TransformSandboxRuntimeLaunchInput): SandboxRuntimeLaunch {
   assertRuntimeVersion(runtimeVersion);
   assertSafeAbsolutePath(jobTempDir, "Job temp directory");
@@ -60,6 +62,12 @@ export function transformSandboxRuntimeLaunch({
   }
   for (const sharedPath of sharedDefaultWritePaths) {
     assertSafeAbsolutePath(sharedPath, "shared default write path");
+  }
+  if (allowedWritePaths.length === 0) {
+    throw policyShapeError("allowed write-path snapshot is empty");
+  }
+  for (const allowedPath of allowedWritePaths) {
+    assertSafeAbsolutePath(allowedPath, "allowed write path");
   }
   if (
     launch.argv.length !== 3 ||
@@ -78,6 +86,7 @@ export function transformSandboxRuntimeLaunch({
           externalHttpPort,
           externalSocksPort,
           sharedDefaultWritePaths,
+          allowedWritePaths,
         )
       : transformMacosPolicy(
           launch.argv[2],
@@ -86,6 +95,7 @@ export function transformSandboxRuntimeLaunch({
           externalHttpPort,
           externalSocksPort,
           sharedDefaultWritePaths,
+          allowedWritePaths,
         );
   return { argv: [launch.argv[0], "-c", command], env: { ...launch.env } };
 }
@@ -97,21 +107,39 @@ function transformLinuxPolicy(
   externalHttpPort: number,
   externalSocksPort: number,
   sharedDefaultWritePaths: readonly string[],
+  allowedWritePaths: readonly string[],
 ): string {
   const words = parseShellWords(source);
+  if (words[0] !== "bwrap") {
+    throw policyShapeError("Linux policy does not start with bwrap");
+  }
+  for (const required of [
+    ["--new-session", "--die-with-parent", "--unshare-net"],
+    ["--ro-bind", "/", "/"],
+    ["--tmpfs", "/tmp"],
+    ["--unshare-pid", "--proc", "/proc", "--"],
+  ]) {
+    if (!hasSequence(words, required)) {
+      throw policyShapeError(`Linux policy is missing ${required.join(" ")}`);
+    }
+  }
+  for (const masked of ["/home", "/root", "/var", "/etc"]) {
+    if (!hasSequence(words, ["--tmpfs", masked])) {
+      throw policyShapeError(`Linux policy is missing the ${masked} read mask`);
+    }
+  }
   if (
-    words[0] !== "bwrap" ||
-    !hasSequence(words, ["--new-session", "--die-with-parent", "--unshare-net"]) ||
-    !hasSequence(words, ["--ro-bind", "/", "/"]) ||
-    !hasSequence(words, ["--tmpfs", "/tmp"]) ||
-    !hasSequence(words, ["--unshare-pid", "--proc", "/proc", "--"])
+    words.filter((word) =>
+      word.includes("/vendor/seccomp/") && word.includes("/apply-seccomp"),
+    ).length !== 1
   ) {
-    throw policyShapeError("Linux bwrap policy does not match the pinned shape");
+    throw policyShapeError("Linux policy does not contain exactly one pinned seccomp launcher");
   }
   assertSetenv(words, "CLAUDE_CODE_HOST_HTTP_PROXY_PORT", String(externalHttpPort));
   assertSetenv(words, "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT", String(externalSocksPort));
 
   const shared = new Set(sharedDefaultWritePaths);
+  const allowedWrites = new Set(allowedWritePaths);
   const tightened: string[] = [];
   for (let index = 0; index < words.length; index += 1) {
     if (
@@ -139,6 +167,7 @@ function transformLinuxPolicy(
     LINUX_HTTP_PROXY_PORT,
     LINUX_SOCKS_PROXY_PORT,
   );
+  assertLinuxWriteBinds(authenticated, allowedWrites);
   for (let index = 0; index < authenticated.length - 2; index += 1) {
     if (
       authenticated[index] === "--bind" &&
@@ -149,6 +178,19 @@ function transformLinuxPolicy(
     }
   }
   return quoteShellWords(authenticated);
+}
+
+function assertLinuxWriteBinds(words: readonly string[], allowedWrites: ReadonlySet<string>): void {
+  const proxySocketPattern = /^\/tmp\/claude-(?:http|socks)-[0-9a-f]{16}\.sock$/u;
+  for (let index = 0; index < words.length - 2; index += 1) {
+    if (words[index] !== "--bind") continue;
+    const source = words[index + 1];
+    const target = words[index + 2];
+    if (source !== target) continue;
+    if (!proxySocketPattern.test(source) && !allowedWrites.has(source)) {
+      throw policyShapeError(`unexpected Linux writable bind remained for ${source}`);
+    }
+  }
 }
 
 function relocateLinuxProxySocketBinds(words: string[]): void {
@@ -195,6 +237,7 @@ function transformMacosPolicy(
   externalHttpPort: number,
   externalSocksPort: number,
   sharedDefaultWritePaths: readonly string[],
+  allowedWritePaths: readonly string[],
 ): string {
   const words = parseShellWords(source);
   const sandboxIndex = words.indexOf("/usr/bin/sandbox-exec");
@@ -235,6 +278,7 @@ function transformMacosPolicy(
       );
     }
   }
+  assertMacosWriteRules(profile, new Set(allowedWritePaths));
   words[sandboxIndex + 2] = profile;
   replaceEnvAssignmentExactlyOnce(words, "TMPDIR", "/tmp/claude", jobTempDir);
   replaceEnvAssignmentExactlyOnce(words, "NO_PROXY", DEFAULT_NO_PROXY, "");
@@ -247,6 +291,20 @@ function transformMacosPolicy(
   );
   assertNoUnauthenticatedProxyWords(authenticated, externalHttpPort, externalSocksPort);
   return quoteShellWords(authenticated);
+}
+
+function assertMacosWriteRules(profile: string, allowedWrites: ReadonlySet<string>): void {
+  const rulePattern = /\(allow file-write[^\n]*\n  \(subpath "([^"\n]+)"\)\n  \(with message "[^"\n]+"\)\)/gu;
+  const matches = [...profile.matchAll(rulePattern)];
+  const ruleCount = occurrenceCount(profile, "(allow file-write");
+  if (matches.length !== ruleCount) {
+    throw policyShapeError("macOS file-write rules do not match the pinned subpath shape");
+  }
+  for (const match of matches) {
+    if (!allowedWrites.has(match[1])) {
+      throw policyShapeError(`unexpected macOS writable subpath remained for ${match[1]}`);
+    }
+  }
 }
 
 function authenticateProxyWords(
