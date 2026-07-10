@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import {
   SANDBOX_RUNTIME_POLICY_ERROR,
   SANDBOX_RUNTIME_VERSION,
+  snapshotSandboxRuntimeSharedWritePaths,
   transformSandboxRuntimeLaunch,
 } from "./sandbox-runtime-policy.mts";
 
@@ -124,4 +128,17 @@ test("fails closed for version, shape, token, and unexpected macOS rule drift", 
         (error as Error & { code?: string }).code === SANDBOX_RUNTIME_POLICY_ERROR,
     );
   }
+});
+
+test("shared write-path snapshots include raw and canonical symlink targets", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-srt-policy-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, "target");
+  const link = path.join(root, "link");
+  fs.mkdirSync(target);
+  fs.symlinkSync(target, link);
+
+  const snapshot = snapshotSandboxRuntimeSharedWritePaths([link]);
+  assert.equal(snapshot.includes(link), true);
+  assert.equal(snapshot.includes(fs.realpathSync(target)), true);
 });
