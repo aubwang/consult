@@ -1,7 +1,17 @@
 #!/usr/bin/env node
 
-import { dispatch } from "../scripts/consult-companion.mts";
-import { parseArgs } from "../scripts/lib/args.mts";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const sourceEntry = new URL("../scripts/consult-companion.mts", import.meta.url);
+const installedEntry = new URL("../dist/scripts/consult-companion.mjs", import.meta.url);
+const entry = fs.existsSync(fileURLToPath(sourceEntry)) ? sourceEntry : installedEntry;
+const { dispatch } = await import(entry.href);
+
+const sourceArgs = new URL("../scripts/lib/args.mts", import.meta.url);
+const installedArgs = new URL("../dist/scripts/lib/args.mjs", import.meta.url);
+const argsEntry = fs.existsSync(fileURLToPath(sourceArgs)) ? sourceArgs : installedArgs;
+const { parseArgs } = await import(argsEntry.href);
 
 const [, , sub, ...rest] = process.argv;
 const parsed = parseArgs(rest ?? []);

@@ -1,9 +1,16 @@
-import { getDiff as defaultGetDiff } from "../lib/git.mts";
+import {
+  appendPinnedDiff,
+  getDiff as defaultGetDiff,
+  pinnedDiffErrorMessage,
+} from "../lib/git.mts";
 import type { GetDiffOptions } from "../lib/git.mts";
 import {
   createQueuedJobRecord,
+  jobLogPath,
+  statusFromStopReason,
   writeJobRecord as defaultWriteJobRecord,
 } from "../lib/job-records.mts";
+import { jobResultEnvelope } from "../lib/job-result-contract.mts";
 import { defaultGenerateJobId } from "../lib/job-ids.mts";
 import { runPromptTurn, brokerErrorMessage } from "../lib/prompt-turn-runner.mts";
 import type { PromptTurnDeps } from "../lib/prompt-turn-runner.mts";
@@ -25,7 +32,9 @@ export interface CodexReviewOptions {
   host: string;
   hostSessionId: string;
   baseRef?: string | null;
+  diff?: string;
   kind?: string;
+  json?: boolean;
   availableCommandsTimeoutMs?: number | null;
   deps?: CodexReviewDeps;
 }
@@ -37,7 +46,9 @@ export async function runCodexReview({
   host,
   hostSessionId,
   baseRef = null,
+  diff: suppliedDiff,
   kind = "review",
+  json = false,
   availableCommandsTimeoutMs: timeoutOverride = null,
   deps = {},
 }: CodexReviewOptions): Promise<NullOutputResult> {
@@ -48,7 +59,15 @@ export async function runCodexReview({
   const getDiff = deps.getDiff ?? defaultGetDiff;
   const slash = `/${kind}`;
 
-  const diff = await getDiff(baseRef ? { baseRef, cwd: workspaceRoot } : { cwd: workspaceRoot });
+  let diff: string;
+  try {
+    diff =
+      suppliedDiff ??
+      (await getDiff(baseRef ? { baseRef, cwd: workspaceRoot } : { cwd: workspaceRoot }));
+  } catch (error) {
+    output.stderr(`${pinnedDiffErrorMessage(error)}\n`);
+    return output.result(2);
+  }
   const jobId = generateJobId();
   const jobRecord = createQueuedJobRecord({
     jobId,
@@ -61,6 +80,8 @@ export async function runCodexReview({
     host,
     hostSessionId,
     profile,
+    prompt: slash,
+    includeDiff: true,
     baseRef: baseRef as string | undefined,
   });
   await writeJobRecord(workspaceRoot, jobId, jobRecord);
@@ -76,11 +97,13 @@ export async function runCodexReview({
       workspaceRoot,
       profileEntry,
       jobRecord,
-      prompt: `${slash}\n\n${diff}`,
+      prompt: appendPinnedDiff(slash, diff, { baseRef }),
       payloadFields: { baseRef },
       deps,
       output,
-      renderUpdate: renderSessionUpdate as (notification: unknown) => string,
+      renderUpdate: json
+        ? () => ""
+        : (renderSessionUpdate as (notification: unknown) => string),
       onUpdate(notification) {
         const update =
           (notification as { update?: Record<string, unknown> }).update ??
@@ -114,11 +137,33 @@ export async function runCodexReview({
     if (Number.isInteger((result as Partial<NullOutputResult>).exitCode)) {
       return result as NullOutputResult;
     }
+    const { finalNotification, finalText } = result as {
+      finalNotification: { stopReason: string };
+      finalText: string;
+    };
+    if (json) {
+      output.stdout(
+        `${JSON.stringify(
+          jobResultEnvelope(jobRecord, {
+            logPath: jobLogPath(workspaceRoot, jobId),
+          }),
+        )}\n`,
+      );
+    } else {
+      const prefix = finalText.length > 0 && !finalText.endsWith("\n") ? "\n" : "";
+      output.stdout(
+        `${prefix}consult ${kind} ${jobId} ${statusFromStopReason(
+          finalNotification.stopReason,
+        )}\n`,
+      );
+    }
+    return output.result(
+      statusFromStopReason(finalNotification.stopReason) === "failed" ? 6 : 0,
+    );
   } catch (error) {
     output.stderr(`${brokerErrorMessage(error as { code?: string; message: string })}\n`);
     return output.result(1);
   }
-  return output.result(0);
 }
 
 function resolveAvailableCommandsTimeoutMs(

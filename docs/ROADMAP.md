@@ -1,69 +1,63 @@
 # Consult Roadmap
 
-This file tracks pre-release product direction for Consult.
+This file tracks pre-release product direction. Accepted architectural choices
+live in `docs/adr/`; this is not a second decision log.
 
-## Current Status
+## Current Product
 
-The implemented local Profile set is usable:
+Consult is a CLI-first, host-neutral delegation layer for agentic work:
 
-- Host-neutral Consult Core path.
-- Claude Code Host Adapter compatibility.
-- Direct `consult` CLI.
-- Codex Host autodetection through the single `consult` CLI.
-- opencode Host autodetection through the single `consult` CLI.
-- Idle Broker timeout fallback.
-- Delegation Chains visibility and cancel behavior.
-- Explicit Broker inspection/cleanup through `consult brokers`.
-- Opt-in workspace filesystem sandboxing with `CONSULT_AGENT_SANDBOX=bwrap`.
-- Profile-aware bwrap support for `claude`, `codex`, `opencode`, and `gemini`.
-- Live conformance reports for `codex`, `claude`, `opencode`, and unsandboxed
-  `copilot`.
-- Unit-covered Gemini CLI Profile support using native ACP mode; live
-  conformance is pending local Gemini auth.
+- One `consult` CLI from terminal, Codex, or opencode.
+- Built-in `claude`, `codex`, and `opencode` Profiles plus generic custom
+  Profile configuration.
+- Foreground and background Jobs with durable status, logs, cancellation,
+  resume, and Delegation Chain lineage.
+- Versioned Profile-neutral Job JSON with outcome and artifact sections.
+- Deterministic pinned-diff delegation and Profile-neutral review; Codex's
+  native review path remains an internal optimization.
+- Transactional isolated write Jobs that return a patch and touched-files
+  manifest without changing the invoking checkout.
+- Execute permission only through explicit `--allow-exec` on an isolated write
+  Job under an active bubblewrap filesystem sandbox.
+- One-command GitHub installation now; scoped npm publication packaging is
+  ready for a future registry release.
 
-## Verified Backends
+Consult no longer ships a Claude Code plugin/Host Adapter. The Claude Profile
+is still supported. Gemini and GitHub Copilot are not supported Profiles.
 
-Fresh release-readiness probes on 2026-05-19 passed:
+## Release Readiness
 
-- `claude`: direct Claude CLI, unsandboxed Consult delegate, and
-  `CONSULT_AGENT_SANDBOX=bwrap` Consult delegate.
-- `codex`: direct Codex CLI, unsandboxed Consult delegate, and
-  `CONSULT_AGENT_SANDBOX=bwrap` Consult delegate.
-- `opencode`: direct opencode CLI, unsandboxed Consult delegate, and
-  `CONSULT_AGENT_SANDBOX=bwrap` Consult delegate.
-- `copilot`: direct Copilot CLI, unsandboxed Consult delegate, and background
-  Consult delegate/result.
+Before the first published npm release:
 
-## Sandbox-Deferred
+- Run fresh direct, foreground, background, isolated-write, cancellation, and
+  resume probes for all three built-in Profiles.
+- Run the bubblewrap matrix on Linux, including explicit execute opt-in and
+  outside-workspace rejection.
+- Validate package installation through both npm and Bun from a packed tarball.
+- Document any Profile-specific differences that remain observable through the
+  common Job result contract.
+- Decide and document the compatibility policy for future Job-result schema
+  versions.
 
-`copilot` is supported for unsandboxed Consult delegation, but Copilot-specific
-`CONSULT_AGENT_SANDBOX=bwrap` behavior remains deferred until a test environment
-has a Copilot-capable credential available to non-interactive shell sessions. A
-2026-05-24 retry found `bwrap` and the Copilot Profile present, but direct
-Copilot prompts failed before sandbox comparison because the available GitHub
-token was not accepted for Copilot Requests.
+## Near-Term Follow-Ups
 
-## v1 Hardening Notes
+- Add an explicit, safe patch-application command only if real use shows that
+  surfacing the patch path is insufficient. Keep application user-controlled.
+- Add retention and cleanup policy for old Job logs and isolated artifacts.
+- Improve Broker and worker crash diagnostics based on field failures rather
+  than expanding permanent daemon machinery.
+- Expand Host autodetection only where it remains environment-based and keeps
+  the CLI as the sole product interface.
+- Add new Profiles only after a repeatable ACP conformance pass. Do not restore
+  deprecated Profile definitions merely because their CLIs expose an ACP mode.
 
-- `BROKER_BUSY` is the expected same-broker concurrency behavior, but Brokers
-  are job-scoped. Separate Jobs in the same Host Session/Profile/Workspace can
-  run concurrently in separate Broker/backend processes.
-- Companion-disconnect-mid-prompt is covered by focused broker tests for both
-  acknowledged and unacknowledged cancel paths. A safe process-level drill now
-  exercises killing the real companion CLI against the fake ACP agent via
-  `npm run drill:companion-disconnect`.
-- Broker crash/error recovery is bounded for v1 by stale broker detection,
-  teardown/respawn on next use, cancel-time unreachable handling, tainting after
-  an unacknowledged disconnect cancel, and foreground delegate failure if the
-  broker disconnects after accepting a job but before finalization.
-- Claude cancel timing works within the documented budget. No safe low-risk
-  protocol change is pending; do not free the work-plane mutex before the agent
-  has acknowledged cancel or the broker has taken the taint/failure path.
+## Deliberately Deferred
 
-## v1.x Follow-Ups
-
-- Verify Copilot sandbox behavior in a Linux/bubblewrap environment and add any
-  required Copilot-specific auth/config mounts.
-- Improve broker crash/error messages further only if field usage shows the
-  current cleanup hints are too opaque.
-- Add richer Host Adapter integration only where it stays thin and optional.
+- Cross-Profile native conversation transfer. Agentic Jobs should receive
+  self-contained prompts; ACP resume stays within one Profile.
+- A proprietary Codex app-server dependency. Consult uses ACP and normal Git
+  artifacts for portable behavior.
+- Interactive mid-Job permission prompts. Modes and execute authority are
+  chosen at command start.
+- A new Claude Code plugin surface. Host-specific UI is outside the current
+  product vision.

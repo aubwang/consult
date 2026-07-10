@@ -52,11 +52,6 @@ function detectHostIdentity(env: Record<string, string | undefined>): HostIdenti
     return { host: "codex", hostSessionId: codexThreadId };
   }
 
-  const claudeSessionId = nonEmpty(env.CLAUDE_SESSION_ID);
-  if (claudeSessionId) {
-    return { host: "claude-code", hostSessionId: claudeSessionId };
-  }
-
   return null;
 }
 

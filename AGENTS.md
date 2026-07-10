@@ -1,23 +1,19 @@
 # Consult Agent Instructions
 
-Consult is a host-neutral delegation layer. It lets a current Host such as
-Claude Code, Codex, opencode, or a terminal delegate work to configured ACP
-Profiles through job-scoped Brokers.
+Consult is a host-neutral delegation CLI. It lets a current Host such as Codex,
+opencode, or a terminal delegate work to configured ACP Profiles through
+job-scoped Brokers.
 
 ## Product Boundaries
 
-- Keep Consult product behavior in `scripts/`, `bin/`, `skills/`, `hosts/`,
-  tracked Host entrypoints (`commands/`, `agents/`, `hooks/`,
-  `.claude-plugin/`, `.opencode/skills/`), and docs.
+- Keep Consult product behavior in `scripts/`, `bin/`, `skills/`, tracked
+  opencode skill entrypoints under `.opencode/skills/`, and docs.
 - Treat local agent workspace state as untracked. Do not commit `.cruise/`,
   `.agents/`, `.claude/`, `.codex/`, `.tmp/`, `skills-lock.json`, or
   `HANDOFF.md`.
 - Treat tracked symlinks under `.opencode/skills/` as product entrypoints for
   opencode. Other `.opencode/` files are local tool state unless explicitly
   documented otherwise.
-- Treat tracked symlinks at `commands/`, `agents/`, `hooks/`, and
-  `.claude-plugin/` as Claude Code product entrypoints. Canonical Claude Code
-  Host Adapter files live under `hosts/claude-code/`.
 - Keep Cruise policy and session state out of this repo. Consult may implement
   delegation mechanisms, but Cruise owns Cruise operating policy.
 
@@ -35,11 +31,12 @@ Profiles through job-scoped Brokers.
 
 - Run `bun run typecheck` and `bun run test` after behavior changes (not
   `bun test`; the suite runs under `node --test`).
-- Source is erasable TypeScript (`.mts`) run directly by Node type stripping;
-  there is no build step. Keep syntax erasable (no enums, namespaces, or
-  parameter properties).
+- Source is erasable TypeScript (`.mts`) run directly by Node type stripping
+  from a checkout. Published packages compile that source to `dist/**/*.mjs`
+  during `prepack`/Git installation. Keep syntax erasable (no enums,
+  namespaces, or parameter properties).
 - For focused checks, prefer the relevant `node --test ...` files under
-  `scripts/` or `hosts/`.
+  `scripts/`.
 - Update docs and ADRs when a shipped behavior or architecture decision changes.
 
 ## Agent Context Map

@@ -1,6 +1,8 @@
 import { stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { profilesPath } from "../broker-endpoint.mts";
+import { cleanupIsolatedWorkspace as defaultCleanupIsolatedWorkspace } from "../isolated-workspace.mts";
+import type { PreparedIsolatedWorkspace } from "../isolated-workspace.mts";
 import {
   readWorkspaceJobRecord,
   writeJobRecord as defaultWriteJobRecord,
@@ -8,10 +10,12 @@ import {
 } from "../job-records.mts";
 import { loadProfiles as defaultLoadProfiles } from "../profiles.mts";
 import type { ProfilesData } from "../profiles.mts";
+import { processStartTime } from "../process-identity.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
+import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import type {
   EnsureBrokerSessionInput,
   EnsureBrokerSessionResult,
@@ -19,7 +23,7 @@ import type {
 import { createOutput } from "./output.mts";
 import type { CommandResult } from "./output.mts";
 
-interface TaskWorkerDeps {
+interface TaskWorkerDeps extends RunDelegateOnceDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
   readJobRecord?: (workspaceRoot: string, jobId: string) => Promise<JobRecord>;
   writeJobRecord?: (workspaceRoot: string, jobId: string, record: JobRecord) => Promise<void>;
@@ -30,6 +34,9 @@ interface TaskWorkerDeps {
   now?: () => string;
   stdoutWrite?: (text: string) => void;
   stderrWrite?: (text: string) => void;
+  cleanupIsolatedWorkspace?: (
+    prepared: PreparedIsolatedWorkspace,
+  ) => Promise<unknown>;
   [key: string]: unknown;
 }
 
@@ -61,15 +68,31 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
     return output.result(lookupResult.exitCode);
   }
 
+  const isolatedWorkspace = jobRecord.isolatedWorkspace;
   const invalidReason = validateJobRecord(jobRecord);
   if (invalidReason) {
+    await cleanupPreparedWorkspace(isolatedWorkspace, deps);
     output.stderr(`invalid job record ${jobId}: ${invalidReason}\n`);
     return output.result(2);
   }
 
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
-  Object.assign(jobRecord, { workerPid: process.pid });
-  await writeJobRecord(workspaceRoot, jobId, jobRecord);
+  Object.assign(jobRecord, {
+    workerPid: process.pid,
+    ...(jobRecord.isolated === true
+      ? {
+          runner: "inline",
+          runnerPid: process.pid,
+          runnerStartTime: (await processStartTime(process.pid).catch(() => null)) ?? undefined,
+        }
+      : {}),
+  });
+  try {
+    await writeJobRecord(workspaceRoot, jobId, jobRecord);
+  } catch (error) {
+    await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+    throw error;
+  }
 
   const loadProfiles = deps.loadProfiles ?? defaultLoadProfiles;
   let profiles: ProfilesData;
@@ -78,19 +101,23 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
   } catch (error) {
     const profileResult = profileErrorResult(error);
     if (profileResult) {
+      await cleanupPreparedWorkspace(isolatedWorkspace, deps);
       output.stderr(profileResult.stderr);
       return output.result(profileResult.exitCode);
     }
+    await cleanupPreparedWorkspace(isolatedWorkspace, deps);
     throw error;
   }
   const profileEntry = profiles.profiles?.[jobRecord.profile as string];
   if (!profileEntry) {
+    await cleanupPreparedWorkspace(isolatedWorkspace, deps);
     output.stderr(`invalid job record ${jobId}: unknown profile '${jobRecord.profile}'\n`);
     return output.result(2);
   }
 
   return runDelegateOnce({
     workspaceRoot,
+    executionRoot: isolatedWorkspace?.executionRoot,
     profileEntry,
     jobRecord,
     model: jobRecord.model,
@@ -100,7 +127,22 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
     output,
     renderSummary: false,
     markFailedOnBrokerError: true,
+    inline: jobRecord.isolated === true,
+    allowExecute: jobRecord.allowExecute === true,
+    isolatedWorkspace,
   });
+}
+
+async function cleanupPreparedWorkspace(
+  prepared: PreparedIsolatedWorkspace | undefined,
+  deps: TaskWorkerDeps,
+): Promise<void> {
+  if (!prepared) {
+    return;
+  }
+  await (deps.cleanupIsolatedWorkspace ?? defaultCleanupIsolatedWorkspace)(prepared).catch(
+    () => {},
+  );
 }
 
 function validateJobRecord(record: unknown): string | null {
@@ -111,6 +153,13 @@ function validateJobRecord(record: unknown): string | null {
     if (typeof (record as Record<string, unknown>)[field] !== "string" || ((record as Record<string, unknown>)[field] as string).length === 0) {
       return `missing ${field}`;
     }
+  }
+  if (
+    (record as JobRecord).isolated === true &&
+    (!(record as JobRecord).isolatedWorkspace ||
+      typeof (record as JobRecord).isolatedWorkspace?.executionRoot !== "string")
+  ) {
+    return "missing isolatedWorkspace";
   }
   return null;
 }

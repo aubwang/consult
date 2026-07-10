@@ -45,7 +45,6 @@ test("resolveHostIdentity lets consult env override host autodetection", () => {
         [HOST_SESSION_ENV]: "manual-session",
         OPENCODE_RUN_ID: "opencode-run",
         CODEX_THREAD_ID: "codex-thread",
-        CLAUDE_SESSION_ID: "claude-session",
       },
     }),
     {
@@ -98,7 +97,7 @@ test("resolveHostIdentity detects codex from thread env", () => {
   );
 });
 
-test("resolveHostIdentity detects Claude Code from session env", () => {
+test("resolveHostIdentity ignores Claude Code session env", () => {
   assert.deepEqual(
     resolveHostIdentity({
       env: {
@@ -106,8 +105,8 @@ test("resolveHostIdentity detects Claude Code from session env", () => {
       },
     }),
     {
-      host: "claude-code",
-      hostSessionId: "claude-session",
+      host: DEFAULT_HOST,
+      hostSessionId: DEFAULT_HOST_SESSION_ID,
     },
   );
 });
@@ -118,7 +117,6 @@ test("resolveHostIdentity prefers the most local known host signal", () => {
       env: {
         OPENCODE_RUN_ID: "opencode-run",
         CODEX_THREAD_ID: "codex-thread",
-        CLAUDE_SESSION_ID: "claude-session",
       },
     }),
     {

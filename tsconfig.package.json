@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "noEmit": false,
+    "outDir": "dist",
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "."
+  },
+  "include": ["scripts/**/*.mts"],
+  "exclude": [
+    "scripts/**/*.test.mts",
+    "scripts/**/__fixtures__/**",
+    "scripts/live-companion-disconnect-drill.mts"
+  ]
+}

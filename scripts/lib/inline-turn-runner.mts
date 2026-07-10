@@ -1,3 +1,5 @@
+import os from "node:os";
+
 import { cancelPrompt } from "./acp-client.mts";
 import type { StartedAgent } from "./acp-client.mts";
 import { createBrokerJobRuntime } from "./broker-job-runtime.mts";
@@ -11,7 +13,6 @@ import {
 } from "./job-agent.mts";
 import type { AgentSessionState, CodedAgentError } from "./job-agent.mts";
 import {
-  appendJobLogLine,
   finalizedBrokerJobRecord,
   finalizeJobRecord,
   isFinalStatus,
@@ -47,6 +48,7 @@ export async function ensureInlineSession(
 
 export function createInlineClient({
   workspaceRoot,
+  executionRoot = workspaceRoot,
   host,
   hostSessionId,
   profile,
@@ -74,7 +76,8 @@ export function createInlineClient({
 
   const runtime = createBrokerJobRuntime({
     config: {
-      cwd: workspaceRoot,
+      cwd: executionRoot,
+      stateWorkspaceRoot: workspaceRoot,
       host: host ?? "terminal",
       hostSessionId: hostSessionId ?? "default",
       cancelAckTimeoutMs,
@@ -134,7 +137,7 @@ export function createInlineClient({
     job = acceptedJob;
     runtime.attachJob(acceptedJob, sink);
     runAgentJobTurn(params, acceptedJob, {
-      config: { cwd: workspaceRoot },
+      config: { cwd: executionRoot },
       ensureAgent,
       getSession: () => sessionId,
       getSessionState: () => sessionState ?? undefined,
@@ -174,7 +177,8 @@ export function createInlineClient({
         binary: entry.binary,
         args: entry.args ?? [],
         env: entry.env ?? {},
-        cwd: workspaceRoot,
+        cwd: executionRoot,
+        stateWorkspaceRoot: workspaceRoot,
         mode,
         sandbox,
         profileRegistryId: entry.registryId ?? profile,
@@ -217,7 +221,11 @@ export function createInlineClient({
       .catch(() => {})
       .finally(() => {
         removeSignalHandlers();
-        process.kill(process.pid, signal);
+        // Keep the process alive long enough for the caller's isolated-workspace
+        // finalization/finally path to persist its patch and remove the worktree.
+        // With the agent disposed there are no long-lived handles, so setting the
+        // conventional signal exit code still lets the companion exit promptly.
+        process.exitCode = signalExitCode(signal);
       });
   }
 
@@ -237,7 +245,16 @@ export function createInlineClient({
         delay(cancelAckTimeoutMs).then(() => false),
       ]);
       if (!settled) {
-        await writeForcedCancelRecord(activeJob);
+        const forcedOutcome = await writeForcedCancelRecord(activeJob);
+        if (!finalizedDispatched) {
+          finalizedDispatched = true;
+          finalizedResolve();
+          await settleAndDispatch("consult/finalized", {
+            jobId: activeJob.jobId,
+            ...forcedOutcome,
+            errorMessage: "cancelled before the agent acknowledged session/cancel",
+          });
+        }
       }
     } else if (!activeJob && pendingJobId) {
       // Signalled during agent cold start (e.g. the resume precheck): no
@@ -262,7 +279,9 @@ export function createInlineClient({
     await writeJobRecord(workspaceRoot, jobId, existing).catch(() => {});
   }
 
-  async function writeForcedCancelRecord(activeJob: BrokerJob): Promise<void> {
+  async function writeForcedCancelRecord(
+    activeJob: BrokerJob,
+  ): Promise<FinalizedJobOutcome> {
     // The agent did not acknowledge session/cancel in time; the signal exit
     // still settles the record as cancelled (ADR-0021).
     activeJob.status = "finalized";
@@ -281,11 +300,16 @@ export function createInlineClient({
     );
     record.errorMessage = "cancelled before the agent acknowledged session/cancel";
     await writeJobRecord(workspaceRoot, activeJob.jobId, record).catch(() => {});
-    await appendJobLogLine(workspaceRoot, activeJob.jobId, {
-      method: "consult/finalized",
-      params: { jobId: activeJob.jobId, ...finalizedOutcome },
-    }).catch(() => {});
+    return finalizedOutcome;
   }
+}
+
+function signalExitCode(signal: NodeJS.Signals): number {
+  return 128 + (osSignalNumber(signal) ?? 1);
+}
+
+function osSignalNumber(signal: NodeJS.Signals): number | undefined {
+  return (os.constants.signals as Record<string, number | undefined>)[signal];
 }
 
 function delay(ms: number): Promise<void> {

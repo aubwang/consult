@@ -13,12 +13,15 @@ import {
 } from "./job-records.mts";
 import type { BrokerJobSnapshot, FinalizedJobOutcome } from "./job-records.mts";
 import { isInsideWorkspaceSync } from "./path-safety.mts";
-import { renderSessionUpdate } from "./session-update-renderer.mts";
+import { extractAgentMessageText } from "./session-update-renderer.mts";
 
 import type { ConsultRunParams } from "../consult-broker.mts";
 
 export interface BrokerJobRuntimeConfig {
+  /** Profile cwd and permission-confinement root. */
   cwd: string;
+  /** Optional original Workspace root used for persisted Job state. */
+  stateWorkspaceRoot?: string;
   host: string;
   hostSessionId: string;
   cancelAckTimeoutMs: number;
@@ -83,6 +86,7 @@ export interface BrokerJob {
   hostSessionId: string;
   profile: string;
   mode?: string;
+  allowExecute: boolean;
   prompt: string;
   submittedAt?: string;
   chainId?: string;
@@ -130,6 +134,7 @@ export interface BrokerJobRuntime {
   attachJob(job: BrokerJob, targetSocket: BrokerJobSocketLike): void;
   trackSession(sessionId: string, job: BrokerJob, mode: string): void;
   getSessionMode(sessionId: string): string | undefined;
+  getSessionAllowExecute(sessionId: string): boolean;
   clearSessions(): void;
   handleSessionUpdate(params: { sessionId: string; update: BrokerSessionUpdate }): Promise<void>;
   notePermissionDecision(params: {
@@ -156,6 +161,7 @@ export function createBrokerJobRuntime({
   onTerminal = () => {},
   maxFinalTextChars = DEFAULT_MAX_FINAL_TEXT_CHARS,
 }: CreateBrokerJobRuntimeOptions): BrokerJobRuntime {
+  const stateWorkspaceRoot = config.stateWorkspaceRoot ?? config.cwd;
   const sessionJobs = new Map<string | null, BrokerJob>();
   const sessionModes = new Map<string, string>();
   const activeJobs = new Map<string, BrokerJob>();
@@ -187,6 +193,7 @@ export function createBrokerJobRuntime({
         hostSessionId: params.hostSessionId ?? config.hostSessionId,
         profile: params.profile,
         mode: params.mode,
+        allowExecute: params.allowExecute === true,
         prompt: params.prompt,
         submittedAt: params.submittedAt,
         chainId: params.chainId,
@@ -248,6 +255,9 @@ export function createBrokerJobRuntime({
     },
     getSessionMode(sessionId) {
       return sessionModes.get(sessionId);
+    },
+    getSessionAllowExecute(sessionId) {
+      return sessionJobs.get(sessionId)?.allowExecute === true;
     },
     clearSessions() {
       sessionJobs.clear();
@@ -352,14 +362,14 @@ export function createBrokerJobRuntime({
 
   function writeJobUpdate(job: BrokerJob, update: BrokerSessionUpdate) {
     const notification = { jobId: job.jobId, update };
-      job.finalText = appendBoundedText(job.finalText, renderSessionUpdate(update), {
-        maxChars: maxFinalTextChars,
-      });
-      job.pendingUpdates.push(notification);
-      if (job.pendingUpdates.length > 500) {
-        job.pendingUpdates.shift();
-        job.droppedUpdateCount += 1;
-      }
+    job.finalText = appendBoundedText(job.finalText, extractAgentMessageText(update), {
+      maxChars: maxFinalTextChars,
+    });
+    job.pendingUpdates.push(notification);
+    if (job.pendingUpdates.length > 500) {
+      job.pendingUpdates.shift();
+      job.droppedUpdateCount += 1;
+    }
     for (const subscriber of job.subscribers) {
       writeNotification(subscriber, "consult/update", notification);
     }
@@ -436,17 +446,17 @@ export function createBrokerJobRuntime({
 
   async function writeJobRecord(job: BrokerJob, finalized: BrokerJobFinalized) {
     const existing = await readExistingJobRecord(job.jobId);
-    await persistJobRecord(config.cwd, job.jobId, finalizedBrokerJobRecord(existing, job as BrokerJobSnapshot, finalized as FinalizedJobOutcome));
+    await persistJobRecord(stateWorkspaceRoot, job.jobId, finalizedBrokerJobRecord(existing, job as BrokerJobSnapshot, finalized as FinalizedJobOutcome));
   }
 
   async function writeFailedJobRecord(job: BrokerJob) {
     const existing = await readExistingJobRecord(job.jobId);
-    await persistJobRecord(config.cwd, job.jobId, failedBrokerJobRecord(existing, job as BrokerJobSnapshot & { finalized: FinalizedJobOutcome }));
+    await persistJobRecord(stateWorkspaceRoot, job.jobId, failedBrokerJobRecord(existing, job as BrokerJobSnapshot & { finalized: FinalizedJobOutcome }));
   }
 
   async function readExistingJobRecord(jobId: string) {
     try {
-      return await readWorkspaceJobRecord(config.cwd, jobId);
+      return await readWorkspaceJobRecord(stateWorkspaceRoot, jobId);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return {};

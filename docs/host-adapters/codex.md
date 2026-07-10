@@ -16,14 +16,11 @@ Use `--host` / `--host-session` or `CONSULT_HOST` /
 
 ## Manual setup
 
-Make the `consult` CLI available from this checkout:
+Install the current GitHub version:
 
 ```text
-bun install
-bun link
+npm install --global github:aubwang/consult
 ```
-
-`npm install` and `npm link` also work if you prefer npm.
 
 Install and select at least one Profile separately. Profile setup is shared
 across Hosts:
@@ -55,6 +52,6 @@ consult result <job-id>
 consult cancel <job-id>
 ```
 
-The first Codex adapter scope is delegate, status, result, and cancel. Setup
-uses the same host-neutral CLI path but remains manual. Installer support,
-Codex-native UI integration, and deep lifecycle hooks are not implemented yet.
+Host autodetection is intentionally the only Codex-specific integration. Setup,
+review, isolated writes, status, result, logs, chain, and cancellation all use
+the same host-neutral CLI path.

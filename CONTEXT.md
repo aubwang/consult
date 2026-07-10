@@ -1,116 +1,160 @@
 # Consult Glossary
 
-A delegation layer that lets a user start work from one coding environment and delegate it to another over the Agent Client Protocol (ACP).
+Consult is a host-neutral delegation layer. A coding environment starts a
+self-contained Job and delegates one prompt turn to a configured ACP Profile.
 
 ## Language
 
-**Host**:
-The coding environment where the user invokes Consult and from which delegation starts.
-_Avoid_: Caller, source agent, frontend
+**Host**
+The coding environment where Consult is invoked and delegation starts. Shipped
+Host detection understands terminal, Codex, and opencode; an explicit custom
+Host name is also valid.
+_Avoid_: caller, source agent, frontend
 
-**Host Session**:
-A live invocation context inside one Host whose delegated work should share lifecycle and cleanup.
-_Avoid_: Claude session id, caller session, window
+**Host Session**
+A live invocation context inside one Host. It scopes defaults, implicit resume,
+lineage metadata, and best-effort lifecycle cleanup.
+_Avoid_: thread id, caller session, window
 
-**Host Identity**:
-The Host name and Host Session id supplied with a Consult invocation.
-_Avoid_: Caller metadata, source context
+**Host Identity**
+The `(host, hostSessionId)` pair resolved for one Consult invocation.
+_Avoid_: caller metadata, source context
 
-**Custom Host**:
-A Host name supplied by direct CLI use or an unsupported adapter.
-_Avoid_: Unknown host, arbitrary caller
+**Custom Host**
+A Host name supplied through CLI flags or Consult environment variables rather
+than built-in autodetection.
+_Avoid_: unknown Host, unsupported Host
 
-**Consult Core**:
-The host-neutral delegation model shared by all ways of invoking Consult.
-_Avoid_: Runtime, engine, shared library
+**Consult Core**
+The host-neutral implementation of Profiles, Jobs, Brokers, Sessions, state,
+permissions, setup, and results behind the `consult` CLI.
+_Avoid_: plugin, wrapper, frontend
 
-**Host Adapter**:
-The Host-specific bridge that presents Consult through one Host's native interface and lifecycle.
-_Avoid_: Plugin, wrapper, frontend
+**Profile**
+A configured ACP agent available to Consult regardless of the invoking Host.
+The shipped Profile registry contains `codex`, `claude`, and `opencode`.
+Generic custom Profile configuration remains possible.
+_Avoid_: backend, agent-config
 
-**Profile**:
-A configured ACP backend (e.g. codex, claude, gemini, opencode, copilot) available to Consult regardless of which Host invokes it.
-_Avoid_: Backend, agent-config
+**Profile Capability**
+A native action or behavior advertised by one Profile. Consult may use a
+verified capability as an optimization while preserving a portable fallback.
+_Avoid_: universal feature, special sauce
 
-**Profile Capability**:
-A native action or behavior exposed by one Profile that Consult can invoke through a Profile-specific adapter.
-_Avoid_: Consult object, universal feature, special sauce
+**Broker**
+The Consult-owned, Job-scoped process that owns ACP communication for a
+background Job and exits after the Job finalizes. Foreground and isolated
+background Jobs may use the same runtime inline instead.
+_Avoid_: app server, permanent daemon
 
-**Broker**:
-The Consult-owned ACP-agent daemon that owns backend process communication for one active Job and exits after that Job finalizes.
-_Avoid_: Server, runtime (daemon is a synonym used informally in code)
+**Session**
+The Profile-side conversation identified by `sessionId`. A fresh Consult
+process can ask the Profile to reopen it with ACP `session/resume` or
+`session/load` when advertised.
+_Avoid_: native CLI thread, transferred conversation
 
-**Session**:
-The ACP-side conversation, identified by `sessionId`, held in the broker's memory. Created via `session/new`, reattached via `session/resume` (no-replay) or `session/load` (history replay).
-_Avoid_: Thread, conversation, chat
+**Prompt turn**
+One `session/prompt` request-response cycle inside a Session. It streams
+`session/update` notifications and ends with a stop reason.
+_Avoid_: call, exchange
 
-**Prompt turn**:
-One `session/prompt` request-response cycle inside a session. Streams `session/update` notifications until a stop reason is reported.
-_Avoid_: Turn alone (ambiguous), call, exchange
+**Job**
+The Consult tracking record for exactly one `delegate` or `review` prompt turn.
+A Job records request metadata, lifecycle, outcome, artifacts, and lineage.
+_Avoid_: task, native session
 
-**Job**:
-The plugin-side tracking record for one `delegate` or `review` invocation. Each job maps to exactly one prompt turn against exactly one session.
-_Avoid_: Task, run
+**Job Result**
+The stable, versioned public representation of a Job. Schema version 1 groups
+fields under `job`, `outcome`, `artifacts`, and `lineage`; internal Job-record
+fields are not automatically exposed.
+_Avoid_: raw record dump, rendered log
 
-**Delegation Chain**:
+**Artifact**
+A durable file produced around a Job, such as its NDJSON log, isolated-write
+patch, or touched-files manifest. Artifact paths belong to the Job Result.
+_Avoid_: final answer
+
+**Delegation Chain**
 The lineage of Jobs created when delegated work invokes Consult again.
-_Avoid_: Recursion, call stack, agent loop
+_Avoid_: recursion, call stack, agent loop
 
-**Chain Id**:
-The root Job id shared by all Jobs in one Delegation Chain.
-_Avoid_: Root job pointer, lineage id
+**Chain Id**
+The root Job id shared by every Job in one Delegation Chain.
+_Avoid_: root pointer, lineage id
 
-**Workspace**:
-The git repo root where commands are invoked. The scoping unit for state files and brokers.
-_Avoid_: Project, repo (in code contexts)
+**Workspace**
+The canonical Git repository root where Consult is invoked. It is the identity
+and state-scoping unit even when a Job executes in an isolated worktree.
+_Avoid_: current directory, temporary checkout
 
-**Registry**:
-The static catalog of known ACP backends shipped with the plugin. Each entry records install command, binary name, spawn args. Used by `/consult:setup` to populate the installer menu.
-_Avoid_: Catalog, manifest
+**Execution Workspace**
+The directory exposed to a Profile as its cwd. For an in-place Job it is the
+Workspace; for an isolated write Job it is a detached worktree seeded from the
+Workspace's current tracked and safe untracked state.
+_Avoid_: Workspace identity, session transfer
 
-## Relationships
+**Isolated write Job**
+A write Job whose Execution Workspace is temporary. Consult captures only the
+Profile's delta as a patch and touched-files artifact, then removes the
+worktree. Isolation is transactional; bubblewrap is required for a hard
+filesystem process boundary.
+_Avoid_: branch checkout, hard sandbox
 
-- A **Host** has 0..N **Host Sessions**.
-- A **Host** uses 1 **Host Adapter** to invoke **Consult Core**.
-- A **Host Adapter** supplies **Host Identity** to **Consult Core**.
-- A **Custom Host** may invoke **Consult Core** without being a supported **Host Adapter**.
-- A **Host Session** starts 0..N **Jobs** in a **Workspace**.
-- Consult has 0..N configured **Profiles**.
-- A **Host** may choose a default **Profile**.
-- A **Workspace** may override the default **Profile**.
-- A **Job** has 0..1 live **Broker** while it is running.
-- A **Broker** hosts 0..N **Sessions** while it is alive.
-- A **Session** has 1..N **Prompt turns** over its lifetime.
-- A **Job** starts from exactly 1 **Host**, targets exactly 1 **Profile**, is associated with exactly 1 **Session**, and represents exactly 1 **Prompt turn**.
-- A **Job** may target a **Profile** for the same product as its **Host**.
-- A **Job** may belong to 0..1 **Delegation Chain**.
-- A **Delegation Chain** contains 1..N **Jobs**.
-- A **Delegation Chain** has exactly 1 **Chain Id**.
-- Jobs in a **Delegation Chain** are still first-class **Jobs**.
-- Cancelling a parent **Job** cancels active descendant **Jobs** in the same **Delegation Chain**.
-- Failure of a child **Job** does not automatically fail its parent **Job**.
-- A **Job** result is the output of that exact **Job**, not an automatic rollup of its **Delegation Chain**.
-- A **Delegation Chain** stays in one **Workspace** by default.
-- A child **Job** in a **Delegation Chain** cannot be more permissive than its parent **Job**.
-- A child **Job** may target the same **Profile** as its parent **Job**.
-- A **Registry** entry describes one possible **Profile**.
-- A **Profile Capability** belongs to one or more **Profiles** and may be unavailable on others.
+**Registry**
+The static catalog of known Profile installers and launch commands shipped
+with Consult. `consult setup` uses it to install and verify Profiles.
+_Avoid_: marketplace, plugin manifest
 
-## Example dialogue
+## Relationships and Invariants
 
-> **Dev:** "When the user runs `/consult:delegate --resume`, what reattaches?"
-> **Domain expert:** "The latest finished **Job** for the current **Host Session**, **Profile**, and **Workspace** points to a **Session**. We start a fresh **Broker** and ask the Profile to reopen that **Session** via `session/resume` or `session/load`."
+- A Host has zero or more Host Sessions.
+- Every invocation resolves exactly one Host Identity.
+- A Host Session starts zero or more Jobs in a Workspace.
+- Consult has zero or more configured Profiles; a Job targets exactly one.
+- A Job represents exactly one prompt turn against exactly one Session.
+- A Job may have zero or one live Broker while running.
+- A Job Result describes that Job only, not an automatic chain rollup.
+- A Job may belong to zero or one Delegation Chain.
+- A Delegation Chain has exactly one Chain Id and one or more Jobs.
+- Cancelling a parent Job cancels active descendants in the same chain.
+- Child failure does not automatically fail the parent.
+- A child Job cannot request a more permissive mode than its parent.
+- A child Job may target the same Profile as its parent.
+- Profiles and native Host products are independent roles; the same product
+  may appear in both without implying shared conversation state.
+- Workspace identity, Job state, and lineage remain rooted at the original Git
+  repository when an isolated Execution Workspace is used.
+- A Profile Capability belongs to one or more Profiles and may be absent from
+  others. Portable behavior must not require a proprietary agent server.
 
-> **Dev:** "If a user starts two background Jobs for codex in the same Host chat, how many Brokers exist?"
-> **Domain expert:** "Two while both Jobs are running. Each active **Job** gets its own **Broker**, and each **Broker** exits after its **Job** finalizes."
+## Examples
 
-## Flagged ambiguities
+> **Dev:** “What does `consult delegate --resume` reopen?”
+> **Domain expert:** “The latest finalized Job for this Host Session, Profile,
+> and Workspace points to an ACP Session. Consult starts fresh transport and
+> asks that same Profile to reopen the Session. It does not transfer a native
+> conversation to a different Profile.”
 
-- "Agent" was overloaded between *the environment starting delegation*, *the ACP-speaking backend process*, and *Claude Code's subagent system*. Resolved: **Host** is where delegation starts, **Profile** is the ACP backend being delegated to, and "subagent" refers to the in-Claude proactive forwarder (`agents/delegate.md`).
-- The same product can appear as both **Host** and **Profile**, but support for one role does not imply support for the other.
-- In a **Delegation Chain**, **Host** means the immediate environment invoking Consult for that Job, not the original root environment.
-- **Delegation Chain** inheritance covers Workspace, lineage, and permission ceiling; it does not imply inheriting Profile-specific model, effort, or resume settings.
-- Default **Profile** selection order is explicit choice, then Workspace override, then Host default, then global default.
-- Direct CLI use has no external **Host Adapter** or natural lifecycle hook. Resolved: treat terminal use as a **Host** with a synthetic **Host Session**.
-- "Resume" could mean reattach-without-replay (`session/resume`) or rehydrate-from-storage (`session/load`). We expose user-facing `--resume` and `--resume-job` selectors; Consult starts a fresh **Broker** and picks the ACP method based on Profile capability.
-- The `codex` profile's binary is **`codex-acp`** — a separate ACP shim (zed-industries/codex-acp) that wraps the underlying `codex` CLI. Having the `codex` CLI on `PATH` does not satisfy the `codex` profile; the shim must be installed independently. Same pattern for `claude` (shim binary `claude-agent-acp`, distinct from the Claude Code CLI).
+> **Dev:** “Where does an isolated write Job edit?”
+> **Domain expert:** “The Job remains scoped to the original Workspace, but the
+> Profile receives a detached Execution Workspace. Consult stores the
+> Profile-only delta as artifacts and leaves the original checkout unchanged.”
+
+> **Dev:** “If two background Jobs run at once, how many Brokers exist?”
+> **Domain expert:** “Up to two: Brokers are Job-scoped. An isolated worker may
+> instead host its Job runtime inline, but the externally visible Job contract
+> is the same.”
+
+## Resolved Ambiguities
+
+- “Agent” was overloaded between the invoking environment and the delegated
+  ACP process. Use **Host** and **Profile** respectively.
+- Direct CLI use has no plugin or lifecycle adapter. It is the terminal Host
+  with a synthetic `default` Host Session unless explicitly overridden.
+- “Resume” means reopening a Session within the same Profile through ACP. It
+  does not mean cross-CLI native session transfer.
+- Review is one Profile-neutral Job kind. A verified native capability may be
+  an optimization, not a separate public result contract.
+- `codex` launches the separate `codex-acp` shim, not the `codex` executable
+  itself. `claude` similarly launches `claude-agent-acp`, which can reuse the
+  Claude Code CLI's authentication without making Consult a Claude plugin.

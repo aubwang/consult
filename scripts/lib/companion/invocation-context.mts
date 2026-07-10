@@ -67,7 +67,12 @@ export async function resolveInvocationContext({
   env = process.env,
   deps = {},
 }: ResolveInvocationContextOptions): Promise<InvocationContext> {
-  const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
+  const workspaceRoot = await (
+    deps.resolveWorkspaceRoot ??
+    (env.CONSULT_WORKSPACE
+      ? () => fs.realpath(env.CONSULT_WORKSPACE as string)
+      : defaultResolveWorkspaceRoot)
+  )();
   const hostIdentity = resolveHostIdentity({ args, env });
   const profiles = await (deps.loadProfiles ?? defaultLoadProfiles)(profilesPath());
   const override = await (deps.loadOverride ?? loadWorkspaceOverride)(workspaceRoot);

@@ -34,24 +34,6 @@
       "args": ["acp"],
       "install": { "type": "npm", "cmd": "npm install -g opencode-ai" },
       "supports": { "resume": false, "load": true }
-    },
-    {
-      "id": "gemini",
-      "label": "Google Gemini CLI",
-      "notes": "Uses Gemini CLI's native ACP mode. Run `gemini` first to sign in with Google, or set GEMINI_API_KEY/Vertex AI environment variables.",
-      "binary": "gemini",
-      "args": ["--acp"],
-      "install": { "type": "npm", "cmd": "npm install -g @google/gemini-cli" },
-      "supports": { "resume": false, "load": true }
-    },
-    {
-      "id": "copilot",
-      "label": "GitHub Copilot CLI",
-      "notes": "Requires an active GitHub Copilot subscription. Run `copilot login`, use a supported GitHub CLI OAuth token, or set COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN to a supported token.",
-      "binary": "copilot",
-      "args": ["--acp"],
-      "install": { "type": "npm", "cmd": "npm install -g @github/copilot" },
-      "supports": { "resume": false, "load": true }
     }
   ]
 }

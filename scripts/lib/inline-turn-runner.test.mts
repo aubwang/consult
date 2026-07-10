@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import fsSync from "node:fs";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -8,17 +9,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
+import { promisify } from "node:util";
 
 import { brokersDir, jobsDir } from "./broker-endpoint.mts";
 import { jobLogPath } from "./job-records.mts";
 import type { JobRecord } from "./job-records.mts";
 import { runCancel } from "./companion/cancel.mts";
 import { runDelegateOnce } from "./companion/delegate-core.mts";
+import { createInlineClient } from "./inline-turn-runner.mts";
 
 const fakeAgentPath = fileURLToPath(
   new URL("./__fixtures__/fake-acp-agent.mts", import.meta.url),
 );
 const companionPath = fileURLToPath(new URL("../consult-companion.mts", import.meta.url));
+const execFileAsync = promisify(execFile);
 
 test("inline runner completes a turn with records and logs and no broker state", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
@@ -82,6 +86,74 @@ test("inline runner finalizes a read-only policy violation as failed and exits 6
   );
 });
 
+test("inline runner denies opted-in execute permission without the bwrap sandbox", async (t) => {
+  const { workspaceRoot, dataDir, dir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  withEnv(t, "CONSULT_AGENT_SANDBOX", "off");
+  const clientLog = path.join(dir, "client.ndjson");
+  const client = createInlineClient({
+    workspaceRoot,
+    host: "terminal",
+    hostSessionId: "default",
+    profile: "codex",
+    profileEntry: profileEntryFixture("prompt-permission-execute", {
+      CONSULT_FAKE_AGENT_CLIENT_LOG: clientLog,
+      CONSULT_FAKE_AGENT_TARGET_PATH: workspaceRoot,
+    }),
+  });
+  const updates: any[] = [];
+  client.on("consult/update", (notification) => updates.push(notification));
+  const finalized = new Promise<any>((resolve) => client.on("consult/finalized", resolve));
+
+  await client.request("consult/run", {
+    jobId: "job-inline-execute-no-sandbox",
+    prompt: "run tests",
+    profile: "codex",
+    mode: "write",
+    allowExecute: true,
+  });
+
+  assert.equal((await finalized).stopReason, "end_turn");
+  assert.equal(updates[0].update.content.text, "reject");
+  const observations = await readNdjson(clientLog) as any[];
+  assert.equal(observations[0].message.result.outcome.optionId, "reject");
+  assert.match(observations[0].message.result._meta.reason, /bwrap sandbox required/);
+});
+
+test(
+  "inline runner allows opted-in confined execute permission in write mode under bwrap",
+  { skip: !fsSync.existsSync("/usr/bin/bwrap") },
+  async (t) => {
+    const { dataDir } = await makeWorkspace();
+    withDataDir(t, dataDir);
+    withEnv(t, "CONSULT_AGENT_SANDBOX", "bwrap");
+    const repoRoot = path.resolve(path.dirname(fakeAgentPath), "../../..");
+    const client = createInlineClient({
+      workspaceRoot: repoRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      profile: "codex",
+      profileEntry: profileEntryFixture("prompt-permission-execute", {
+        CONSULT_FAKE_AGENT_TARGET_PATH: repoRoot,
+      }),
+    });
+    const updates: any[] = [];
+    client.on("consult/update", (notification) => updates.push(notification));
+    const finalized = new Promise<any>((resolve) => client.on("consult/finalized", resolve));
+
+    await client.request("consult/run", {
+      jobId: "job-inline-execute-bwrap",
+      prompt: "run tests",
+      profile: "codex",
+      mode: "write",
+      allowExecute: true,
+    });
+
+    assert.equal((await finalized).stopReason, "end_turn");
+    assert.equal(updates[0].update.content.text, "allow");
+  },
+);
+
 test("inline runner applies model and effort before prompting", async (t) => {
   const { workspaceRoot, dataDir, dir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -142,6 +214,43 @@ test("inline runner injects delegation lineage into the agent environment", asyn
   assert.equal(agentEnv.CONSULT_WORKSPACE, workspaceRoot);
 });
 
+test("inline runner separates original Job state identity from the Profile execution root", async (t) => {
+  const { workspaceRoot, dataDir, dir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const executionRoot = path.join(dir, "detached-worktree");
+  await fs.mkdir(executionRoot);
+  const envLog = path.join(dir, "isolated-env.ndjson");
+  const methodLog = path.join(dir, "isolated-methods.ndjson");
+  const jobRecord = queuedJobRecord("job-inline-isolated-root", {
+    mode: "write",
+    isolated: true,
+  });
+
+  const result = await runDelegateOnce({
+    workspaceRoot,
+    executionRoot,
+    profileEntry: profileEntryFixture("default", {
+      CONSULT_FAKE_AGENT_ENV_LOG: envLog,
+      CONSULT_FAKE_AGENT_METHOD_LOG: methodLog,
+    }),
+    jobRecord,
+    prompt: "hello",
+    inline: true,
+    output: collectOutput(),
+  });
+
+  assert.equal(result.exitCode, 0);
+  const [agentEnv] = await readNdjson(envLog);
+  const methods = await readNdjson(methodLog);
+  assert.equal(agentEnv.CONSULT_WORKSPACE, workspaceRoot);
+  assert.equal(
+    (methods.find((entry) => entry.method === "session/new")?.params as { cwd?: string }).cwd,
+    executionRoot,
+  );
+  const record = await readJobRecordFile(workspaceRoot, "job-inline-isolated-root");
+  assert.equal(record.status, "completed");
+});
+
 test("inline runner resumes an existing session via session/resume", async (t) => {
   const { workspaceRoot, dataDir, dir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -187,6 +296,26 @@ test("SIGTERM cancels an in-flight inline turn and marks the record cancelled", 
   assert.equal(record.runnerPid, child.pid);
 });
 
+test("forced SIGTERM cancellation remains cancelled when the agent does not acknowledge", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles(dataDir, "prompt-cancel-no-ack");
+  const child = spawnForegroundDelegate(t, workspaceRoot, dataDir);
+
+  await waitForStdout(child, "slow");
+  const jobId = await waitForSingleJobId(workspaceRoot);
+  child.kill("SIGTERM");
+  await once(child, "exit");
+
+  const record = await waitForRecordStatus(workspaceRoot, jobId, "cancelled");
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.stopReason, "cancelled");
+  assert.match(
+    record.errorMessage as string,
+    /cancelled before the agent acknowledged session\/cancel/,
+  );
+});
+
 test("consult cancel signals a live inline runner and the job settles cancelled", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -209,6 +338,29 @@ test("consult cancel signals a live inline runner and the job settles cancelled"
   assert.equal(record.status, "cancelled");
 });
 
+test("cancelled isolated inline jobs persist an artifact and remove their worktree", async (t) => {
+  const { workspaceRoot, dataDir, dir } = await makeGitWorkspace(t);
+  withDataDir(t, dataDir);
+  await writeProfiles(dataDir, "prompt-cancel-ack");
+  const child = spawnForegroundDelegate(t, workspaceRoot, dataDir, ["--write", "--isolated"]);
+
+  await waitForStdout(child, "slow");
+  const jobId = await waitForSingleJobId(workspaceRoot);
+  const runningRecord = await readJobRecordFile(workspaceRoot, jobId);
+  const executionRoot = (runningRecord.isolatedWorkspace as { executionRoot: string }).executionRoot;
+  child.kill("SIGTERM");
+  await once(child, "exit");
+
+  const record = await waitForRecordStatus(workspaceRoot, jobId, "cancelled");
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.isolated, true);
+  assert.deepEqual(record.touchedFiles, []);
+  assert.equal(typeof record.patchPath, "string");
+  assert.ok(await fs.stat(record.patchPath as string));
+  await assert.rejects(fs.access(executionRoot));
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("foreground delegate through the CLI completes without broker state", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -218,9 +370,13 @@ test("foreground delegate through the CLI completes without broker state", async
   const [code] = (await once(child, "exit")) as [number | null, NodeJS.Signals | null];
 
   assert.equal(code, 0);
-  const summary = JSON.parse(stdout.text().trim().split("\n").at(-1)!) as Record<string, unknown>;
-  assert.equal(summary.status, "completed");
-  const record = await readJobRecordFile(workspaceRoot, summary.jobId as string);
+  const summary = JSON.parse(stdout.text()) as {
+    schemaVersion: number;
+    job: { id: string; status: string };
+  };
+  assert.equal(summary.schemaVersion, 1);
+  assert.equal(summary.job.status, "completed");
+  const record = await readJobRecordFile(workspaceRoot, summary.job.id);
   assert.equal(record.status, "completed");
   assert.equal(record.runner, "inline");
   assert.equal(record.runnerPid, child.pid);
@@ -237,6 +393,23 @@ async function makeWorkspace() {
   return { dir, workspaceRoot: await fs.realpath(workspaceRoot), dataDir };
 }
 
+async function makeGitWorkspace(t: TestContext) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-inline-isolated-"));
+  const workspaceRoot = path.join(dir, "workspace");
+  const dataDir = path.join(dir, "data");
+  await fs.mkdir(workspaceRoot);
+  await execFileAsync("git", ["init"], { cwd: workspaceRoot });
+  await execFileAsync("git", ["config", "user.name", "Consult Test"], { cwd: workspaceRoot });
+  await execFileAsync("git", ["config", "user.email", "consult@example.invalid"], {
+    cwd: workspaceRoot,
+  });
+  await fs.writeFile(path.join(workspaceRoot, "tracked.txt"), "base\n");
+  await execFileAsync("git", ["add", "tracked.txt"], { cwd: workspaceRoot });
+  await execFileAsync("git", ["commit", "-m", "initial"], { cwd: workspaceRoot });
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  return { dir, workspaceRoot: await fs.realpath(workspaceRoot), dataDir };
+}
+
 function withDataDir(t: TestContext, dataDir: string) {
   const originalDataDir = process.env.CONSULT_DATA_DIR;
   process.env.CONSULT_DATA_DIR = dataDir;
@@ -245,6 +418,18 @@ function withDataDir(t: TestContext, dataDir: string) {
       delete process.env.CONSULT_DATA_DIR;
     } else {
       process.env.CONSULT_DATA_DIR = originalDataDir;
+    }
+  });
+}
+
+function withEnv(t: TestContext, name: string, value: string) {
+  const original = process.env[name];
+  process.env[name] = value;
+  t.after(() => {
+    if (original === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = original;
     }
   });
 }

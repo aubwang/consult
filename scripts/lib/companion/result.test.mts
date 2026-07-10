@@ -70,7 +70,7 @@ test("result exits 2 for a malformed job record", async (t) => {
   assert.equal(result.stderr, `job record malformed: ${recordPath}\n`);
 });
 
-test("result json mode prints the full record with child job ids", async (t) => {
+test("result json mode prints the stable result envelope with child job ids", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeJob(workspaceRoot, {
@@ -93,13 +93,16 @@ test("result json mode prints the full record with child job ids", async (t) => 
   });
 
   assert.equal(result.exitCode, 0);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    jobId: "job-json",
-    status: "completed",
-    finalText: "json answer",
-    sessionId: "session-1",
-    childJobIds: ["job-child"],
-  });
+  const envelope = JSON.parse(result.stdout);
+  assert.equal(envelope.schemaVersion, 1);
+  assert.equal(envelope.job.id, "job-json");
+  assert.equal(envelope.job.status, "completed");
+  assert.equal(envelope.outcome.finalText, "json answer");
+  assert.equal(envelope.outcome.sessionId, "session-1");
+  assert.deepEqual(envelope.artifacts.touchedFiles, []);
+  assert.equal(envelope.artifacts.logPath.endsWith("/job-json.log"), true);
+  assert.deepEqual(envelope.lineage.childJobIds, ["job-child"]);
+  assert.equal("jobId" in envelope, false);
 });
 
 async function makeWorkspace() {

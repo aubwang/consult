@@ -7,15 +7,11 @@ Live conformance status for the implemented Consult Profiles.
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |
 | [claude](claude.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, **preventive**) | PASS | PASS (cooperative) | PASS (after iter-17 fix) | 2026-05-19 direct/Consult/bwrap proof PASS. Cancel works but is slower than codex. |
 | [opencode](opencode.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, defense-in-depth) | PASS | — | — | 2026-05-19 direct/Consult/bwrap proof PASS with provider auth configured. |
-| [gemini](gemini.md) | UNIT | — | — | — | — | — | — | — | Added as a registry Profile using Gemini CLI's native `gemini --acp`; live conformance pending local Gemini auth. |
-| [copilot](copilot.md) | PASS | PASS | — | — | — | PASS | — | — | 2026-05-22 direct and unsandboxed Consult delegate PASS with configured Copilot CLI auth. Sandbox not yet live-verified. |
 
 Legend:
 - **PASS**: live-verified end-to-end against the real backend.
-- **UNIT**: covered by unit tests, but not live-verified against the real backend in this conformance pass.
 - **AUTH-DEFERRED**: backend reachable but live delegate is intentionally out of
-  scope until a per-backend auth prerequisite is satisfied. No current backend
-  is auth-deferred after the 2026-05-22 Copilot rerun.
+  scope until a per-backend auth prerequisite is satisfied.
 - **—**: not exercised this pass; falls back to unit-test coverage where applicable.
 - **cooperative**: enforced via ACP `session/request_permission` going through `scripts/lib/permissions.mts`.
 - **backstop**: enforced via the broker's `isAutoApprovedPolicyViolation` check on `session/update` notifications. For backends that emit the tool_call BEFORE writing (claude), the backstop is preventive. For backends that emit AFTER writing (codex, opencode), it's defense-in-depth — the file may already be on disk before we see the update.
@@ -51,31 +47,16 @@ The `opencode` registry profile may require provider credentials from the host
 environment. In the live proof, no secret value was printed or persisted by
 Consult.
 
-The `gemini` registry profile mounts selected host `~/.gemini` auth/config files
-read-only into a writable sandbox `~/.gemini`: `settings.json`,
-`oauth_creds.json`, `GEMINI.md`, `mcp-oauth-tokens.json`, and
-`a2a-oauth-tokens.json` when present. Gemini runtime state such as `tmp`,
-`history`, and `projects.json` remains writable inside the sandbox. If
-`GOOGLE_APPLICATION_CREDENTIALS` points to a service-account JSON file, that file
-is mounted read-only at the same path for Vertex AI ADC flows.
-
 On 2026-05-19, release-readiness probes reran and passed direct CLI,
 unsandboxed Consult delegation, and `CONSULT_AGENT_SANDBOX=bwrap` Consult
 delegation for `claude`, `codex`, and `opencode`.
 
-On 2026-05-22, the Host Adapter path was live-verified for the primary
-supporter goal: `consult delegate --agent opencode` returned
+On 2026-05-22, Host autodetection was live-verified for the primary supporter
+goal: `consult delegate --agent opencode` returned
 `ok-codex-to-opencode-20260521`, and `consult delegate --agent claude`
 returned `ok-codex-to-claude-20260521`. The reciprocal opencode Host path also
 passed with `consult delegate --agent opencode` returning
 `ok-opencode-host-to-opencode-20260521`.
-
-On 2026-05-22, Copilot auth was refreshed through the installed Copilot CLI and
-the Copilot Profile was live-verified unsandboxed: direct `copilot -p` returned
-`ok-copilot-direct-20260522`, `consult delegate --agent copilot` returned
-`ok-codex-to-copilot-rerun-20260522`, and background delegate/result returned
-`ok-codex-to-copilot-bg-20260522`. Copilot sandbox comparison remains deferred
-until a Linux/bubblewrap environment is available.
 
 ## Resolved Risk: Parallel Broker-Test Flakiness
 
@@ -89,11 +70,12 @@ The broker-test harness now uses a per-harness broker session id and tears the b
 
 ## Broker disconnect recovery
 
-Foreground delegates now fail cleanly if the broker disconnects after accepting
-a job but before sending `consult/finalized`. The companion persists the Job as
-`failed` with `BROKER_DISCONNECTED` instead of waiting forever. Focused coverage
-lives in `scripts/lib/companion/delegate-core.test.mts`; stale broker
-teardown/respawn remains covered in `scripts/lib/broker-lifecycle.test.mts`.
+Background Broker Jobs fail cleanly if the broker disconnects after accepting a
+job but before sending `consult/finalized`. The worker persists the Job as
+`failed` with `BROKER_DISCONNECTED` instead of waiting forever. Foreground Jobs
+use the shared runtime inline. Focused coverage lives in
+`scripts/lib/companion/delegate-core.test.mts`; stale broker teardown/respawn
+remains covered in `scripts/lib/broker-lifecycle.test.mts`.
 
 ## Companion disconnect drill
 

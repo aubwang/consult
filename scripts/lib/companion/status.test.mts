@@ -146,7 +146,11 @@ test("status one-job mode includes direct child job ids", async (t) => {
   });
 
   assert.equal(result.exitCode, 0);
-  assert.deepEqual(JSON.parse(result.stdout).record.childJobIds, ["job-child"]);
+  const envelope = JSON.parse(result.stdout);
+  assert.equal(envelope.schemaVersion, 1);
+  assert.equal(envelope.job.id, "job-parent");
+  assert.deepEqual(envelope.lineage.childJobIds, ["job-child"]);
+  assert.deepEqual(envelope.logTail, []);
 });
 
 test("status json list mode emits one array line", async (t) => {
@@ -167,10 +171,14 @@ test("status json list mode emits one array line", async (t) => {
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.stdout.trim().split("\n").length, 1);
+  const envelope = JSON.parse(result.stdout);
+  assert.equal(envelope.schemaVersion, 1);
   assert.deepEqual(
-    (JSON.parse(result.stdout) as Array<{ jobId: string }>).map((record) => record.jobId),
+    (envelope.jobs as Array<{ job: { id: string } }>).map((record) => record.job.id),
     ["job-json"],
   );
+  assert.equal(envelope.jobs[0].job.status, "completed");
+  assert.deepEqual(envelope.jobs[0].artifacts.touchedFiles, []);
 });
 
 test("status wait exits with final state after polling a job to completion", async (t) => {

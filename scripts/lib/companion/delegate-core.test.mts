@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { PreparedIsolatedWorkspace } from "../isolated-workspace.mts";
 import { renderUpdate, runDelegateOnce, statusFromStopReason } from "./delegate-core.mts";
 
 test("renderUpdate passes agent message chunk text through unchanged", () => {
@@ -52,6 +53,100 @@ test("statusFromStopReason maps broker stop reasons to job statuses", () => {
   assert.equal(statusFromStopReason("failed"), "failed");
   // Unknown stop reasons intentionally fall through to completed status.
   assert.equal(statusFromStopReason("anything-unknown"), "completed");
+});
+
+test("runDelegateOnce can identify a non-delegate job kind", async () => {
+  const client = new FakeBrokerClient();
+  let stdout = "";
+  const resultPromise = runDelegateOnce({
+    workspaceRoot: "/tmp/consult-test-workspace",
+    profileEntry: {},
+    jobRecord: {
+      jobId: "job-review",
+      kind: "review",
+      mode: "read-only",
+      host: "terminal",
+      profile: "codex",
+      prompt: "review this",
+    },
+    kind: "review",
+    deps: {
+      ensureBrokerSession: async () => ({ client }),
+      appendLogLine: async () => {},
+      writeJobRecord: async () => {},
+    },
+    output: {
+      stdout(text) {
+        stdout += text;
+      },
+      stderr() {},
+      result(exitCode) {
+        return { exitCode, stdout, stderr: "" };
+      },
+    },
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  assert.equal(request.params.kind, "review");
+  client.notify("consult/finalized", {
+    jobId: "job-review",
+    stopReason: "end_turn",
+    sessionId: "session-review",
+  });
+  assert.equal((await resultPromise).exitCode, 0);
+  assert.equal(stdout, "consult review job-review completed\n");
+});
+
+test("runDelegateOnce cleans isolation and fails the job when artifact finalization fails", async () => {
+  const client = new FakeBrokerClient();
+  const prepared = isolatedFixture();
+  const records: Array<Record<string, unknown>> = [];
+  let cleanupCalls = 0;
+  const jobRecord = {
+    jobId: "job-isolation-failure",
+    kind: "delegate",
+    mode: "write",
+    host: "terminal",
+    hostSessionId: "terminal-1",
+    profile: "codex",
+    prompt: "change",
+    isolated: true,
+    isolatedWorkspace: prepared,
+  };
+  const resultPromise = runDelegateOnce({
+    workspaceRoot: prepared.workspaceRoot,
+    executionRoot: prepared.executionRoot,
+    profileEntry: {},
+    jobRecord,
+    isolatedWorkspace: prepared,
+    deps: {
+      ensureBrokerSession: async () => ({ client }),
+      appendLogLine: async () => {},
+      writeJobRecord: async (_workspaceRoot, _jobId, record) => {
+        records.push(structuredClone(record));
+      },
+      finalizeIsolatedWorkspace: async () => {
+        throw new Error("cannot create patch");
+      },
+      cleanupIsolatedWorkspace: async () => {
+        cleanupCalls += 1;
+      },
+    },
+    renderSummary: false,
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-isolation-failure",
+    stopReason: "end_turn",
+    sessionId: "session-isolation-failure",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 6);
+  assert.equal(cleanupCalls, 1);
+  assert.equal(records.at(-1)?.status, "failed");
+  assert.match(String(records.at(-1)?.errorMessage), /cannot create patch/);
 });
 
 test("runDelegateOnce persists finalized error messages for failed jobs", async () => {
@@ -191,4 +286,21 @@ class FakeBrokerClient {
       this.#requestResolvers.set(method, resolve);
     });
   }
+}
+
+function isolatedFixture(): PreparedIsolatedWorkspace {
+  return {
+    schemaVersion: 1,
+    jobId: "job-isolation-failure",
+    workspaceRoot: "/tmp/original-workspace",
+    executionRoot: "/tmp/isolated-worktree",
+    transactionRoot: "/tmp/isolated-transaction",
+    artifactsDir: "/tmp/isolated-transaction/artifacts",
+    cleanupMetadataPath: "/tmp/isolated-transaction/artifacts/cleanup.json",
+    headCommit: "a".repeat(40),
+    baselineTree: "b".repeat(40),
+    preparedAt: "2026-07-09T10:00:00.000Z",
+    maxBufferBytes: 1024,
+    seeded: { stagedPatchBytes: 0, unstagedPatchBytes: 0, untrackedFiles: [] },
+  };
 }

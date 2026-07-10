@@ -36,14 +36,139 @@ test("runCodexReview streams a codex review when review is advertised", async ()
 
   assert.equal(result.exitCode, 0);
   assert.equal((request.params as Record<string, unknown>).kind, "review");
-  assert.equal((request.params as Record<string, unknown>).prompt, "/review\n\ndiff text");
+  assert.match(
+    (request.params as Record<string, unknown>).prompt as string,
+    /^\/review\n\n--- BEGIN CONSULT PINNED GIT DIFF/,
+  );
+  assert.match((request.params as Record<string, unknown>).prompt as string, /diff text/);
+  assert.match(
+    (request.params as Record<string, unknown>).prompt as string,
+    /--- END CONSULT PINNED GIT DIFF ---$/,
+  );
   assert.equal((request.params as Record<string, unknown>).chainId, "job-review");
   assert.equal((request.params as Record<string, unknown>).parentJobId, null);
   assert.equal((request.params as Record<string, unknown>).delegationDepth, 0);
   assert.equal((writtenRecords.at(0) as Record<string, unknown>).chainId, "job-review");
   assert.equal((writtenRecords.at(0) as Record<string, unknown>).parentJobId, null);
   assert.equal((writtenRecords.at(0) as Record<string, unknown>).delegationDepth, 0);
-  assert.equal(result.stdout, "review output");
+  assert.equal((writtenRecords.at(0) as Record<string, unknown>).includeDiff, true);
+  assert.equal((writtenRecords.at(0) as Record<string, unknown>).prompt, "/review");
+  assert.equal(result.stdout, "review output\nconsult review job-review completed\n");
+});
+
+test("runCodexReview emits the versioned Job envelope with --json", async () => {
+  const client = new FakeBrokerClient();
+  const resultPromise = runCodexReview({
+    profile: "codex",
+    profileEntry: profileEntryFixture(),
+    workspaceRoot: process.cwd(),
+    host: "terminal",
+    hostSessionId: "default",
+    diff: "already pinned",
+    json: true,
+    deps: quietDeps({
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-review-json",
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/update", availableCommandsUpdate(["review"]));
+  client.notify("consult/update", agentTextUpdate("json review"));
+  client.notify("consult/finalized", {
+    jobId: "job-review-json",
+    stopReason: "end_turn",
+    sessionId: "session-review",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.schemaVersion, 1);
+  assert.equal(parsed.job.id, "job-review-json");
+  assert.equal(parsed.job.kind, "review");
+  assert.equal(parsed.outcome.finalText, "json review");
+});
+
+test("runCodexReview uses a supplied pinned snapshot without recapturing it", async () => {
+  const client = new FakeBrokerClient();
+  const resultPromise = runCodexReview({
+    profile: "codex",
+    profileEntry: profileEntryFixture(),
+    workspaceRoot: "/workspace",
+    host: "terminal",
+    hostSessionId: "default",
+    diff: "already pinned",
+    deps: quietDeps({
+      getDiff: async () => {
+        throw new Error("getDiff should not run");
+      },
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-review",
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/update", availableCommandsUpdate(["review"]));
+  client.notify("consult/finalized", {
+    jobId: "job-review",
+    stopReason: "end_turn",
+    sessionId: "session-review",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+});
+
+test("runCodexReview exits 6 when the review turn finalizes as failed", async () => {
+  const client = new FakeBrokerClient();
+  const resultPromise = runCodexReview({
+    profile: "codex",
+    profileEntry: profileEntryFixture(),
+    workspaceRoot: "/workspace",
+    host: "terminal",
+    hostSessionId: "default",
+    diff: "already pinned",
+    deps: quietDeps({
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-review-failed",
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/update", availableCommandsUpdate(["review"]));
+  client.notify("consult/finalized", {
+    jobId: "job-review-failed",
+    stopReason: "failed",
+    sessionId: "session-review",
+  });
+
+  assert.equal((await resultPromise).exitCode, 6);
+});
+
+test("runCodexReview returns a clean error when diff capture fails", async () => {
+  let generated = false;
+  const result = await runCodexReview({
+    profile: "codex",
+    profileEntry: profileEntryFixture(),
+    workspaceRoot: "/workspace",
+    host: "terminal",
+    hostSessionId: "default",
+    baseRef: "missing",
+    deps: quietDeps({
+      getDiff: async () => {
+        throw new Error("base ref is missing");
+      },
+      generateJobId: () => {
+        generated = true;
+        return "should-not-exist";
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /unable to capture pinned git diff/);
+  assert.equal(generated, false);
 });
 
 test("runCodexReview exits 8 and cancels the accepted job when the slash is not advertised", async () => {

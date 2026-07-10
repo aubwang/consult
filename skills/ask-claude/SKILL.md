@@ -1,6 +1,6 @@
 ---
 name: ask-claude
-description: Ask Claude Code through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Claude, ask Claude, get Claude's opinion, get a Claude review, or use Claude as a supporter.
+description: Ask the Claude Profile through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Claude, ask Claude, get Claude's opinion, get a Claude review, or use Claude as a supporter.
 metadata:
   "consult.disable-model-invocation": "true"
   "consult.argument-hint": What should Claude answer or review?
@@ -8,7 +8,7 @@ metadata:
 
 # Ask Claude Through Consult
 
-Use this skill when the user wants your host agent to ask Claude Code for an
+Use this skill when the user wants the current Host to ask the Claude Profile for an
 independent second opinion while staying inside the current Host conversation.
 
 Run Claude through Consult in read-only mode by default:
@@ -60,6 +60,9 @@ Review the current changes for bugs, regressions, missing tests, and risky
 assumptions. Prioritize actionable findings. Cite files/lines where possible.
 If you find no issues, say that clearly and note any residual risk.
 ```
+
+Prefer `consult review --agent claude [--base <ref>]` when the request is
+specifically about the current Git change; it pins the diff before delegation.
 
 For design questions, ask Claude to separate concrete risks from suggestions.
 For debugging questions, ask Claude for ranked hypotheses and what evidence

@@ -11,7 +11,10 @@ test("loadRegistry returns the shipped v1 registry entries", async () => {
   const registry = await loadRegistry();
 
   assert.equal(registry.schemaVersion, 1);
-  assert.equal(registry.agents.length, 5);
+  assert.deepEqual(
+    registry.agents.map((agent) => agent.id),
+    ["codex", "claude", "opencode"],
+  );
   for (const agent of registry.agents) {
     assert.equal(typeof agent.id, "string");
     assert.equal(typeof agent.label, "string");
@@ -33,20 +36,6 @@ test("loadRegistry returns the shipped v1 registry entries", async () => {
       assert.fail(`unknown install type: ${(agent.install as RegistryInstall).type}`);
     }
   }
-});
-
-test("Gemini registry entry uses the native ACP mode", async () => {
-  const registry = await loadRegistry();
-  const gemini = findRegistryEntry(registry, "gemini")!;
-
-  assert.equal(gemini.label, "Google Gemini CLI");
-  assert.equal(gemini.binary, "gemini");
-  assert.deepEqual(gemini.args, ["--acp"]);
-  assert.deepEqual(gemini.install, {
-    type: "npm",
-    cmd: "npm install -g @google/gemini-cli",
-  });
-  assert.deepEqual(gemini.supports, { resume: false, load: true });
 });
 
 test("Codex registry entry installs the current ACP shim", async () => {

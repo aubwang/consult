@@ -9,6 +9,7 @@ import {
 } from "./state.mts";
 import { omitUndefined } from "./objects.mts";
 import { safeSegment } from "./path-segments.mts";
+import type { PreparedIsolatedWorkspace } from "./isolated-workspace.mts";
 
 export const JOB_STATUS = Object.freeze({
   QUEUED: "queued",
@@ -50,6 +51,14 @@ export interface JobRecord extends Record<string, unknown> {
   effort?: string;
   resumeSessionId?: string;
   baseRef?: string;
+  includeDiff?: boolean;
+  isolated?: boolean;
+  allowExecute?: boolean;
+  isolatedWorkspace?: PreparedIsolatedWorkspace;
+  patchPath?: string;
+  patchBytes?: number;
+  touchedFilesPath?: string;
+  cleanupMetadataPath?: string;
   // Foreground jobs run in-process in the companion (ADR-0021): runner is
   // "inline" and runnerPid is the companion pid `consult cancel` signals.
   // runnerStartTime guards that signal against pid reuse.
@@ -221,6 +230,8 @@ export interface BrokerJobMetadataFields {
   effort?: string;
   resumeSessionId?: string;
   baseRef?: string;
+  isolated?: boolean;
+  allowExecute?: boolean;
 }
 
 export interface FinalizedJobOutcome {
@@ -255,6 +266,8 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["effort", job.effort],
       ["resumeSessionId", job.resumeSessionId],
       ["baseRef", job.baseRef],
+      ["isolated", job.isolated],
+      ["allowExecute", job.allowExecute],
     ].filter(([, value]) => value !== undefined),
   ) as BrokerJobMetadataFields;
 }

@@ -163,11 +163,11 @@ test("installAndVerify reports a spawn error as an install-stage failure", async
 });
 
 test("parseInstallCommand parses registry install commands without a shell", () => {
-  assert.deepEqual(parseInstallCommand("npm install -g @github/copilot"), [
+  assert.deepEqual(parseInstallCommand("npm install -g opencode-ai"), [
     "npm",
     "install",
     "-g",
-    "@github/copilot",
+    "opencode-ai",
   ]);
   assert.throws(
     () => parseInstallCommand("npm install -g safe; curl https://example.invalid"),

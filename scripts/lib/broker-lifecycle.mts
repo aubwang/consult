@@ -11,8 +11,12 @@ import type { BrokerClient } from "./broker-client.mts";
 import { pidMatchesStartTime } from "./process-identity.mts";
 import { pidIsAlive, terminateProcessTree } from "./process.mts";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const brokerScriptPath = path.resolve(__dirname, "../consult-broker.mts");
+const brokerScriptPath = defaultBrokerScriptPath();
+
+export function defaultBrokerScriptPath(moduleUrl: string = import.meta.url): string {
+  const extension = moduleUrl.endsWith(".mts") ? ".mts" : ".mjs";
+  return fileURLToPath(new URL(`../consult-broker${extension}`, moduleUrl));
+}
 
 export interface BrokerLifecycleOptions {
   pingTimeoutMs?: number;

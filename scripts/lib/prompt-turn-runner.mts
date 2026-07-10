@@ -11,6 +11,7 @@ import { ensureBrokerSession as defaultEnsureBrokerSession } from "./broker-life
 import { createNullOutput } from "./null-output.mts";
 import type { NullOutput, NullOutputResult } from "./null-output.mts";
 import { omitUndefined } from "./objects.mts";
+import { extractAgentMessageText } from "./session-update-renderer.mts";
 
 export interface PromptTurnBrokerClient {
   request(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -19,7 +20,10 @@ export interface PromptTurnBrokerClient {
 }
 
 export interface EnsureBrokerSessionInput {
+  /** Original Workspace identity used for Job/Broker state. */
   workspaceRoot: string;
+  /** Optional detached worktree used as the Profile's cwd and confinement root. */
+  executionRoot?: string;
   jobId?: string;
   host?: string;
   hostSessionId?: string;
@@ -75,6 +79,7 @@ export interface PromptTurnSuccess {
 
 export interface RunPromptTurnOptions {
   workspaceRoot: string;
+  executionRoot?: string;
   profileEntry: unknown;
   jobRecord: JobRecord;
   prompt?: string;
@@ -82,6 +87,7 @@ export interface RunPromptTurnOptions {
   deps?: PromptTurnDeps;
   output?: NullOutput;
   renderUpdate?: (notification: unknown) => string;
+  extractFinalText?: (notification: unknown) => string;
   onUpdate?: ((notification: unknown, context: PromptTurnContext) => void) | null;
   afterAccepted?:
     | ((input: AfterAcceptedInput) => Promise<NullOutputResult | null | undefined | void>)
@@ -96,6 +102,7 @@ interface BrokerErrorLike {
 
 export async function runPromptTurn({
   workspaceRoot,
+  executionRoot,
   profileEntry,
   jobRecord,
   prompt,
@@ -103,6 +110,7 @@ export async function runPromptTurn({
   deps = {},
   output = createNullOutput(),
   renderUpdate = () => "",
+  extractFinalText = extractAgentMessageText as (notification: unknown) => string,
   onUpdate = null,
   afterAccepted = null,
   markFailedOnBrokerError = false,
@@ -117,6 +125,7 @@ export async function runPromptTurn({
       input: EnsureBrokerSessionInput,
     ) => Promise<EnsureBrokerSessionResult>))({
     workspaceRoot,
+    executionRoot,
     jobId: jobRecord.jobId,
     host: jobRecord.host,
     hostSessionId: jobRecord.hostSessionId,
@@ -168,9 +177,12 @@ export async function runPromptTurn({
         markJobRunning(jobRecord, { now });
         await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord).catch(reportWriteFailure);
       }
+      const agentText = extractFinalText(notification);
+      if (agentText) {
+        finalText = appendBoundedText(finalText, agentText, { maxChars: maxFinalTextChars });
+      }
       const rendered = renderUpdate(notification);
       if (rendered) {
-        finalText = appendBoundedText(finalText, rendered, { maxChars: maxFinalTextChars });
         output.stdout(rendered);
       }
     });
@@ -214,6 +226,7 @@ export async function runPromptTurn({
       prompt: prompt ?? jobRecord.prompt,
       model: jobRecord.model,
       effort: jobRecord.effort,
+      allowExecute: jobRecord.allowExecute === true ? true : undefined,
       ...payloadFields,
     }));
   } catch (error) {

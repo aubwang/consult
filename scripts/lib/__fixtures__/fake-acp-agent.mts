@@ -264,17 +264,28 @@ function handleMessage(message: FakeAgentMessage): void {
     if (scenario === "prompt-pre-resolve-update") {
       writeUpdate(message.params.sessionId, "before-response");
     }
-    if (scenario === "prompt-permission-edit") {
+    if (scenario === "prompt-permission-edit" || scenario === "prompt-permission-execute") {
+      const kind = scenario === "prompt-permission-execute" ? "execute" : "edit";
       callClient("session/request_permission", {
         sessionId: message.params.sessionId,
         options: permissionOptions(),
         toolCall: {
           toolCallId: "call-1",
-          kind: "edit",
-          rawInput: { path: targetPath ?? "inside.txt" },
+          kind,
+          rawInput:
+            kind === "execute"
+              ? { command: "pwd", cwd: targetPath ?? "." }
+              : { path: targetPath ?? "inside.txt" },
         },
       }, (response) => {
         logClientObservation("session/request_permission", response);
+        if (kind === "execute") {
+          const result = response.result as { outcome?: { optionId?: string } } | undefined;
+          writeUpdate(
+            message.params.sessionId,
+            result?.outcome?.optionId === "allow" ? "allow" : "reject",
+          );
+        }
         writeMessage({
           jsonrpc: "2.0",
           id: message.id,

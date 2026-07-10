@@ -11,6 +11,7 @@ import { createFsHandlers } from "./fs-handlers.mts";
 import type { FsHandlerMode } from "./fs-handlers.mts";
 import { decidePermission } from "./permissions.mts";
 import type { PermissionMode } from "./permissions.mts";
+import { normalizeAgentSandbox } from "./process-sandbox.mts";
 import { applySessionControls, openResumedSession } from "./session-controls.mts";
 import type { BrokerJob, BrokerSessionUpdate } from "./broker-job-runtime.mts";
 
@@ -28,6 +29,7 @@ export type AgentSessionState =
 export interface JobAgentRuntimeHooks {
   handleSessionUpdate(params: { sessionId: string; update: BrokerSessionUpdate }): Promise<void>;
   getSessionMode(sessionId: string): string | undefined;
+  getSessionAllowExecute(sessionId: string): boolean;
   notePermissionDecision(params: {
     sessionId: string;
     decision: { allowed: boolean; reason?: string };
@@ -40,6 +42,7 @@ export interface StartJobAgentOptions {
   args?: string[];
   env?: NodeJS.ProcessEnv;
   cwd: string;
+  stateWorkspaceRoot?: string;
   mode?: string;
   sandbox?: string;
   profileRegistryId?: string;
@@ -52,12 +55,14 @@ export async function startJobAgent({
   args = [],
   env = {},
   cwd,
+  stateWorkspaceRoot = cwd,
   mode = "read-only",
   sandbox = "off",
   profileRegistryId,
   jobId = null,
   runtime,
 }: StartJobAgentOptions): Promise<StartedAgent> {
+  const sandboxMode = normalizeAgentSandbox(sandbox);
   return await startAgent({
     binary,
     args,
@@ -66,12 +71,12 @@ export async function startJobAgent({
       // Propagate delegation lineage so a delegated agent cannot escape its
       // ceiling by omitting --parent-job.
       ...(jobId ? { CONSULT_PARENT_JOB: jobId } : {}),
-      CONSULT_WORKSPACE: cwd,
+      CONSULT_WORKSPACE: stateWorkspaceRoot,
     },
     cwd,
     workspaceRoot: cwd,
     mode,
-    sandbox,
+    sandbox: sandboxMode,
     profileRegistryId,
     clientHandlers: {
       sessionUpdate: async ({ sessionId, update }) =>
@@ -81,6 +86,8 @@ export async function startJobAgent({
           request,
           mode: (runtime.getSessionMode(sessionId) ?? "read-only") as PermissionMode,
           workspaceRoot: cwd,
+          allowExecute: runtime.getSessionAllowExecute(sessionId),
+          sandbox: sandboxMode,
         });
         runtime.notePermissionDecision({ sessionId, decision, request });
         return permissionResponse(decision, request.options);
@@ -192,6 +199,7 @@ export function hashRunPayload(params: ConsultRunParams): string {
         resume: params.resume ?? null,
         model: params.model ?? null,
         effort: params.effort ?? null,
+        allowExecute: params.allowExecute === true,
       }),
     )
     .digest("hex");
