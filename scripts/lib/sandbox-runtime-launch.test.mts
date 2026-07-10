@@ -64,7 +64,7 @@ test("confined launch stages minimal Codex state, sanitizes env, and removes Job
     assert.equal(lease.launch.env.CONSULT_PARENT_JOB, "parent-job");
     assert.equal(lease.launch.env.HOME, lease.launch.env.CODEX_HOME?.replace(/\/\.codex$/u, ""));
     assert.ok(
-      lease.launch.args[1].includes(`http://consult:${TOKEN}@localhost:3128`),
+      lease.launch.args[1].includes(`http://consult:${TOKEN}@127.0.0.1:3128`),
     );
     assert.match(harness.commands[0], /argument with spaces/u);
 
