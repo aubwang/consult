@@ -89,6 +89,9 @@ consult doctor --agent codex
   exact Profile preflight; a failed preflight creates no Job.
 - `consult doctor` runs that live preflight: it briefly stages the selected
   credential and initializes/disposes the Profile, but sends no model prompt.
+- Confined Claude on macOS needs a supported token environment variable or a
+  stageable `.claude/.credentials.json`. Consult does not broker a Keychain-only
+  Claude login; surface the Doctor failure instead of retrying with inheritance.
 - Use `--include-diff` or `review` when the Profile needs an immutable snapshot
   of current changes.
 - When edits are explicitly requested, prefer `--write --isolated`; Consult

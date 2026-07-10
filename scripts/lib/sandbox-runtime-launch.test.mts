@@ -78,6 +78,8 @@ test("confined launch stages minimal Codex state, sanitizes env, and removes Job
         entry.includes("/node_modules/@anthropic-ai/sandbox-runtime")),
     );
     assert.ok(harness.configs[0].filesystem.allowRead.includes(path.join(stagedHome, "..", "bin")));
+    assert.ok(harness.configs[0].filesystem.allowRead.includes(stagedHome));
+    assert.ok(harness.configs[0].filesystem.allowRead.includes(lease.launch.env.TMPDIR));
     assert.ok(harness.configs[0].filesystem.allowRead.includes("/bin"));
     assert.ok(harness.configs[0].filesystem.allowRead.includes(fs.realpathSync("/bin")));
     assert.equal(
@@ -250,6 +252,42 @@ test("confined preflight fails closed without an exact Profile launch", async (t
   if (!result.ok) {
     assert.equal(result.diagnostic.code, "AUTHORITY_COMBINATION_UNSUPPORTED");
     assert.match(result.diagnostic.message, /exact 'codex' Profile launch/u);
+  }
+});
+
+test("confined preflight reports stable nested sandbox diagnostics without relaying Profile stderr", async (t) => {
+  const fixture = await makeFixture(t);
+  for (const [stderr, expected] of [
+    [
+      "sandbox-exec: sandbox_apply: Operation not permitted\nsecret-profile-output",
+      /nested macOS sandbox initialization failed/u,
+    ],
+    [
+      "bwrap: Creating new namespace failed: Operation not permitted\nsecret-profile-output",
+      /nested Linux sandbox initialization failed/u,
+    ],
+  ] as const) {
+    const error = Object.assign(new Error("Agent exited before initialize completed"), {
+      stderr,
+    });
+    const result = await probeConfinedSandboxRuntime({
+      authority: authority(),
+      workspaceRoot: fixture.workspace,
+      profile: "codex",
+      profileRegistryId: "codex",
+      profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+    }, {
+      platform: "linux",
+      startAgent: async () => {
+        throw error;
+      },
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.diagnostic.message, expected);
+      assert.doesNotMatch(result.diagnostic.message, /secret-profile-output/u);
+    }
   }
 });
 

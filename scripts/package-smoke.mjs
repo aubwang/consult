@@ -201,6 +201,8 @@ async function assertInstalledConfinedDoctor(binary, temporaryRoot, installer) {
     fs.mkdir(workspace, { recursive: true }),
     fs.mkdir(data, { recursive: true }),
     fs.mkdir(codexHome, { recursive: true }),
+    fs.mkdir(path.join(home, ".npm", "_logs"), { recursive: true }),
+    fs.mkdir(path.join(home, ".claude", "debug"), { recursive: true }),
     fs.mkdir(fakeBin, { recursive: true }),
   ]);
   await run("git", ["init"], { cwd: workspace });
@@ -213,6 +215,8 @@ async function assertInstalledConfinedDoctor(binary, temporaryRoot, installer) {
       'import readline from "node:readline";',
       'import fs from "node:fs/promises";',
       'import net from "node:net";',
+      'const stagedAuth = await fs.readFile(`${process.env.CODEX_HOME}/auth.json`, "utf8");',
+      'if (stagedAuth.trim() !== "{}") process.exit(44);',
       `try { await fs.readFile(${JSON.stringify(hostReadCanary)}); process.exit(41); } catch {}`,
       `try { await fs.writeFile(${JSON.stringify(hostWriteCanary)}, "sandbox-local"); } catch {}`,
       "const directLoopback = await new Promise((resolve) => {",

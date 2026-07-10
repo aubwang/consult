@@ -18,7 +18,7 @@ const NO_PROXY =
 test("tightens the pinned Linux artifact without changing its outer launch", () => {
   const source = [
     "bwrap --new-session --die-with-parent --unshare-net",
-    "--setenv TMPDIR /tmp/claude",
+    "--setenv TMPDIR /host/custom-tmp",
     `--setenv NO_PROXY ${NO_PROXY}`,
     `--setenv no_proxy ${NO_PROXY}`,
     "--setenv HTTP_PROXY http://localhost:3128",
@@ -93,13 +93,24 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
 
 test("tightens the pinned macOS profile rules and proxy environment", () => {
   const tag = "CMD64_dGVzdA==_END__fixed_SBX";
-  const rules = ["/tmp/claude", "/private/tmp/claude"].flatMap((path) => [
+  const rules = [
+    // macOS canonicalizes both SRT temp defaults to /private/tmp/claude.
+    "/private/tmp/claude",
+    "/private/tmp/claude",
+    "/dev/stdout",
+    "/dev/stderr",
+    "/dev/null",
+    "/dev/tty",
+    "/dev/dtracehelper",
+    "/dev/autofs_nowait",
+    "/Users/me/.claude/debug",
+  ].flatMap((path) => [
     `(allow file-write-unlink\n  (subpath "${path}")\n  (with message "${tag}"))`,
     `(allow file-write-create\n  (subpath "${path}")\n  (with message "${tag}"))`,
     `(allow file-write*\n  (subpath "${path}")\n  (with message "${tag}"))`,
   ]);
   const source = [
-    `env TMPDIR=/tmp/claude NO_PROXY=${NO_PROXY} no_proxy=${NO_PROXY}`,
+    `env TMPDIR=/host/custom-tmp NO_PROXY=${NO_PROXY} no_proxy=${NO_PROXY}`,
     "HTTP_PROXY=http://localhost:41001 HTTPS_PROXY=http://localhost:41001",
     "http_proxy=http://localhost:41001 https_proxy=http://localhost:41001",
     "ALL_PROXY=http://localhost:41001 all_proxy=http://localhost:41001",
@@ -111,6 +122,9 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
     "; File read",
     "; File write",
     ...rules,
+    `(deny file-write-unlink\n  (subpath "/Users/me/.claude/debug")\n  (with message "${tag}"))`,
+    `(deny file-write-create\n  (subpath "/Users/me/.claude/debug")\n  (with message "${tag}"))`,
+    `(deny file-write*\n  (subpath "/Users/me/.claude/debug")\n  (with message "${tag}"))`,
     "' /bin/zsh -c agent",
   ].join("\n");
   const input = {
@@ -121,7 +135,11 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
     proxyToken: TOKEN,
     externalHttpPort: 41001,
     externalSocksPort: 41002,
-    sharedDefaultWritePaths: ["/tmp/claude", "/private/tmp/claude"],
+    sharedDefaultWritePaths: [
+      "/tmp/claude",
+      "/private/tmp/claude",
+      "/Users/me/.claude/debug",
+    ],
     allowedWritePaths: [
       "/private/tmp/consult-job/home",
       "/private/tmp/consult-job/temporary",
@@ -135,6 +153,14 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
   assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@localhost:41002`, "u"));
   assert.doesNotMatch(transformed.argv[2], /subpath "\/tmp\/claude"/u);
   assert.doesNotMatch(transformed.argv[2], /subpath "\/private\/tmp\/claude"/u);
+  assert.doesNotMatch(
+    transformed.argv[2],
+    /\(allow file-write[^\n]*\n  \(subpath "\/Users\/me\/\.claude\/debug"\)/u,
+  );
+  assert.match(
+    transformed.argv[2],
+    /\(deny file-write\*\n  \(subpath "\/Users\/me\/\.claude\/debug"\)/u,
+  );
   const unexpectedRule = `(allow file-write*\n  (subpath "/etc")\n  (with message "${tag}"))`;
   assert.throws(
     () =>
@@ -190,4 +216,57 @@ test("shared write-path snapshots include raw and canonical symlink targets", (t
   const snapshot = snapshotSandboxRuntimeSharedWritePaths([link]);
   assert.equal(snapshot.includes(link), true);
   assert.equal(snapshot.includes(fs.realpathSync(target)), true);
+});
+
+test("accepts absolute macOS write paths containing spaces and Unicode", () => {
+  const tag = "CMD64_dGVzdA==_END__fixed_SBX";
+  const workspace = "/Users/me/My Projects/consult-é";
+  const rules = [
+    "/private/tmp/claude",
+    "/private/tmp/claude",
+    "/dev/stdout",
+    "/dev/stderr",
+    "/dev/null",
+    "/dev/tty",
+    "/dev/dtracehelper",
+    "/dev/autofs_nowait",
+    workspace,
+  ].flatMap((entry) => [
+    `(allow file-write-unlink\n  (subpath "${entry}")\n  (with message "${tag}"))`,
+    `(allow file-write-create\n  (subpath "${entry}")\n  (with message "${tag}"))`,
+    `(allow file-write*\n  (subpath "${entry}")\n  (with message "${tag}"))`,
+  ]);
+  const source = [
+    `env TMPDIR=/tmp/claude NO_PROXY=${NO_PROXY} no_proxy=${NO_PROXY}`,
+    "HTTP_PROXY=http://localhost:41001 HTTPS_PROXY=http://localhost:41001",
+    "http_proxy=http://localhost:41001 https_proxy=http://localhost:41001",
+    "ALL_PROXY=http://localhost:41001 all_proxy=http://localhost:41001",
+    "FTP_PROXY=socks5h://localhost:41002 ftp_proxy=socks5h://localhost:41002",
+    "/usr/bin/sandbox-exec -p '(version 1)",
+    `(deny default (with message "${tag}"))`,
+    `(allow network-outbound (remote ip "localhost:41001"))`,
+    `(allow network-outbound (remote ip "localhost:41002"))`,
+    "; File read",
+    "; File write",
+    ...rules,
+    "' /bin/zsh -c agent",
+  ].join("\n");
+
+  const transformed = transformSandboxRuntimeLaunch({
+    launch: { argv: ["/bin/zsh", "-c", source], env: {} },
+    platform: "darwin",
+    runtimeVersion: SANDBOX_RUNTIME_VERSION,
+    jobTempDir: "/private/tmp/consult-job/temporary",
+    proxyToken: TOKEN,
+    externalHttpPort: 41001,
+    externalSocksPort: 41002,
+    sharedDefaultWritePaths: ["/tmp/claude", "/private/tmp/claude"],
+    allowedWritePaths: [
+      "/private/tmp/consult-job/home",
+      "/private/tmp/consult-job/temporary",
+      workspace,
+    ],
+  });
+
+  assert.match(transformed.argv[2], /My Projects\/consult-é/u);
 });

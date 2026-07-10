@@ -50,7 +50,7 @@ Consult ships three Profile definitions:
 
 | Profile | Agent executable | Authentication | Job Authority |
 | --- | --- | --- | --- |
-| `claude` | `claude-agent-acp` | Uses Claude Code credentials or one supported token variable. | Confined after per-context preflight. |
+| `claude` | `claude-agent-acp` | Uses a stageable credentials file or one supported token variable. Keychain-only macOS login is not staged. | Confined after per-context preflight. |
 | `codex` | `codex-acp` | Uses the underlying Codex CLI authentication. | Confined after per-context preflight. |
 | `opencode` | `opencode acp` | Uses configured opencode provider credentials. | Explicit inheritance only. |
 
@@ -142,6 +142,12 @@ credential, opens the confined proxy, starts the Profile, and disposes it. It
 does not send a model prompt. Confined launch does not copy Codex
 `config.toml` or Claude `settings.json`; pass `--model` explicitly when Host
 config controls the desired model/provider behavior.
+
+Consult deliberately does not broker the macOS Keychain. Confined Claude on
+macOS therefore requires a supported token variable (`ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, or `CLAUDE_CODE_OAUTH_TOKEN`) in the Host environment,
+or a stageable `.claude/.credentials.json`; a Keychain-only Claude login is not
+sufficient for the private Job home.
 
 `--allow-exec` remains unavailable while execute-specific resource limits and
 cross-Profile conformance are incomplete.

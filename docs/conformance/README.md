@@ -103,6 +103,11 @@ ambient-authority escape hatch and is never an automatic retry. The opencode
 and custom Profile paths currently require inheritance; native Windows and
 confined nesting are unsupported.
 
+On macOS, Claude conformance requires a supported token environment variable or
+a stageable `.claude/.credentials.json`. A Keychain-only Claude login is not a
+valid confined test prerequisite because Consult does not broker Keychain
+credentials.
+
 The older `CONSULT_AGENT_SANDBOX=bwrap` results below remain historical
 conformance evidence for the legacy backend, not the current default contract.
 On 2026-05-19 those probes passed direct CLI, unsandboxed Consult delegation,
