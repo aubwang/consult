@@ -124,6 +124,7 @@ function transformLinuxPolicy(
     }
     tightened.push(words[index]);
   }
+  relocateLinuxProxySocketBinds(tightened);
   replaceSetenvExactlyOnce(tightened, "TMPDIR", "/tmp/claude", jobTempDir);
   replaceSetenvExactlyOnce(tightened, "NO_PROXY", DEFAULT_NO_PROXY, "");
   replaceSetenvExactlyOnce(tightened, "no_proxy", DEFAULT_NO_PROXY, "");
@@ -148,6 +149,43 @@ function transformLinuxPolicy(
     }
   }
   return quoteShellWords(authenticated);
+}
+
+function relocateLinuxProxySocketBinds(words: string[]): void {
+  const socketPattern = /^\/tmp\/claude-(http|socks)-[0-9a-f]{16}\.sock$/u;
+  const socketBinds: string[][] = [];
+  const retained: string[] = [];
+  const kinds = new Set<string>();
+
+  for (let index = 0; index < words.length; index += 1) {
+    const socketMatch = socketPattern.exec(words[index + 1] ?? "");
+    if (
+      words[index] === "--bind" &&
+      socketMatch &&
+      words[index + 1] === words[index + 2]
+    ) {
+      socketBinds.push(words.slice(index, index + 3));
+      kinds.add(socketMatch[1]);
+      index += 2;
+      continue;
+    }
+    retained.push(words[index]);
+  }
+
+  if (socketBinds.length !== 2 || kinds.size !== 2) {
+    throw policyShapeError("Linux proxy socket binds do not match the pinned shape");
+  }
+  const tmpfsIndexes: number[] = [];
+  for (let index = 0; index < retained.length - 1; index += 1) {
+    if (retained[index] === "--tmpfs" && retained[index + 1] === "/tmp") {
+      tmpfsIndexes.push(index);
+    }
+  }
+  if (tmpfsIndexes.length !== 1) {
+    throw policyShapeError("Linux /tmp mount does not match the pinned shape");
+  }
+  retained.splice(tmpfsIndexes[0] + 2, 0, ...socketBinds.flat());
+  words.splice(0, words.length, ...retained);
 }
 
 function transformMacosPolicy(

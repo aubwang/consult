@@ -26,7 +26,10 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { buildAgentLaunch } from "./process-sandbox.mts";
-import { terminateProcessGroup } from "./process.mts";
+import type { AgentLaunch, AgentLaunchOptions } from "./process-sandbox.mts";
+import { terminateProcessGroup as defaultTerminateProcessGroup } from "./process.mts";
+
+export const MAX_AGENT_STDERR_BYTES = 64 * 1024;
 
 // Some older ACP agents only expose resume through the unstable method name.
 export type AcpConnection = ClientSideConnection & {
@@ -64,6 +67,20 @@ export interface StartAgentOptions {
   workspaceRoot?: string;
   mode?: string;
   profileRegistryId?: string;
+}
+
+export interface AgentLaunchLease {
+  launch: AgentLaunch;
+  release(): Promise<void>;
+}
+
+export type AcquireAgentLaunch = (
+  options: AgentLaunchOptions,
+) => Promise<AgentLaunchLease>;
+
+export interface StartAgentDeps {
+  acquireLaunch?: AcquireAgentLaunch;
+  terminateProcessGroup?: typeof defaultTerminateProcessGroup;
 }
 
 export interface StartedAgent {
@@ -208,20 +225,23 @@ export async function* promptTurn(
   }
 }
 
-export async function startAgent({
-  binary,
-  args = [],
-  env = {},
-  cwd,
-  clientHandlers = {},
-  initTimeoutMs = 5000,
-  sandbox = "off",
-  workspaceRoot = cwd,
-  mode = "read-only",
-  profileRegistryId,
-}: StartAgentOptions): Promise<StartedAgent> {
+export async function startAgent(
+  {
+    binary,
+    args = [],
+    env = {},
+    cwd,
+    clientHandlers = {},
+    initTimeoutMs = 5000,
+    sandbox = "off",
+    workspaceRoot = cwd,
+    mode = "read-only",
+    profileRegistryId,
+  }: StartAgentOptions,
+  deps: StartAgentDeps = {},
+): Promise<StartedAgent> {
   const sessionUpdateState: SessionUpdateState = { queues: new Map() };
-  const launch = buildAgentLaunch({
+  const lease = await (deps.acquireLaunch ?? acquireLegacyAgentLaunch)({
     binary,
     args,
     cwd,
@@ -231,19 +251,34 @@ export async function startAgent({
     sandbox,
     profileRegistryId,
   });
-  const agentChild = spawn(launch.binary, launch.args, {
-    cwd: launch.cwd,
-    env: launch.env,
-    detached: process.platform !== "win32",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const { launch } = lease;
+  let releasePromise: Promise<void> | undefined;
+  const releaseLease = (): Promise<void> => {
+    releasePromise ??= lease.release();
+    return releasePromise;
+  };
+  let agentChild: ChildProcessByStdio<Writable, Readable, Readable>;
+  try {
+    agentChild = spawn(launch.binary, launch.args, {
+      cwd: launch.cwd,
+      env: launch.env,
+      detached: process.platform !== "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (error) {
+    try {
+      await releaseLease();
+    } catch (cleanupError) {
+      noteCleanupFailure(error, cleanupError);
+    }
+    throw error;
+  }
   const processGroupId = process.platform === "win32" ? undefined : agentChild.pid;
   let alive = true;
-  let stderr = "";
+  let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
-  agentChild.stderr.setEncoding("utf8");
-  agentChild.stderr.on("data", (chunk) => {
-    stderr += chunk;
+  agentChild.stderr.on("data", (chunk: Buffer | string) => {
+    stderr = appendStderrTail(stderr, chunk);
   });
   const stderrClosedPromise = new Promise((resolve) => {
     agentChild.stderr.once("close", resolve);
@@ -262,25 +297,24 @@ export async function startAgent({
     });
   });
 
-  const stream = ndJsonStream(
-    Writable.toWeb(agentChild.stdin),
-    Readable.toWeb(agentChild.stdout) as ReadableStream<Uint8Array>,
-  );
-  const connection = new ClientSideConnection(
-    () => buildClient(clientHandlers, sessionUpdateState),
-    stream,
-  );
-  sessionUpdateStates.set(connection, sessionUpdateState);
   let timeoutId: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      const error = agentInitError("AGENT_INIT_TIMEOUT", stderr);
-      reject(error);
-    }, initTimeoutMs);
-  });
-
-  let capabilities: InitializeResponse;
+  let disposePromise: Promise<void> | undefined;
   try {
+    const stream = ndJsonStream(
+      Writable.toWeb(agentChild.stdin),
+      Readable.toWeb(agentChild.stdout) as ReadableStream<Uint8Array>,
+    );
+    const connection = new ClientSideConnection(
+      () => buildClient(clientHandlers, sessionUpdateState),
+      stream,
+    );
+    sessionUpdateStates.set(connection, sessionUpdateState);
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        const error = agentInitError("AGENT_INIT_TIMEOUT", stderr.toString("utf8"));
+        reject(error);
+      }, initTimeoutMs);
+    });
     const initializePromise = connection
       .initialize({
         protocolVersion: PROTOCOL_VERSION,
@@ -297,62 +331,114 @@ export async function startAgent({
         }
         if (!alive) {
           await Promise.race([stderrClosedPromise, delay(50)]);
-          throw agentInitError("AGENT_INIT_FAILED", stderr);
+          throw agentInitError("AGENT_INIT_FAILED", stderr.toString("utf8"));
         }
         throw error;
       });
 
+    const capabilities = await Promise.race([
+      initializePromise,
+      exitPromise.then(async () => {
+        await Promise.race([stderrClosedPromise, delay(50)]);
+        throw agentInitError("AGENT_INIT_FAILED", stderr.toString("utf8"));
+      }),
+      spawnErrorPromise.then((error) => {
+        throw agentInitError(
+          "AGENT_INIT_FAILED",
+          stderr.length > 0 ? stderr.toString("utf8") : error.message,
+        );
+      }),
+      timeoutPromise,
+    ]);
+
+    return {
+      connection,
+      capabilities,
+      agentChild,
+      dispose: async () => await disposeAgentChild(true),
+    };
+  } catch (error) {
     try {
-      capabilities = await Promise.race([
-        initializePromise,
-        exitPromise.then(async () => {
-          await Promise.race([stderrClosedPromise, delay(50)]);
-          throw agentInitError("AGENT_INIT_FAILED", stderr);
-        }),
-        spawnErrorPromise.then((error) => {
-          throw agentInitError("AGENT_INIT_FAILED", stderr || error.message);
-        }),
-        timeoutPromise,
-      ]);
-    } catch (error) {
       await disposeAgentChild(false);
-      throw error;
+    } catch (cleanupError) {
+      noteCleanupFailure(error, cleanupError);
     }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
 
-  return {
-    connection,
-    capabilities,
-    agentChild,
-    dispose: async () => await disposeAgentChild(true),
-  };
-
   async function disposeAgentChild(graceful: boolean): Promise<void> {
-    if (agentChild.pid === undefined) {
-      agentChild.stdin.destroy();
-      return;
-    }
-    if (graceful && !agentChild.stdin.destroyed) {
-      agentChild.stdin.end();
-      await waitForExit(agentChild, 250);
-    }
-    if (processGroupId !== undefined) {
-      await terminateProcessGroup(processGroupId, {
-        timeoutMs: DISPOSE_SIGTERM_TIMEOUT_MS,
-      });
-    } else {
-      if (alive) {
-        agentChild.kill();
-        await waitForExit(agentChild, DISPOSE_SIGTERM_TIMEOUT_MS);
+    disposePromise ??= (async () => {
+      let processTerminated = agentChild.pid === undefined;
+      try {
+        if (agentChild.pid === undefined) {
+          agentChild.stdin.destroy();
+          return;
+        }
+        if (graceful && !agentChild.stdin.destroyed) {
+          agentChild.stdin.end();
+          await waitForExit(agentChild, 250);
+        }
+        if (processGroupId !== undefined) {
+          await (deps.terminateProcessGroup ?? defaultTerminateProcessGroup)(processGroupId, {
+            timeoutMs: DISPOSE_SIGTERM_TIMEOUT_MS,
+          });
+        } else {
+          if (alive) {
+            agentChild.kill();
+            await waitForExit(agentChild, DISPOSE_SIGTERM_TIMEOUT_MS);
+          }
+          if (alive) {
+            agentChild.kill("SIGKILL");
+          }
+        }
+        await onceExit(agentChild);
+        processTerminated = true;
+      } finally {
+        if (processTerminated) {
+          await releaseLease();
+        }
       }
-      if (alive) {
-        agentChild.kill("SIGKILL");
-      }
-    }
-    await onceExit(agentChild);
+    })();
+    await disposePromise;
   }
+
+}
+
+function appendStderrTail(
+  current: Buffer<ArrayBufferLike>,
+  chunk: Buffer<ArrayBufferLike> | string,
+): Buffer<ArrayBufferLike> {
+  const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  if (incoming.length >= MAX_AGENT_STDERR_BYTES) {
+    return incoming.subarray(incoming.length - MAX_AGENT_STDERR_BYTES);
+  }
+  if (current.length + incoming.length <= MAX_AGENT_STDERR_BYTES) {
+    return Buffer.concat([current, incoming]);
+  }
+  const keep = MAX_AGENT_STDERR_BYTES - incoming.length;
+  return Buffer.concat([current.subarray(current.length - keep), incoming]);
+}
+
+async function acquireLegacyAgentLaunch(
+  options: AgentLaunchOptions,
+): Promise<AgentLaunchLease> {
+  return {
+    launch: buildAgentLaunch(options),
+    release: async () => {},
+  };
+}
+
+function noteCleanupFailure(primary: unknown, cleanup: unknown): void {
+  if (!(primary instanceof Error)) {
+    return;
+  }
+  Object.defineProperty(primary, "cleanupError", {
+    configurable: true,
+    enumerable: false,
+    value: cleanup,
+  });
 }
 
 function buildClient(clientHandlers: ClientHandlers, sessionUpdateState: SessionUpdateState): Client {

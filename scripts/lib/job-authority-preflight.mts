@@ -13,6 +13,12 @@ export interface JobAuthorityPreflightInput {
   /** Built-in Profile identity; configured aliases remain user-facing `profile`. */
   profileRegistryId?: string;
   profile: string;
+  /** Exact configured Profile launch checked before a confined Job is persisted. */
+  profileLaunch?: {
+    binary: string;
+    args: string[];
+    env: Record<string, string>;
+  };
 }
 
 export type JobAuthorityPreflightResult =

@@ -70,6 +70,11 @@ if (envLogPath) {
   );
 }
 
+if (mode === "exit-stderr-flood") {
+  fs.writeSync(2, `discarded-prefix\n${"x".repeat(96 * 1024)}retained-suffix\n`);
+  process.exit(1);
+}
+
 if (mode === "exit") {
   fs.writeSync(2, "boom\n");
   process.exit(1);

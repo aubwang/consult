@@ -32,6 +32,8 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
     "--setenv CLAUDE_CODE_HOST_HTTP_PROXY_PORT 41001",
     "--setenv CLAUDE_CODE_HOST_SOCKS_PROXY_PORT 41002",
     "--ro-bind / /",
+    "--bind /tmp/claude-http-0123456789abcdef.sock /tmp/claude-http-0123456789abcdef.sock",
+    "--bind /tmp/claude-socks-fedcba9876543210.sock /tmp/claude-socks-fedcba9876543210.sock",
     "--bind /tmp/claude /tmp/claude",
     "--bind /var/tmp/shared-target /var/tmp/shared-target",
     "--tmpfs /tmp",
@@ -62,6 +64,10 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
   assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@localhost:1080`, "u"));
   assert.doesNotMatch(transformed.argv[2], /--bind \/tmp\/claude \/tmp\/claude/u);
   assert.doesNotMatch(transformed.argv[2], /--bind \/var\/tmp\/shared-target/u);
+  assert.ok(
+    transformed.argv[2].indexOf("--tmpfs /tmp") <
+      transformed.argv[2].indexOf("--bind /tmp/claude-http-0123456789abcdef.sock"),
+  );
 });
 
 test("tightens the pinned macOS profile rules and proxy environment", () => {

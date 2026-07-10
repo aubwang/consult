@@ -19,6 +19,7 @@ import type {
   JobAuthorityPreflightInput,
   JobAuthorityPreflightResult,
 } from "../job-authority-preflight.mts";
+import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
 import type { ProfileRecord, ProfilesData } from "../profiles.mts";
 import { findRegistryEntry, loadRegistry as defaultLoadRegistry } from "../registry.mts";
 import type { Registry } from "../registry.mts";
@@ -109,12 +110,22 @@ export async function runReview({
 
   const preflight = await (
     deps.preflightAuthority ??
-    ((input: JobAuthorityPreflightInput) => defaultPreflightJobAuthority(input))
+    ((input: JobAuthorityPreflightInput) =>
+      defaultPreflightJobAuthority(input, {
+        probeConfined: probeConfinedSandboxRuntime,
+      }))
   )({
     authority,
     workspaceRoot,
     profile: selected.profile as string,
     profileRegistryId: selected.profileEntry?.registryId,
+    profileLaunch: selected.profileEntry
+      ? {
+          binary: selected.profileEntry.binary,
+          args: selected.profileEntry.args,
+          env: selected.profileEntry.env,
+        }
+      : undefined,
   });
   if (!preflight.ok) {
     writeAuthorityDiagnostic(output, preflight.diagnostic, json);
