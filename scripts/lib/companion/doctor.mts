@@ -1,4 +1,3 @@
-import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -7,10 +6,13 @@ import type { ParsedArgs } from "../args.mts";
 import { brokersDir, profilesPath } from "../broker-endpoint.mts";
 import { pidAlive as defaultPidAlive } from "../broker-lifecycle.mts";
 import { resolveHostIdentity } from "../host-identity.mts";
+import { DEFAULT_JOB_AUTHORITY } from "../job-authority.mts";
+import type { JobAuthority, JobAuthorityDiagnostic } from "../job-authority.mts";
 import { isFinalStatus, listWorkspaceJobRecords } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
 import { isRecord } from "../objects.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
+import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
 import { resolveInvocationContext } from "./invocation-context.mts";
 import type {
   InvocationContext,
@@ -20,9 +22,10 @@ import type { CliResult, CodedError } from "./job-record-errors.mts";
 
 export interface DoctorDeps extends ResolveInvocationContextDeps {
   brokersDir?: (workspaceRoot: string) => string;
-  commandExists?: (command: string, env: Record<string, string | undefined>) => Promise<boolean>;
   listWorkspaceJobRecords?: (workspaceRoot: string) => Promise<JobRecord[]>;
   pidAlive?: (pid: number) => Promise<boolean>;
+  platform?: NodeJS.Platform;
+  probeConfined?: typeof probeConfinedSandboxRuntime;
   resolveWorkspaceRoot?: () => Promise<string>;
 }
 
@@ -32,7 +35,7 @@ export interface DoctorReport {
   profile: ProfileDoctorReport;
   jobs: JobSummaryReport;
   brokers: BrokerSummaryReport;
-  sandbox: SandboxReport;
+  authority: JobAuthorityDoctorReport;
 }
 
 interface ProfileDoctorReport {
@@ -69,13 +72,22 @@ interface BrokerSummaryReport {
   error: string | null;
 }
 
-interface SandboxReport {
+interface JobAuthorityDoctorReport {
   ok: boolean;
-  envValue: string | null;
-  mode: "off" | "bwrap" | "unknown";
-  bwrapConfigured: boolean;
-  bwrapOnPath: boolean;
-  error: string | null;
+  platform: NodeJS.Platform;
+  defaultAuthority: JobAuthority;
+  selectedProfile: string | null;
+  profileRegistryId: string | null;
+  confined: {
+    ok: boolean;
+    diagnostic: JobAuthorityDiagnostic | null;
+  };
+  inherit: {
+    available: boolean;
+    explicitFlag: "--sandbox inherit";
+    warning: string;
+  };
+  legacySandboxEnv: string | null;
 }
 
 interface BrokerSummary {
@@ -109,19 +121,19 @@ export async function runDoctor({
     return { exitCode: 2, stdout: "", stderr: `${usageError}\n` };
   }
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
-  const [profile, jobs, brokers, sandbox] = await Promise.all([
+  const [profile, jobs, brokers, authority] = await Promise.all([
     inspectProfile({ args, env, deps, workspaceRoot }),
     inspectJobs(workspaceRoot, deps),
     inspectBrokers(workspaceRoot, deps),
-    inspectSandbox(env, deps),
+    inspectAuthority({ args, env, deps, workspaceRoot }),
   ]);
   const report: DoctorReport = {
     workspaceRoot,
-    canDelegate: profile.ok && jobs.ok && brokers.ok && sandbox.ok,
+    canDelegate: profile.ok && jobs.ok && brokers.ok && authority.ok,
     profile,
     jobs,
     brokers,
-    sandbox,
+    authority,
   };
 
   // Exit 1 when the workspace is not delegate-ready so scripted callers can
@@ -284,56 +296,100 @@ async function readBrokerStatus(
   return (await (deps.pidAlive ?? defaultPidAlive)(data.pid as number)) ? "running" : "stale";
 }
 
-async function inspectSandbox(
-  env: Record<string, string | undefined>,
-  deps: DoctorDeps,
-): Promise<SandboxReport> {
-  const envValue = env.CONSULT_AGENT_SANDBOX ?? null;
-  const mode = sandboxMode(envValue);
-  const bwrapOnPath = await (deps.commandExists ?? commandExists)("bwrap", env);
-  const error =
-    mode === "unknown"
-      ? `unknown CONSULT_AGENT_SANDBOX: ${envValue}`
-      : mode === "bwrap" && !bwrapOnPath
-        ? "CONSULT_AGENT_SANDBOX=bwrap but bwrap was not found on PATH"
-        : null;
-  return {
-    ok: error === null,
-    envValue,
-    mode,
-    bwrapConfigured: envValue === "bwrap",
-    bwrapOnPath,
-    error,
+async function inspectAuthority({
+  args,
+  env,
+  deps,
+  workspaceRoot,
+}: {
+  args: ParsedArgs;
+  env: Record<string, string | undefined>;
+  deps: DoctorDeps;
+  workspaceRoot: string;
+}): Promise<JobAuthorityDoctorReport> {
+  const platform = deps.platform ?? process.platform;
+  const inheritAvailable = platform === "linux" || platform === "darwin";
+  const base = {
+    platform,
+    defaultAuthority: { ...DEFAULT_JOB_AUTHORITY },
+    inherit: {
+      available: inheritAvailable,
+      explicitFlag: "--sandbox inherit" as const,
+      warning:
+        "explicit inheritance adds no Consult OS boundary and should be chosen only by the trusted Host",
+    },
+    legacySandboxEnv: env.CONSULT_AGENT_SANDBOX ?? null,
   };
+  try {
+    const context = await resolveInvocationContext({
+      args,
+      env,
+      deps: {
+        ...deps,
+        resolveWorkspaceRoot: async () => workspaceRoot,
+      },
+    });
+    const selectedProfile = context.selected.profile ?? null;
+    const profileEntry = context.selected.profileEntry;
+    if (context.selected.error || !selectedProfile || !profileEntry) {
+      return authorityFailure(
+        base,
+        selectedProfile,
+        profileEntry?.registryId ?? null,
+        {
+          code: "AUTHORITY_COMBINATION_UNSUPPORTED",
+          message: context.selected.error ?? "no Profile is available for confined preflight",
+          remediation: "Run consult setup and select a configured Profile.",
+        },
+      );
+    }
+    const confined = await (deps.probeConfined ?? probeConfinedSandboxRuntime)({
+      authority: { ...DEFAULT_JOB_AUTHORITY },
+      platform,
+      workspaceRoot,
+      profile: selectedProfile,
+      profileRegistryId: profileEntry.registryId,
+      profileLaunch: {
+        binary: profileEntry.binary,
+        args: profileEntry.args,
+        env: profileEntry.env,
+      },
+    });
+    return {
+      ...base,
+      ok: confined.ok,
+      selectedProfile,
+      profileRegistryId: profileEntry.registryId,
+      confined: {
+        ok: confined.ok,
+        diagnostic: confined.ok ? null : confined.diagnostic,
+      },
+    };
+  } catch (error) {
+    return authorityFailure(base, null, null, {
+      code: "AUTHORITY_PREFLIGHT_FAILED",
+      message: describeCodedError(error),
+      remediation: "Fix Profile setup or use explicit inheritance only if ambient authority is acceptable.",
+    });
+  }
 }
 
-async function commandExists(
-  command: string,
-  env: Record<string, string | undefined>,
-): Promise<boolean> {
-  const pathEnv = env.PATH ?? process.env.PATH ?? "";
-  for (const dir of pathEnv.split(path.delimiter)) {
-    if (!dir) {
-      continue;
-    }
-    try {
-      await fs.access(path.join(dir, command), constants.X_OK);
-      return true;
-    } catch {
-      // keep looking
-    }
-  }
-  return false;
-}
-
-function sandboxMode(value: string | null): SandboxReport["mode"] {
-  if (value === null || value === "" || value === "0" || value === "false" || value === "off") {
-    return "off";
-  }
-  if (value === "1" || value === "true" || value === "bwrap") {
-    return "bwrap";
-  }
-  return "unknown";
+function authorityFailure(
+  base: Pick<
+    JobAuthorityDoctorReport,
+    "platform" | "defaultAuthority" | "inherit" | "legacySandboxEnv"
+  >,
+  selectedProfile: string | null,
+  profileRegistryId: string | null,
+  diagnostic: JobAuthorityDiagnostic,
+): JobAuthorityDoctorReport {
+  return {
+    ...base,
+    ok: false,
+    selectedProfile,
+    profileRegistryId,
+    confined: { ok: false, diagnostic },
+  };
 }
 
 function countJobs(records: JobRecord[], status: string): number {
@@ -385,12 +441,17 @@ function renderDoctor(report: DoctorReport): string {
     `  stale: ${report.brokers.stale}`,
     `  malformed: ${report.brokers.malformed}`,
     "",
-    "sandbox:",
-    `  status: ${report.sandbox.ok ? "ok" : `error: ${report.sandbox.error}`}`,
-    `  CONSULT_AGENT_SANDBOX: ${valueOrDash(report.sandbox.envValue)}`,
-    `  mode: ${report.sandbox.mode}`,
-    `  bwrap configured: ${yesNo(report.sandbox.bwrapConfigured)}`,
-    `  bwrap on PATH: ${yesNo(report.sandbox.bwrapOnPath)}`,
+    "job authority:",
+    `  default confined: ${report.authority.confined.ok ? "ready" : `unready: ${report.authority.confined.diagnostic?.message}`}`,
+    `  platform: ${report.authority.platform}`,
+    `  profile: ${valueOrDash(report.authority.selectedProfile)}`,
+    `  registry identity: ${valueOrDash(report.authority.profileRegistryId)}`,
+    `  default mode: ${report.authority.defaultAuthority.mode}`,
+    `  fetch: ${yesNo(report.authority.defaultAuthority.allowFetch)}`,
+    `  execute: ${yesNo(report.authority.defaultAuthority.allowExecute)}`,
+    `  explicit inherit available: ${yesNo(report.authority.inherit.available)}`,
+    `  inherit warning: ${report.authority.inherit.warning}`,
+    `  legacy CONSULT_AGENT_SANDBOX: ${valueOrDash(report.authority.legacySandboxEnv)}`,
   ].join("\n")}\n`;
 }
 
