@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 
-import { installAndVerify, parseInstallCommand } from "./setup-install.mts";
+import {
+  assertSafeArchive,
+  installAndVerify,
+  isUnsafeMemberPath,
+  parseInstallCommand,
+} from "./setup-install.mts";
+
+const execFileAsync = promisify(execFile);
 import type {
   DownloadAndExtractParams,
   InstallCaptured,
@@ -410,6 +419,61 @@ test("installAndVerify rejects an unknown install type before any side effects",
   assert.equal(result.ok, false);
   assert.equal(result.stage, "install");
   assert.match(result.message, /unsupported install type: smoke-signal/);
+});
+
+test("isUnsafeMemberPath flags traversal, absolute, and drive-rooted members", () => {
+  for (const unsafe of [
+    "../evil",
+    "a/../../b",
+    "/etc/passwd",
+    "nested/../../out",
+    "..\\windows\\system32",
+    "C:\\payload.exe",
+  ]) {
+    assert.equal(isUnsafeMemberPath(unsafe), true, `expected unsafe: ${unsafe}`);
+  }
+  for (const safe of ["codex-acp", "./bin/codex-acp", "dir/sub/file", "a..b", "..name", ""]) {
+    assert.equal(isUnsafeMemberPath(safe), false, `expected safe: ${safe}`);
+  }
+});
+
+test("assertSafeArchive accepts a tar.gz of plain files and directories", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "consult-archive-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const payload = path.join(dir, "payload");
+  await mkdir(path.join(payload, "sub"), { recursive: true });
+  await writeFile(path.join(payload, "codex-acp"), "#!/bin/sh\nexit 0\n");
+  await writeFile(path.join(payload, "sub", "README"), "notes");
+  const archive = path.join(dir, "clean.tar.gz");
+  await execFileAsync("tar", ["-czf", archive, "-C", payload, "."]);
+
+  await assert.doesNotReject(() => assertSafeArchive(archive, "tar.gz"));
+});
+
+test("assertSafeArchive rejects a tar.gz containing a symlink member", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "consult-archive-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const payload = path.join(dir, "payload");
+  await mkdir(payload, { recursive: true });
+  await writeFile(path.join(payload, "codex-acp"), "bin");
+  await symlink("/etc/passwd", path.join(payload, "link"));
+  const archive = path.join(dir, "symlink.tar.gz");
+  await execFileAsync("tar", ["-czf", archive, "-C", payload, "."]);
+
+  await assert.rejects(() => assertSafeArchive(archive, "tar.gz"), /non-regular member/);
+});
+
+test("assertSafeArchive rejects a tar.gz whose member escapes via ..", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "consult-archive-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const sub = path.join(dir, "sub");
+  await mkdir(sub, { recursive: true });
+  await writeFile(path.join(dir, "target.txt"), "pwned");
+  const archive = path.join(dir, "traversal.tar.gz");
+  // -P preserves the literal "../target.txt" member name instead of stripping it.
+  await execFileAsync("tar", ["-P", "-czf", archive, "-C", sub, "../target.txt"]);
+
+  await assert.rejects(() => assertSafeArchive(archive, "tar.gz"), /unsafe member path/);
 });
 
 function fixedClock(values: string[]): () => string {

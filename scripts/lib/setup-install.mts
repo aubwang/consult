@@ -257,6 +257,12 @@ async function performGithubReleaseInstall(
   const binaryName = binaryInArchive ?? registryEntry.binary;
   const installRoot = path.join((deps.dataDir ?? defaultDataDir)(), "bin", registryEntry.id);
   const binaryPath = path.join(installRoot, binaryName);
+  if (!isWithinRoot(installRoot, binaryPath)) {
+    throw new InstallStageError(
+      "install",
+      `binaryInArchive ${JSON.stringify(binaryName)} escapes the install root`,
+    );
+  }
 
   try {
     const stats = await fs.stat(binaryPath);
@@ -392,6 +398,7 @@ async function defaultDownloadAndExtract({
         );
       }
     }
+    await assertSafeArchive(archivePath, archiveFormat);
     if (archiveFormat === "tar.gz") {
       await runCommand(["tar", "-xzf", archivePath, "-C", installRoot]);
     } else if (archiveFormat === "zip") {
@@ -402,6 +409,73 @@ async function defaultDownloadAndExtract({
   } finally {
     await fs.unlink(archivePath).catch(() => {});
   }
+}
+
+// Defends the extraction step against malicious archives: an entry with an
+// absolute path or a `..` component can write outside `installRoot` (Zip Slip),
+// and a symlink/hardlink member can redirect a later write through the link.
+// We refuse to unpack such archives rather than trust `tar`/`unzip` defaults,
+// which vary across GNU tar, bsdtar, and Info-ZIP.
+export async function assertSafeArchive(archivePath: string, archiveFormat: string): Promise<void> {
+  const { names, verbose } = await listArchiveMembers(archivePath, archiveFormat);
+  for (const name of names) {
+    if (isUnsafeMemberPath(name)) {
+      throw new Error(`refusing to extract archive: unsafe member path ${JSON.stringify(name)}`);
+    }
+  }
+  for (const line of verbose) {
+    const type = memberTypeChar(line);
+    if (type !== null && type !== "-" && type !== "d") {
+      throw new Error(
+        `refusing to extract archive: non-regular member (type '${type}') present; only files and directories are allowed`,
+      );
+    }
+  }
+}
+
+async function listArchiveMembers(
+  archivePath: string,
+  archiveFormat: string,
+): Promise<{ names: string[]; verbose: string[] }> {
+  if (archiveFormat === "tar.gz") {
+    const names = splitLines((await runCommand(["tar", "-tzf", archivePath])).stdout);
+    const verbose = splitLines((await runCommand(["tar", "-tvzf", archivePath])).stdout);
+    return { names, verbose };
+  }
+  if (archiveFormat === "zip") {
+    const names = splitLines((await runCommand(["unzip", "-Z1", archivePath])).stdout);
+    const verbose = splitLines((await runCommand(["unzip", "-Z", archivePath])).stdout);
+    return { names, verbose };
+  }
+  throw new Error(`unsupported archive format: ${archiveFormat}`);
+}
+
+function splitLines(text: string): string[] {
+  return text.split("\n").filter((line) => line.trim().length > 0);
+}
+
+// True if the member name would resolve outside its extraction directory:
+// absolute paths, Windows drive/UNC roots, or any `..` path segment.
+export function isUnsafeMemberPath(name: string): boolean {
+  const normalized = name.replaceAll("\\", "/").trim();
+  if (normalized === "") return false;
+  if (normalized.startsWith("/")) return true;
+  if (/^[A-Za-z]:/.test(normalized)) return true;
+  return normalized.split("/").some((segment) => segment === "..");
+}
+
+// Returns the type character from a `tar -tv`/`zipinfo` permission string
+// (`-` file, `d` dir, `l` symlink, `h` hardlink, ...) or null for header,
+// footer, and other lines that do not begin with a unix permission field.
+function memberTypeChar(line: string): string | null {
+  const match = /^([-dlhbcps])[-r][-w][-xsS][-r][-w][-xsS][-r][-w][-xtT]/.exec(line.trimStart());
+  return match ? match[1] : null;
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(candidate);
+  return resolved === resolvedRoot || resolved.startsWith(resolvedRoot + path.sep);
 }
 
 function runCommand(argv: string[]): Promise<{ stdout: string; stderr: string }> {
