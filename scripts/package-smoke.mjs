@@ -105,16 +105,35 @@ async function assertInstalledBackgroundJob(binary, temporaryRoot) {
   await fs.mkdir(workspace);
   await fs.mkdir(data);
   await run("git", ["init"], { cwd: workspace });
+  const fakeAgent = path.join(workspace, "background-fake-acp.mjs");
+  await fs.writeFile(
+    fakeAgent,
+    [
+      'import readline from "node:readline";',
+      "const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of lines) {",
+      "  const message = JSON.parse(line);",
+      '  if (message.method === "initialize") {',
+      "    process.stdout.write(`${JSON.stringify({ jsonrpc: \"2.0\", id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } })}\\n`);",
+      '  } else if (message.method === "session/new") {',
+      "    process.stdout.write(`${JSON.stringify({ jsonrpc: \"2.0\", id: message.id, result: { sessionId: \"packed-background-session\" } })}\\n`);",
+      '  } else if (message.method === "session/prompt") {',
+      "    process.stdout.write(`${JSON.stringify({ jsonrpc: \"2.0\", id: message.id, result: { stopReason: \"end_turn\" } })}\\n`);",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
   await fs.writeFile(
     path.join(data, "profiles.json"),
     `${JSON.stringify({
       schemaVersion: 1,
-      default: "broken-smoke-profile",
+      default: "background-smoke-profile",
       profiles: {
-        "broken-smoke-profile": {
-          registryId: "broken-smoke-profile",
-          binary: path.join(temporaryRoot, "intentionally-missing-agent"),
-          args: [],
+        "background-smoke-profile": {
+          registryId: "background-smoke-profile",
+          binary: process.execPath,
+          args: [fakeAgent],
           env: {},
           installedAt: "2026-01-01T00:00:00.000Z",
         },
@@ -131,7 +150,7 @@ async function assertInstalledBackgroundJob(binary, temporaryRoot) {
     [
       "delegate",
       "--agent",
-      "broken-smoke-profile",
+      "background-smoke-profile",
       "--read-only",
       "--sandbox",
       "inherit",
@@ -161,12 +180,8 @@ async function assertInstalledBackgroundJob(binary, temporaryRoot) {
   }
 
   assert(final, "installed background worker did not finalize within 10 seconds");
-  assert.equal(final.job.status, "failed");
-  assert.doesNotMatch(
-    final.outcome.errorMessage ?? "",
-    /consult-(?:companion|broker)\.mts|MODULE_NOT_FOUND/,
-    "installed background Job tried to launch a source-only .mts entrypoint",
-  );
+  assert.equal(final.job.status, "completed");
+  assert.equal(final.outcome.sessionId, "packed-background-session");
 }
 
 async function assertInstalledConfinedDoctor(binary, temporaryRoot, installer) {

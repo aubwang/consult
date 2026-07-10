@@ -16,9 +16,13 @@ runtime proxy listener.
 
 On 2026-07-10, the integrated Linux adapter completed real confined turns for
 Codex (`gpt-5.5`, Job `job-oHDFssztfWc9`) and Claude (`fable`, Job
-`job-u63Nh1CpUIXf`). Both used direct-network denial and the authenticated model
-proxy. Product-level macOS adapter conformance remains to be run from the Mac;
-the older spike is necessary evidence but not a substitute for that final run.
+`job-u63Nh1CpUIXf`). Selective cross-process resume then passed for Codex
+(`job-tRD2PB7GIomI` -> `job-u9IU_4CMzXhW`) and Claude
+(`job-N7MhIfAbBYJP` -> `job-iP7BeSfUnu7g`): each source and resumed Job archived
+one Profile transcript while retaining direct-network denial and authenticated
+model proxying. Product-level macOS adapter conformance remains to be run from
+the Mac; the older spike is necessary evidence but not a substitute for that
+final run.
 
 Run the product-level harness from an unrestricted macOS terminal:
 
@@ -40,8 +44,11 @@ bun run conformance:job-authority -- --agent claude --expect unsupported
 ```
 
 The harness emits one redacted JSON object. Doctor/preflight performs real ACP
-initialization but no model prompt; `--turn` adds the explicit one-line model
-transport canary and creates a normal Job.
+initialization but no model prompt. `--turn` runs a one-line model transport
+canary, verifies its selective Session archive, resumes it through a second
+fresh confined Profile process, and verifies the updated archive. An
+`--expect unsupported` run additionally attempts delegation, requires the
+stable nesting diagnostic, and proves no Job was created.
 
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
