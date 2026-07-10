@@ -181,6 +181,29 @@ test("custom and opencode confined Profiles fail before runtime or proxy startup
   }
 });
 
+test("confined launch rejects Workspace glob metacharacters before runtime startup", async (t) => {
+  const fixture = await makeFixture(t);
+  const workspace = path.join(fixture.root, "workspace[1]");
+  await fsp.mkdir(workspace);
+  const harness = fakeRuntime();
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      cwd: workspace,
+      env: {
+        PATH: `${fixture.bin}:/usr/bin:/bin`,
+        OPENAI_API_KEY: "selected-key",
+      },
+      workspaceRoot: workspace,
+      mode: "read-only",
+      profileRegistryId: "codex",
+    }, harness.deps),
+    /Workspace path contains glob metacharacters/u,
+  );
+  assert.deepEqual(harness.events, []);
+});
+
 test("generated-policy rejection cleans the manager, proxy, and temporary Job root", async (t) => {
   const fixture = await makeFixture(t);
   const harness = fakeRuntime({ invalidArtifact: true });

@@ -51,7 +51,8 @@ read-only confined with both grants false. Built-in `codex` and `claude`
 Profiles use Consult-managed native Linux/macOS confinement, a private Job
 home/temp directory, selected credentials only, direct-network denial, and an
 authenticated model-host proxy. `--allow-fetch` broadens that proxy to public
-HTTPS and therefore increases credential/data exfiltration risk.
+TCP/443 (without TLS or application-protocol inspection) and therefore
+increases credential/data exfiltration risk.
 
 Consult does not broker the macOS Keychain. Confined Claude on macOS requires
 one supported token environment variable or a stageable

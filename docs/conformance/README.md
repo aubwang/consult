@@ -29,6 +29,19 @@ necessary evidence but not a substitute for that final run.
 
 Run the product-level harness from an unrestricted macOS terminal:
 
+Before testing Claude, confirm that the Host environment has a supported token
+or a stageable credential file without printing the token:
+
+```sh
+test -f "$HOME/.claude/.credentials.json" || \
+  test -n "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}${CLAUDE_CODE_OAUTH_TOKEN:-}"
+```
+
+Keychain-only login is insufficient. The same prerequisite must be present in
+the environment that launches an already-confined Codex Host before running
+the nested Claude control; otherwise credential staging correctly fails before
+Seatbelt is attempted and cannot prove the nesting diagnostic.
+
 ```sh
 CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check
 bun run conformance:job-authority -- --agent codex --expect ready
