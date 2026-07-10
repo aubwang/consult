@@ -19,6 +19,7 @@ interface SpikeReport {
   target: {
     profile: "codex";
     context: "codex-host" | "standalone-control";
+    contextEvidence: string;
     platform: NodeJS.Platform;
     arch: string;
     release: string;
@@ -135,7 +136,12 @@ async function main(): Promise<void> {
     checks.push({
       id: "runtime-proxy-cleanup",
       status: proxyClosed ? "pass" : "fail",
-      detail: proxyPort === undefined ? "no proxy listener was established" : "proxy listener closed",
+      detail:
+        proxyPort === undefined
+          ? "no proxy listener was established"
+          : proxyClosed
+            ? "proxy listener closed"
+            : "proxy listener remained reachable after reset",
     });
   } catch (error) {
     checks.push({
@@ -152,25 +158,33 @@ async function main(): Promise<void> {
 
 function printReport(checks: ProbeCheck[]): void {
   const context = process.env.CODEX_SANDBOX ? "codex-host" : "standalone-control";
-  const requiredFailures = checks.filter(
-    (check) =>
-      ["runtime-preflight", "native-nested-seatbelt", "runtime-initialize", "runtime-wrapped-launch"].includes(
-        check.id,
-      ) && check.status === "fail",
-  );
-  const decision = context === "codex-host" && requiredFailures.length > 0 ? "kill" : "inconclusive";
+  const preflight = checks.find((check) => check.id === "runtime-preflight");
+  const nesting = checks.find((check) => check.id === "native-nested-seatbelt");
+  const initialization = checks.find((check) => check.id === "runtime-initialize");
+  const observedCodexHostFailure =
+    context === "codex-host" &&
+    preflight?.status === "pass" &&
+    nesting?.status === "fail" &&
+    nesting.detail.includes('\"code\":71') &&
+    nesting.detail.includes("sandbox_apply: Operation not permitted") &&
+    initialization?.status === "fail" &&
+    initialization.detail.includes("EPERM");
+  const decision = observedCodexHostFailure ? "kill" : "inconclusive";
   const decisionBasis =
     decision === "kill"
-      ? `Kill for the macOS Codex Host path: ${requiredFailures.map((check) => check.id).join(", ")} failed before Codex model transport.`
+      ? "Kill for the marked macOS Codex Host path: nested Seatbelt exited 71 and runtime proxy initialization failed with EPERM before Codex model transport."
       : context === "standalone-control"
         ? "Standalone control only; success here does not establish compatibility with a sandboxed Codex Host."
-        : "The initial gates passed; broader Codex conformance evidence is still required.";
+        : "The observed failures did not match the specific macOS Codex Host incompatibility signature.";
   const report: SpikeReport = {
     schemaVersion: 1,
     runtime: { package: "@anthropic-ai/sandbox-runtime", version: RUNTIME_VERSION },
     target: {
       profile: "codex",
       context,
+      contextEvidence: process.env.CODEX_SANDBOX
+        ? "CODEX_SANDBOX marker present; informational classification only"
+        : "CODEX_SANDBOX marker absent; informational classification only",
       platform: process.platform,
       arch: process.arch,
       release: os.release(),
