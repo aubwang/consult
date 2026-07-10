@@ -39,6 +39,7 @@
     "pack:check": "node scripts/package-smoke.mjs",
     "prepack": "node scripts/build-package.mjs",
     "prepare": "node scripts/build-package.mjs",
+    "conformance:job-authority": "node scripts/live-job-authority-conformance.mts",
     "spike:sandbox-runtime-codex": "node scripts/live-sandbox-runtime-codex-spike.mts",
     "test": "node --test \"scripts/**/*.test.mts\"",
     "typecheck": "tsc --noEmit",

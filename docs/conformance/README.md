@@ -20,6 +20,27 @@ Codex (`gpt-5.5`, Job `job-oHDFssztfWc9`) and Claude (`fable`, Job
 proxy. Product-level macOS adapter conformance remains to be run from the Mac;
 the older spike is necessary evidence but not a substitute for that final run.
 
+Run the product-level harness from an unrestricted macOS terminal:
+
+```sh
+bun run conformance:job-authority -- --agent codex --expect ready
+bun run conformance:job-authority -- --agent claude --expect ready
+bun run conformance:job-authority -- --agent codex --expect ready \
+  --turn --model <known-supported-codex-model>
+bun run conformance:job-authority -- --agent claude --expect ready \
+  --turn --model fable
+```
+
+Then run the fail-closed control from the already-sandboxed macOS Codex Host:
+
+```sh
+bun run conformance:job-authority -- --agent codex --expect unsupported
+```
+
+The harness emits one redacted JSON object. Doctor/preflight performs real ACP
+initialization but no model prompt; `--turn` adds the explicit one-line model
+transport canary and creates a normal Job.
+
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |
