@@ -78,6 +78,8 @@ test("confined launch stages minimal Codex state, sanitizes env, and removes Job
         entry.includes("/node_modules/@anthropic-ai/sandbox-runtime")),
     );
     assert.ok(harness.configs[0].filesystem.allowRead.includes(path.join(stagedHome, "..", "bin")));
+    assert.ok(harness.configs[0].filesystem.allowRead.includes("/bin"));
+    assert.ok(harness.configs[0].filesystem.allowRead.includes(fs.realpathSync("/bin")));
     assert.equal(
       harness.configs[0].filesystem.allowRead.includes(path.dirname(stagedHome)),
       false,
@@ -251,7 +253,70 @@ test("confined preflight fails closed without an exact Profile launch", async (t
   }
 });
 
-function fakeRuntime(options: { invalidArtifact?: boolean } = {}) {
+test("dependency failures preserve actionable messages", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime({
+    dependencies: {
+      errors: ["bwrap not found on PATH"],
+      warnings: ["socat version is unverified"],
+    },
+  });
+
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      cwd: fixture.workspace,
+      env: { OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "codex",
+    }, harness.deps),
+    /error: bwrap not found on PATH; warning: socat version is unverified/u,
+  );
+  assert.deepEqual(harness.events, []);
+});
+
+test("a new confined launch sweeps an old root whose owner is gone", async (t) => {
+  const fixture = await makeFixture(t);
+  const staleRoot = await fsp.mkdtemp("/tmp/consult-srt-job-stale-");
+  t.after(() => fsp.rm(staleRoot, { recursive: true, force: true }));
+  await fsp.writeFile(
+    path.join(staleRoot, ".consult-owner.json"),
+    `${JSON.stringify({ pid: 999_999, createdAt: 0 })}\n`,
+    { mode: 0o600 },
+  );
+  const now = Date.now();
+  const old = new Date(now - 40 * 60 * 1000);
+  await fsp.utimes(staleRoot, old, old);
+  const harness = fakeRuntime();
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    cwd: fixture.workspace,
+    env: {
+      OPENAI_API_KEY: "selected-key",
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "codex",
+  }, {
+    ...harness.deps,
+    now: () => now,
+    pidIsAlive: () => false,
+  });
+  try {
+    assert.equal(fs.existsSync(staleRoot), false);
+  } finally {
+    await lease.release();
+  }
+});
+
+function fakeRuntime(options: {
+  invalidArtifact?: boolean;
+  dependencies?: { errors: string[]; warnings: string[] };
+} = {}) {
   const events: string[] = [];
   const configs: any[] = [];
   const commands: string[] = [];
@@ -265,7 +330,7 @@ function fakeRuntime(options: { invalidArtifact?: boolean } = {}) {
       platform: "linux" as const,
       manager: {
         isSupportedPlatform: () => true,
-        checkDependencies: () => ({ errors: [], warnings: [] }),
+        checkDependencies: () => options.dependencies ?? ({ errors: [], warnings: [] }),
         async initialize(config: any) {
           events.push("initialize");
           configs.push(config);
