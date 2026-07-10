@@ -2,6 +2,13 @@
 
 Live conformance status for the implemented Consult Profiles.
 
+Experimental confinement work is recorded separately from shipped Profile
+conformance. The pinned Sandbox Runtime candidate is currently **rejected for
+the macOS Codex Host path** because it cannot establish its own proxy or nested
+Seatbelt boundary inside Codex's inherited sandbox. See the
+[macOS Codex Sandbox Runtime spike](sandbox-runtime-codex-macos.md). This does
+not imply a Linux result or change shipped sandbox behavior.
+
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |

@@ -41,6 +41,11 @@ A native action or behavior advertised by one Profile. Consult may use a
 verified capability as an optimization while preserving a portable fallback.
 _Avoid_: universal feature, special sauce
 
+**Job Authority**
+The bounded permission set a Host grants to one Job in addition to its prompt.
+Consult may enforce a grant more narrowly but never broaden it implicitly.
+_Avoid_: Profile Capability, sandbox flags, agent trust
+
 **Broker**
 The Consult-owned, Job-scoped process that owns ACP communication for a
 background Job and exits after the Job finalizes. Foreground and isolated
@@ -96,8 +101,8 @@ _Avoid_: Workspace identity, session transfer
 **Isolated write Job**
 A write Job whose Execution Workspace is temporary. Consult captures only the
 Profile's delta as a patch and touched-files artifact, then removes the
-worktree. Isolation is transactional; bubblewrap is required for a hard
-filesystem process boundary.
+worktree. Its isolation is transactional and distinct from native process
+confinement.
 _Avoid_: branch checkout, hard sandbox
 
 **Registry**
@@ -114,11 +119,13 @@ _Avoid_: marketplace, plugin manifest
 - A Job represents exactly one prompt turn against exactly one Session.
 - A Job may have zero or one live Broker while running.
 - A Job Result describes that Job only, not an automatic chain rollup.
+- Every root Job has a Job Authority granted by its trusted Host.
 - A Job may belong to zero or one Delegation Chain.
 - A Delegation Chain has exactly one Chain Id and one or more Jobs.
 - Cancelling a parent Job cancels active descendants in the same chain.
 - Child failure does not automatically fail the parent.
-- A child Job cannot request a more permissive mode than its parent.
+- Linked-child authority ceilings are product policy unless parent identity is
+  bound outside child-controlled state; they are not an OS security boundary.
 - A child Job may target the same Profile as its parent.
 - Profiles and native Host products are independent roles; the same product
   may appear in both without implying shared conversation state.

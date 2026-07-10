@@ -39,6 +39,7 @@
     "pack:check": "node scripts/package-smoke.mjs",
     "prepack": "node scripts/build-package.mjs",
     "prepare": "node scripts/build-package.mjs",
+    "spike:sandbox-runtime-codex": "node scripts/live-sandbox-runtime-codex-spike.mts",
     "test": "node --test \"scripts/**/*.test.mts\"",
     "typecheck": "tsc --noEmit",
     "drill:companion-disconnect": "node scripts/live-companion-disconnect-drill.mts"
@@ -47,7 +48,9 @@
     "@agentclientprotocol/sdk": "0.21.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.64",
     "@types/node": "^25.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "zod": "4.4.3"
   }
 }
