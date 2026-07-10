@@ -249,18 +249,19 @@ In-place `--write` remains for compatibility. `--isolated` requires
 ACP file handlers and permission-bearing paths are realpath-confined to the
 Execution Workspace and reject symlink escapes.
 
-| Request kind | Read-only | In-place write | Isolated write | Isolated write + `--allow-exec` + bwrap |
+| Request kind | Read-only | In-place write | Isolated write | `--allow-exec` requested |
 | --- | --- | --- | --- | --- |
 | read/search/think | allow, path-confined | allow, path-confined | allow, path-confined | allow, path-confined |
 | edit/delete/move | deny | allow, path-confined | allow, path-confined | allow, path-confined |
 | fetch | deny | deny | deny | deny |
-| execute | deny | deny | deny | allow only with cwd confined |
+| execute | deny | deny | deny | deny; preflight rejects the Job |
 | switch_mode/other | deny | allow | allow | allow |
 
-Execute authority is carried explicitly in the `consult/run` payload and its
-idempotency hash. The shared permission handler grants it only when mode is
-write, the caller opted in, cwd is confined, and the normalized active sandbox
-is `bwrap`. Merely setting a flag does not weaken an unsandboxed Job.
+Execute authority remains represented in the internal `consult/run` payload and
+its idempotency hash for compatibility, but `delegate --allow-exec` fails
+preflight and the shared permission handler denies it defensively. The current
+bubblewrap backend is a filesystem boundary only; it shares host networking and
+cannot safely grant arbitrary execution.
 
 Bubblewrap binds the Execution Workspace according to mode and mounts only the
 runtime and proven Profile auth/config paths needed to launch the ACP agent.

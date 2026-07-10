@@ -136,19 +136,19 @@ commit so the detached worktree has a stable base.
 
 Isolated worktrees are a transactional boundary, not a complete process
 sandbox. A Profile that bypasses ACP permission requests can still use its own
-process privileges. On Linux, bubblewrap provides the hard filesystem boundary:
+process privileges. On Linux, bubblewrap can add a hard filesystem boundary:
 
 ```sh
 CONSULT_AGENT_SANDBOX=bwrap \
-  consult delegate --agent codex --write --isolated --allow-exec -- \
-  "make the change and run the focused test"
+  consult delegate --agent codex --write --isolated -- \
+  "make the change"
 ```
 
-Raw execute permission is denied unless all three conditions hold:
-`--write`, `--isolated`, and explicit `--allow-exec` under an active `bwrap`
-sandbox. Network fetch permission requests remain denied. The agent process
-still needs network access for its model API, so bubblewrap's Consult policy is
-filesystem-focused rather than a network-isolation guarantee.
+`--allow-exec` currently fails preflight. The existing bubblewrap backend shares
+the host network namespace so it cannot safely grant arbitrary execution even
+when filesystem writes are confined. Execute remains denied until Consult can
+block direct networking and route Profile model transport through an enforced
+proxy. Network fetch permission requests also remain denied.
 
 ## Background Jobs, Results, and Resume
 

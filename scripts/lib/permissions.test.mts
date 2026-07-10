@@ -198,7 +198,7 @@ test("write-mode does not treat an isolated worktree marker as execute opt-in", 
   );
 });
 
-test("write-mode denies opted-in execute without bwrap", async () => {
+test("write-mode denies opted-in execute until proxy-confined networking is available", async () => {
   const workspaceRoot = makeRoot();
 
   assert.deepEqual(
@@ -211,7 +211,7 @@ test("write-mode denies opted-in execute without bwrap", async () => {
     }),
     {
       allowed: false,
-      reason: "execute denied in write mode (bwrap sandbox required)",
+      reason: "execute denied: proxy-confined network enforcement is unavailable",
     },
   );
 });
@@ -244,7 +244,7 @@ test("write-mode denies opted-in bwrap execute with cwd outside workspace", asyn
   );
 });
 
-test("write-mode allows explicitly opted-in confined execute under bwrap", async () => {
+test("write-mode denies explicitly opted-in execute under filesystem-only bwrap", async () => {
   const workspaceRoot = makeRoot();
 
   assert.deepEqual(
@@ -255,7 +255,10 @@ test("write-mode allows explicitly opted-in confined execute under bwrap", async
       allowExecute: true,
       sandbox: "bwrap",
     }),
-    { allowed: true },
+    {
+      allowed: false,
+      reason: "execute denied: proxy-confined network enforcement is unavailable",
+    },
   );
 });
 
@@ -268,7 +271,10 @@ test("write-mode treats an omitted execute cwd as the confined workspace root", 
       allowExecute: true,
       sandbox: "bwrap",
     }),
-    { allowed: true },
+    {
+      allowed: false,
+      reason: "execute denied: proxy-confined network enforcement is unavailable",
+    },
   );
 });
 

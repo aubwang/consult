@@ -116,12 +116,12 @@ ids use provider/model.
   unstaged, and safe nonignored untracked state. Gitignored files are not
   seeded or captured. The original checkout stays unchanged;
   Job artifacts contain the Profile-only binary patch and touched-files list.
-- --allow-exec: valid only with --write --isolated and an active
-  CONSULT_AGENT_SANDBOX=bwrap. Execute requests remain cwd-confined. The flag
-  alone never weakens an unsandboxed Job. Network fetch requests stay denied.
+- --allow-exec: currently fails preflight. The existing bubblewrap backend is
+  filesystem-only and cannot safely grant execution until direct networking is
+  blocked and model transport uses an enforced proxy.
 
 --write and --read-only are mutually exclusive. --isolated requires --write;
---allow-exec requires --write --isolated plus bubblewrap.
+--allow-exec remains unavailable while proxy-confined networking is unfinished.
 
 ## Pinned diffs and review
 

@@ -593,7 +593,7 @@ test("consult/run denies an edit permission request outside the workspace", asyn
   }
 });
 
-test("consult/run denies opted-in execute permission without the bwrap sandbox", async (t) => {
+test("consult/run denies opted-in execute until proxy-confined networking exists", async (t) => {
   const harness = await startBroker(t, {
     agentArgs: ["sessions", "prompt-permission-execute"],
     captureClientCalls: true,
@@ -617,14 +617,14 @@ test("consult/run denies opted-in execute permission without the bwrap sandbox",
     assert.equal(updates[0].update.content.text, "reject");
     const observations = await readClientObservations(harness.clientLog);
     assert.equal(observations[0].message.result.outcome.optionId, "reject");
-    assert.match(observations[0].message.result._meta.reason, /bwrap sandbox required/);
+    assert.match(observations[0].message.result._meta.reason, /proxy-confined network enforcement/);
   } finally {
     await client.close();
   }
 });
 
 test(
-  "consult/run allows opted-in confined execute permission in write mode under bwrap",
+  "consult/run denies opted-in execute under filesystem-only bwrap",
   { skip: !fs.existsSync("/usr/bin/bwrap") },
   async (t) => {
     const repoRoot = path.resolve(path.dirname(fakeAgentPath), "../../..");
@@ -648,7 +648,7 @@ test(
       });
 
       assert.equal((await finalizedPromise).stopReason, "end_turn");
-      assert.equal(updates[0].update.content.text, "allow");
+      assert.equal(updates[0].update.content.text, "reject");
     } finally {
       await client.close();
     }

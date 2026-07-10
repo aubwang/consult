@@ -42,6 +42,6 @@ Machine-readable Job output uses schema version 1 with `job`, `outcome`,
 `artifacts`, and `lineage` sections. Internal Job records are not a public API.
 
 `--write --isolated` runs the Profile in a detached Execution Workspace and
-returns an agent-only patch plus touched-files manifest. `--allow-exec` grants
-no authority unless it is explicit on an isolated write Job under an active
-`bwrap` sandbox.
+returns an agent-only patch plus touched-files manifest. `--allow-exec`
+currently fails preflight; filesystem-only bubblewrap is not sufficient to
+grant arbitrary execution safely.

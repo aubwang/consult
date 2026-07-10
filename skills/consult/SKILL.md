@@ -83,8 +83,7 @@ consult agents --set codex --host codex
   of current changes.
 - When edits are explicitly requested, prefer `--write --isolated`; Consult
   returns a patch artifact without changing the invoking checkout.
-- Pass `--allow-exec` only when the user explicitly authorizes command
-  execution. It additionally requires `--write --isolated` and an active
-  `CONSULT_AGENT_SANDBOX=bwrap` sandbox.
+- Do not pass `--allow-exec`; it currently fails preflight because the existing
+  bubblewrap backend is filesystem-only and does not confine network egress.
 - Prefer `--json` when parsing Job output. Public Job JSON is versioned and
   grouped under `job`, `outcome`, `artifacts`, and `lineage`.
