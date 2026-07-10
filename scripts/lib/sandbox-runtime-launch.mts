@@ -15,7 +15,9 @@ import type {
   JobAuthorityPreflightInput,
   JobAuthorityPreflightResult,
 } from "./job-authority-preflight.mts";
+import { DEFAULT_JOB_WALL_CLOCK_LIMIT_MS } from "./job-reliability.mts";
 import type { AgentLaunchOptions } from "./process-sandbox.mts";
+import { pidIsAlive as defaultPidIsAlive } from "./process.mts";
 import {
   SANDBOX_RUNTIME_VERSION,
   snapshotSandboxRuntimeSharedWritePaths,
@@ -23,6 +25,8 @@ import {
 } from "./sandbox-runtime-policy.mts";
 
 const JOB_ROOT_PREFIX = "/tmp/consult-srt-job-";
+const JOB_ROOT_OWNER_FILE = ".consult-owner.json";
+const STALE_JOB_ROOT_AGE_MS = DEFAULT_JOB_WALL_CLOCK_LIMIT_MS + 5 * 60 * 1000;
 const require = createRequire(import.meta.url);
 const installedSandboxRuntimeVersion = readInstalledSandboxRuntimeVersion();
 
@@ -139,6 +143,8 @@ export interface ConfinedSandboxRuntimeLaunchDeps {
   platform?: NodeJS.Platform;
   startProxy?: (options: EgressProxyOptions) => Promise<EgressProxy>;
   startAgent?: typeof startAgent;
+  now?: () => number;
+  pidIsAlive?: (pid: number) => boolean;
 }
 
 export interface ConfinedSandboxRuntimeProbeInput
@@ -162,7 +168,7 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     throw new Error(
       runtimeState === "poisoned"
         ? "confined Sandbox Runtime is unavailable after a cleanup failure; restart Consult"
-        : "only one confined Sandbox Runtime launch may be active per Consult process",
+        : "a confined Sandbox Runtime launch is active or retained after unconfirmed process termination; restart Consult if no Job is running",
     );
   }
   runtimeState = "active";
@@ -218,7 +224,9 @@ export async function acquireConfinedSandboxRuntimeLaunch(
   };
 
   try {
-    root = await createPrivateJobRoot();
+    const now = (deps.now ?? Date.now)();
+    await sweepStaleJobRoots(now, deps.pidIsAlive ?? defaultPidIsAlive);
+    root = await createPrivateJobRoot(now);
     const workspaceRoot = await realDirectory(input.workspaceRoot ?? input.cwd, "Workspace");
     const cwd = await realDirectory(input.cwd, "Profile working directory");
     assertPathWithin(cwd, workspaceRoot, "Profile working directory");
@@ -473,16 +481,68 @@ function assertRuntimeReady(manager: SandboxRuntimeManagerLike): void {
   }
   const dependencies = manager.checkDependencies();
   if (dependencies.errors.length > 0 || dependencies.warnings.length > 0) {
+    const details = [
+      ...dependencies.errors.map((message) => `error: ${dependencyMessage(message)}`),
+      ...dependencies.warnings.map((message) => `warning: ${dependencyMessage(message)}`),
+    ].join("; ");
     throw new Error(
-      `Sandbox Runtime dependencies are not ready (${dependencies.errors.length} errors, ${dependencies.warnings.length} warnings)`,
+      `Sandbox Runtime dependencies are not ready: ${details}`,
     );
   }
 }
 
-async function createPrivateJobRoot(): Promise<string> {
+function dependencyMessage(value: unknown): string {
+  return String(value).replace(/[\r\n]+/gu, " ").slice(0, 500);
+}
+
+async function createPrivateJobRoot(now: number): Promise<string> {
   const raw = await fsp.mkdtemp(JOB_ROOT_PREFIX);
-  await fsp.chmod(raw, 0o700);
-  return await fsp.realpath(raw);
+  try {
+    await fsp.chmod(raw, 0o700);
+    await fsp.writeFile(
+      path.join(raw, JOB_ROOT_OWNER_FILE),
+      `${JSON.stringify({ pid: process.pid, createdAt: now })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+    return await fsp.realpath(raw);
+  } catch (error) {
+    await fsp.rm(raw, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function sweepStaleJobRoots(
+  now: number,
+  pidIsAlive: (pid: number) => boolean,
+): Promise<void> {
+  const parent = path.dirname(JOB_ROOT_PREFIX);
+  const prefix = path.basename(JOB_ROOT_PREFIX);
+  const entries = await fsp.readdir(parent, { withFileTypes: true }).catch(() => []);
+  await Promise.all(entries.map(async (entry) => {
+    if (!entry.isDirectory() || !entry.name.startsWith(prefix)) return;
+    const candidate = path.join(parent, entry.name);
+    let stat: Awaited<ReturnType<typeof fsp.lstat>>;
+    try {
+      stat = await fsp.lstat(candidate);
+    } catch {
+      return;
+    }
+    if (!stat.isDirectory() || now - stat.mtimeMs <= STALE_JOB_ROOT_AGE_MS) return;
+
+    let ownerPid: number | undefined;
+    try {
+      const owner = JSON.parse(
+        await fsp.readFile(path.join(candidate, JOB_ROOT_OWNER_FILE), "utf8"),
+      ) as { pid?: unknown };
+      if (Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0) {
+        ownerPid = Number(owner.pid);
+      }
+    } catch {
+      // Old or interrupted roots may not have an ownership marker.
+    }
+    if (ownerPid !== undefined && pidIsAlive(ownerPid)) return;
+    await fsp.rm(candidate, { recursive: true, force: true }).catch(() => {});
+  }));
 }
 
 async function privateDirectory(directory: string): Promise<void> {
@@ -661,6 +721,8 @@ function existingPaths(paths: readonly string[]): string[] {
   const existing = new Set<string>();
   for (const candidate of paths) {
     try {
+      fs.lstatSync(candidate);
+      existing.add(candidate);
       existing.add(fs.realpathSync(candidate));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
