@@ -1,6 +1,7 @@
 # Foreground delegate runs the ACP agent in-process
 
-Status: Accepted
+Status: Accepted; direct-child attachment and disposal details superseded by
+[ADR-0026](0026-profile-process-group-ownership.md)
 
 Foreground `consult delegate` (non-`--background`) no longer spawns a
 job-scoped **Broker** daemon. The companion process itself spawns the ACP
@@ -46,14 +47,13 @@ pid). Cancellation is by pid instead of by Broker endpoint:
 - `consult cancel` has two transports: Broker RPC for records without
   `runner: "inline"`, pid signalling for inline records.
 - The Claude Code `SessionEnd` hook still only tears down Brokers; inline Jobs
-  need no hook coverage because the agent child dies with the companion (its
-  stdio pipes close and ACP agents exit on stdin close; the child is spawned
-  attached, not detached).
+  need no hook coverage during normal shutdown because the signal handler owns
+  Profile process-group disposal.
 - Residual risk: if the companion is SIGKILLed mid-turn, the agent child gets
   no `session/cancel` and exits only on stdin close; a stubborn agent that
   ignores stdin EOF can linger, and the Job record stays `running` until
   `consult cancel` observes the dead `runnerPid`. We accept this rather than
   building supervision.
-- A Host that kills the terminal foreground process group kills the delegate
-  turn with it. That is the intended semantics for foreground work; use
-  `--background` for work that must survive the invoking session.
+- A Host that sends a catchable signal to the foreground companion triggers
+  process-group disposal. As before, an uncatchable SIGKILL can bypass cleanup;
+  use `--background` for work that must survive the invoking session.

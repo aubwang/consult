@@ -4,8 +4,19 @@ export interface TerminateProcessTreeOptions {
 }
 
 export function pidIsAlive(pid: number): boolean {
+  return processTargetIsAlive(pid);
+}
+
+export function processGroupIsAlive(processGroupId: number): boolean {
+  if (process.platform === "win32") {
+    return false;
+  }
+  return processTargetIsAlive(-processGroupId);
+}
+
+function processTargetIsAlive(target: number): boolean {
   try {
-    process.kill(pid, 0);
+    process.kill(target, 0);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") {
@@ -22,39 +33,72 @@ export async function terminateProcessTree(
   pid: number,
   { signal = "SIGTERM", timeoutMs = 2000 }: TerminateProcessTreeOptions = {},
 ): Promise<void> {
+  if (processGroupIsAlive(pid)) {
+    await terminateProcessGroup(pid, { signal, timeoutMs });
+    return;
+  }
   if (!pidIsAlive(pid)) {
     return;
   }
-  signalPidOrGroup(pid, signal);
-  await waitForExit(pid, timeoutMs);
+  signalPid(pid, signal);
+  await waitForTargetExit(() => pidIsAlive(pid), () => signalPid(pid, "SIGKILL"), timeoutMs);
 }
 
-async function waitForExit(pid: number, timeoutMs: number): Promise<void> {
+export async function terminateProcessGroup(
+  processGroupId: number,
+  { signal = "SIGTERM", timeoutMs = 2000 }: TerminateProcessTreeOptions = {},
+): Promise<void> {
+  if (process.platform === "win32") {
+    return;
+  }
+  if (!processGroupIsAlive(processGroupId)) {
+    return;
+  }
+  signalProcessGroup(processGroupId, signal);
+  await waitForTargetExit(
+    () => processGroupIsAlive(processGroupId),
+    () => signalProcessGroup(processGroupId, "SIGKILL"),
+    timeoutMs,
+  );
+}
+
+async function waitForTargetExit(
+  isAlive: () => boolean,
+  forceKill: () => void,
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (pidIsAlive(pid)) {
+  while (isAlive()) {
     if (Date.now() >= deadline) {
-      signalPidOrGroup(pid, "SIGKILL");
+      forceKill();
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   const killDeadline = Date.now() + 1000;
-  while (pidIsAlive(pid) && Date.now() < killDeadline) {
+  while (isAlive() && Date.now() < killDeadline) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
 
-function signalPidOrGroup(pid: number, signal: NodeJS.Signals): void {
+function signalProcessGroup(processGroupId: number, signal: NodeJS.Signals): void {
   try {
-    process.kill(-pid, signal);
+    process.kill(-processGroupId, signal);
   } catch (error) {
-    try {
-      process.kill(pid, signal);
-    } catch (fallbackError) {
-      if ((fallbackError as NodeJS.ErrnoException).code === "ESRCH") {
-        return;
-      }
-      throw fallbackError;
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return;
     }
+    throw error;
+  }
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return;
+    }
+    throw error;
   }
 }

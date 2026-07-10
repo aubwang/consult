@@ -179,6 +179,13 @@ Normal background Jobs use one detached Broker per active Job:
 6. The Job finalizes, the Profile process is disposed, and Broker live state is
    removed.
 
+On POSIX systems, each Profile launch owns a new process group. Disposal closes
+ACP stdin for a short graceful window, then signals the whole group with
+SIGTERM and escalates to SIGKILL. Group liveness is checked independently of
+the direct child pid so a descendant cannot survive merely because the group
+leader exited first. Initialization failure and timeout use the same cleanup
+path.
+
 Isolated background Jobs may run the shared runtime inline inside their already
 detached worker. This keeps original Workspace state separate from the
 Execution Workspace without creating a second daemon contract. The worker pid

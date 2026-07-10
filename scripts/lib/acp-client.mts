@@ -26,6 +26,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { buildAgentLaunch } from "./process-sandbox.mts";
+import { terminateProcessGroup } from "./process.mts";
 
 // Some older ACP agents only expose resume through the unstable method name.
 export type AcpConnection = ClientSideConnection & {
@@ -233,8 +234,10 @@ export async function startAgent({
   const agentChild = spawn(launch.binary, launch.args, {
     cwd: launch.cwd,
     env: launch.env,
+    detached: process.platform !== "win32",
     stdio: ["pipe", "pipe", "pipe"],
   });
+  const processGroupId = process.platform === "win32" ? undefined : agentChild.pid;
   let alive = true;
   let stderr = "";
 
@@ -272,9 +275,6 @@ export async function startAgent({
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
       const error = agentInitError("AGENT_INIT_TIMEOUT", stderr);
-      if (alive) {
-        agentChild.kill();
-      }
       reject(error);
     }, initTimeoutMs);
   });
@@ -302,17 +302,22 @@ export async function startAgent({
         throw error;
       });
 
-    capabilities = await Promise.race([
-      initializePromise,
-      exitPromise.then(async () => {
-        await Promise.race([stderrClosedPromise, delay(50)]);
-        throw agentInitError("AGENT_INIT_FAILED", stderr);
-      }),
-      spawnErrorPromise.then((error) => {
-        throw agentInitError("AGENT_INIT_FAILED", stderr || error.message);
-      }),
-      timeoutPromise,
-    ]);
+    try {
+      capabilities = await Promise.race([
+        initializePromise,
+        exitPromise.then(async () => {
+          await Promise.race([stderrClosedPromise, delay(50)]);
+          throw agentInitError("AGENT_INIT_FAILED", stderr);
+        }),
+        spawnErrorPromise.then((error) => {
+          throw agentInitError("AGENT_INIT_FAILED", stderr || error.message);
+        }),
+        timeoutPromise,
+      ]);
+    } catch (error) {
+      await disposeAgentChild(false);
+      throw error;
+    }
   } finally {
     clearTimeout(timeoutId);
   }
@@ -321,9 +326,23 @@ export async function startAgent({
     connection,
     capabilities,
     agentChild,
-    async dispose() {
+    dispose: async () => await disposeAgentChild(true),
+  };
+
+  async function disposeAgentChild(graceful: boolean): Promise<void> {
+    if (agentChild.pid === undefined) {
+      agentChild.stdin.destroy();
+      return;
+    }
+    if (graceful && !agentChild.stdin.destroyed) {
       agentChild.stdin.end();
       await waitForExit(agentChild, 250);
+    }
+    if (processGroupId !== undefined) {
+      await terminateProcessGroup(processGroupId, {
+        timeoutMs: DISPOSE_SIGTERM_TIMEOUT_MS,
+      });
+    } else {
       if (alive) {
         agentChild.kill();
         await waitForExit(agentChild, DISPOSE_SIGTERM_TIMEOUT_MS);
@@ -331,9 +350,9 @@ export async function startAgent({
       if (alive) {
         agentChild.kill("SIGKILL");
       }
-      await onceExit(agentChild);
-    },
-  };
+    }
+    await onceExit(agentChild);
+  }
 }
 
 function buildClient(clientHandlers: ClientHandlers, sessionUpdateState: SessionUpdateState): Client {

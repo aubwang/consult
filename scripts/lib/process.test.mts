@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 
-import { pidIsAlive, terminateProcessTree } from "./process.mts";
+import {
+  pidIsAlive,
+  processGroupIsAlive,
+  terminateProcessGroup,
+  terminateProcessTree,
+} from "./process.mts";
 
 test("terminateProcessTree terminates a running child process", async (t) => {
   const child = await spawnNodeChild(t, "setInterval(() => {}, 1000)");
@@ -40,6 +45,32 @@ test("terminateProcessTree escalates to SIGKILL when SIGTERM is ignored", async 
   assert.ok(Date.now() - startedAt < 500);
 });
 
+test("terminateProcessGroup kills a grandchild after its group leader exits", async (t) => {
+  const pidPath = path.join(os.tmpdir(), `consult-grandchild-pid-${process.pid}-${Date.now()}`);
+  t.after(() => fs.unlink(pidPath).catch(() => {}));
+  const leader = await spawnNodeChild(
+    t,
+    `const { spawn } = require('node:child_process');
+     const fs = require('node:fs');
+     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+     child.unref();
+     fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+  );
+  if (!leader) return;
+  await waitForFile(pidPath);
+  await waitForChildExit(leader);
+  const grandchildPid = Number(await fs.readFile(pidPath, "utf8"));
+
+  assert.equal(pidIsAlive(leader.pid), false);
+  assert.equal(processGroupIsAlive(leader.pid), true);
+  assert.equal(pidIsAlive(grandchildPid), true);
+
+  await terminateProcessGroup(leader.pid);
+
+  assert.equal(processGroupIsAlive(leader.pid), false);
+  assert.equal(pidIsAlive(grandchildPid), false);
+});
+
 async function spawnNodeChild(
   t: TestContext,
   code: string,
@@ -66,8 +97,10 @@ async function spawnNodeChild(
 
   child.unref();
   t.after(() => {
-    if (pidIsAlive(child.pid)) {
+    if (processGroupIsAlive(child.pid)) {
       process.kill(-child.pid, "SIGKILL");
+    } else if (pidIsAlive(child.pid)) {
+      process.kill(child.pid, "SIGKILL");
     }
   });
   return child;
@@ -87,4 +120,11 @@ async function waitForFile(filePath: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`timed out waiting for ${filePath}`);
+}
+
+async function waitForChildExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
 }
