@@ -12,6 +12,7 @@
     "scripts/**/*.test.mts",
     "scripts/**/__fixtures__/**",
     "scripts/live-companion-disconnect-drill.mts",
+    "scripts/live-job-authority-conformance.mts",
     "scripts/live-sandbox-runtime-codex-spike.mts"
   ]
 }
