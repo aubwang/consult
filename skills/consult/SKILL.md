@@ -74,16 +74,29 @@ Forward user arguments directly to `consult`. Do not inspect
 consult setup
 consult setup --install codex
 consult agents --set codex --host codex
+consult doctor --agent codex
 ```
 
 ## Safety Defaults
 
-- Default delegated work to `--read-only`.
+- Delegation defaults to read-only, Consult-managed confinement. Built-in
+  `codex` and `claude` Profiles are confined on native Linux and macOS after an
+  exact Profile preflight; a failed preflight creates no Job.
+- `consult doctor` runs that live preflight: it briefly stages the selected
+  credential and initializes/disposes the Profile, but sends no model prompt.
 - Use `--include-diff` or `review` when the Profile needs an immutable snapshot
   of current changes.
 - When edits are explicitly requested, prefer `--write --isolated`; Consult
   returns a patch artifact without changing the invoking checkout.
-- Do not pass `--allow-exec`; it currently fails preflight because the existing
-  bubblewrap backend is filesystem-only and does not confine network egress.
+- Add `--allow-fetch` only when task-specific public HTTPS research is worth
+  delegating. The Profile holds its selected model credential, so fetch
+  increases prompt-injection exfiltration risk; the Host may search instead.
+- `--sandbox inherit` is a deliberate trusted-Host escape hatch with no Consult
+  OS boundary. Never retry with it silently after confined preflight fails.
+- Custom and `opencode` Profiles currently require explicit inheritance.
+  Confined nested delegation and native Windows (including inheritance) are
+  unsupported.
+- Do not pass `--allow-exec`; execute-specific resource limits and
+  cross-Profile conformance remain incomplete, so it fails preflight.
 - Prefer `--json` when parsing Job output. Public Job JSON is versioned and
   grouped under `job`, `outcome`, `artifacts`, and `lineage`.

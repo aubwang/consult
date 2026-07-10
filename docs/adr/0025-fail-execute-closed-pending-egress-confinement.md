@@ -1,6 +1,10 @@
 # Fail execute closed pending egress confinement
 
-Status: Accepted
+Status: Superseded by ADR-0027
+
+ADR-0027 preserves the fail-closed execute decision after adding confined
+model transport, and extends the remaining gate to execute-specific resource
+containment and cross-Profile/OS conformance.
 
 Consult rejects `delegate --allow-exec` during argument validation and denies
 ACP execute permission defensively even when an internal caller supplies

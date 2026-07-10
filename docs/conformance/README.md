@@ -2,16 +2,23 @@
 
 Live conformance status for the implemented Consult Profiles.
 
-Experimental confinement work is recorded separately from shipped Profile
-conformance. The pinned Sandbox Runtime candidate is currently **rejected for
-the macOS Codex Host path** because it cannot establish its own proxy or nested
-Seatbelt boundary inside Codex's inherited sandbox. See the
+Job Authority confinement is now implemented for the built-in Codex and Claude
+Profile identities on native Linux/macOS, with exact live preflight deciding
+whether the current Host context is usable. The pinned runtime remains
+**rejected for the nested macOS Codex Host path** because it cannot establish
+its own proxy or Seatbelt boundary inside Codex's inherited sandbox. See the
 [macOS Codex Sandbox Runtime spike](sandbox-runtime-codex-macos.md). This does
-not imply a global runtime result or change shipped sandbox behavior. The
+not imply a global macOS result: the unrestricted terminal control passed. The
 [Linux Codex Sandbox Runtime spike](sandbox-runtime-codex-linux.md) records a
 compatibility KEEP for two explicitly tested Host contexts and a KILL when
 Codex's outer network-disabled seccomp policy blocks nested networking and the
 runtime proxy listener.
+
+On 2026-07-10, the integrated Linux adapter completed real confined turns for
+Codex (`gpt-5.5`, Job `job-oHDFssztfWc9`) and Claude (`fable`, Job
+`job-u63Nh1CpUIXf`). Both used direct-network denial and the authenticated model
+proxy. Product-level macOS adapter conformance remains to be run from the Mac;
+the older spike is necessary evidence but not a substitute for that final run.
 
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -39,28 +46,27 @@ The backstop's path-extraction (`extractTouchedPath` in `scripts/consult-broker.
 
 Both codex and claude shapes are unit-tested in `scripts/consult-broker.test.mts`. Opencode appears to share the codex-style shape from live testing (`auto_approved: false` but rawInput.path on the tool call); not separately unit-fixtured.
 
-## Workspace-level filesystem sandbox
+## Job Authority confinement
 
-None of the backstops above are a hard boundary by themselves.
-`CONSULT_AGENT_SANDBOX=bwrap` adds an opt-in bubblewrap layer around the ACP
-agent process: read-only jobs mount the workspace read-only, and write jobs mount
-only the workspace writable. It is off by default because real backends may need
-explicit auth/config mounts before they can run inside the namespace. The
-`claude` registry profile now mounts host `~/.claude` read-only at `/tmp/.claude`
-inside the sandbox.
+The cooperative ACP/backstop results above are not hard boundaries by
+themselves. Current `delegate` and `review` requests default to canonical
+read-only confined Job Authority. Built-in Codex and Claude launches receive a
+private Job home/temp directory, a copied credential file or one selected
+credential environment variable, Workspace access according to mode, and no
+direct network. Model traffic uses an authenticated pinned-address proxy;
+`--allow-fetch` deliberately broadens it to public HTTPS.
 
-The `codex` registry profile mounts selected host `~/.codex` auth/config files
-read-only into a writable sandbox `~/.codex`. Mounting the whole directory
-read-only authenticated Codex but broke runtime/helper writes, so the narrower
-file mount is the supported shape.
+Whole Host config is not staged: Codex `config.toml` and Claude `settings.json`
+are absent. Exact Profile initialization happens before Job creation, and
+`consult doctor` runs that same live check. `--sandbox inherit` is an explicit
+ambient-authority escape hatch and is never an automatic retry. The opencode
+and custom Profile paths currently require inheritance; native Windows and
+confined nesting are unsupported.
 
-The `opencode` registry profile may require provider credentials from the host
-environment. In the live proof, no secret value was printed or persisted by
-Consult.
-
-On 2026-05-19, release-readiness probes reran and passed direct CLI,
-unsandboxed Consult delegation, and `CONSULT_AGENT_SANDBOX=bwrap` Consult
-delegation for `claude`, `codex`, and `opencode`.
+The older `CONSULT_AGENT_SANDBOX=bwrap` results below remain historical
+conformance evidence for the legacy backend, not the current default contract.
+On 2026-05-19 those probes passed direct CLI, unsandboxed Consult delegation,
+and the optional legacy bubblewrap path for Claude, Codex, and opencode.
 
 On 2026-05-22, Host autodetection was live-verified for the primary supporter
 goal: `consult delegate --agent opencode` returned

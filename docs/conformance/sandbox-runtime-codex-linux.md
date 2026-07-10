@@ -8,8 +8,10 @@ with full outer networking. Kill it under the tested Codex filesystem sandbox
 with networking disabled. None of these compatibility results ships product
 confinement or proves Profile/model transport.
 
-This report is spike evidence only. It does not change the current
-`off | bwrap` sandbox surface and does not establish or supersede an ADR.
+This report remains spike evidence. ADR-0027 later adopted portable Job
+Authority; the integrated adapter has separate real Profile canaries and still
+uses these results to reject Host contexts whose outer seccomp/network policy
+prevents the confined boundary from starting.
 
 ## Candidate and environment
 
