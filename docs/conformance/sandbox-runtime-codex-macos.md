@@ -51,7 +51,7 @@ initialization, wrapped `/usr/bin/true`, and proxy cleanup all passed. This
 control isolates the incompatibility to nesting under the Codex Host rather
 than a broken package or unsupported Mac.
 
-## Secondary blockers found by static and native audit
+## Secondary blockers found by static audit
 
 These did not need to be reached to make the Host-specific kill decision, but
 they remain required gates if nesting becomes possible:
