@@ -35,6 +35,7 @@ Then run the fail-closed control from the already-sandboxed macOS Codex Host:
 
 ```sh
 bun run conformance:job-authority -- --agent codex --expect unsupported
+bun run conformance:job-authority -- --agent claude --expect unsupported
 ```
 
 The harness emits one redacted JSON object. Doctor/preflight performs real ACP
