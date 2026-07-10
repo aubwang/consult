@@ -31,7 +31,7 @@ export function stringFlag(value: unknown): string | undefined {
 
 export function boolFlag(value: unknown): boolean {
   const last = Array.isArray(value) ? value.at(-1) : value;
-  return last !== undefined && last !== false;
+  return last === true || last === "true";
 }
 
 export function missingFlagValueError(

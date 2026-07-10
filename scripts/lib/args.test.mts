@@ -110,6 +110,8 @@ test("boolFlag honors explicit false and undefined", () => {
   assert.equal(boolFlag(true), true);
   assert.equal(boolFlag("true"), true);
   assert.equal(boolFlag(false), false);
+  assert.equal(boolFlag("false"), false);
+  assert.equal(boolFlag("anything-else"), false);
   assert.equal(boolFlag(undefined), false);
   // The last occurrence wins for repeated flags.
   assert.equal(boolFlag([true, false]), false);
