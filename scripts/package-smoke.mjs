@@ -127,6 +127,8 @@ async function assertInstalledBackgroundJob(binary, temporaryRoot) {
       "--agent",
       "broken-smoke-profile",
       "--read-only",
+      "--sandbox",
+      "inherit",
       "--background",
       "--json",
       "--",
