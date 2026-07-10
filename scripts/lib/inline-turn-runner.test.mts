@@ -17,6 +17,12 @@ import type { JobRecord } from "./job-records.mts";
 import { runCancel } from "./companion/cancel.mts";
 import { runDelegateOnce } from "./companion/delegate-core.mts";
 import { createInlineClient } from "./inline-turn-runner.mts";
+import {
+  JOB_LOG_LIMIT_EXCEEDED,
+  JOB_WALL_CLOCK_LIMIT_EXCEEDED,
+  jobLimitErrorMessage,
+  jobLogLineBytes,
+} from "./job-reliability.mts";
 
 const fakeAgentPath = fileURLToPath(
   new URL("./__fixtures__/fake-acp-agent.mts", import.meta.url),
@@ -185,6 +191,116 @@ test("inline runner rejects stale canonical authority before Profile launch", as
     },
   );
   assert.equal(process.listenerCount("SIGINT"), beforeSigintListeners);
+});
+
+test("inline wall-clock limit cancels and disposes the Profile before finalizing failed", async (t) => {
+  const { workspaceRoot, dataDir, dir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const cancelLog = path.join(dir, "limit-cancel.ndjson");
+  const inheritedAuthority = authority({ confinement: "inherit" });
+  let wallClockHandler: (() => void) | undefined;
+  const timer = { unref() {} } as unknown as NodeJS.Timeout;
+  const client = createInlineClient({
+    workspaceRoot,
+    host: "terminal",
+    hostSessionId: "default",
+    profile: "codex",
+    authority: inheritedAuthority,
+    profileEntry: profileEntryFixture("prompt-cancel-ack", {
+      CONSULT_FAKE_AGENT_CANCEL_LOG: cancelLog,
+    }),
+    maxWallClockMs: 25,
+    scheduleWallClock(handler, milliseconds) {
+      assert.equal(milliseconds, 25);
+      wallClockHandler = handler;
+      return timer;
+    },
+    clearWallClock() {},
+  });
+  let updateResolve!: () => void;
+  const sawUpdate = new Promise<void>((resolve) => {
+    updateResolve = resolve;
+  });
+  client.on("consult/update", () => updateResolve());
+  const finalized = new Promise<any>((resolve) => client.on("consult/finalized", resolve));
+
+  await client.request("consult/run", {
+    jobId: "job-inline-wall-limit",
+    prompt: "keep working",
+    profile: "codex",
+    authority: inheritedAuthority,
+    mode: "read-only",
+  });
+  await sawUpdate;
+  assert.ok(wallClockHandler);
+  wallClockHandler!();
+
+  const notification = await finalized;
+  assert.equal(notification.stopReason, "failed");
+  assert.match(notification.errorMessage, new RegExp(`^${JOB_WALL_CLOCK_LIMIT_EXCEEDED}:`));
+  const record = await readJobRecordFile(workspaceRoot, "job-inline-wall-limit");
+  assert.equal(record.status, "failed");
+  assert.equal(record.finalText, "slow");
+  assert.match(record.errorMessage ?? "", new RegExp(`^${JOB_WALL_CLOCK_LIMIT_EXCEEDED}:`));
+  assert.deepEqual(await readNdjson(cancelLog), [{ sessionId: "sess-1" }]);
+});
+
+test("inline log limit keeps persisted NDJSON bounded and finalizes with a stable diagnostic", async (t) => {
+  const { workspaceRoot, dataDir, dir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const jobId = "job-inline-log-limit";
+  const maxPersistedLogBytes = 256;
+  const terminalParams = {
+    jobId,
+    stopReason: "failed",
+    sessionId: null,
+    errorMessage: jobLimitErrorMessage(JOB_LOG_LIMIT_EXCEEDED, maxPersistedLogBytes),
+  };
+  const updateParams = {
+    jobId,
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "slow" },
+    },
+  };
+  assert.ok(jobLogLineBytes("consult/finalized", terminalParams) <= maxPersistedLogBytes);
+  assert.ok(
+    jobLogLineBytes("consult/finalized", terminalParams) +
+      jobLogLineBytes("consult/update", updateParams) >
+      maxPersistedLogBytes,
+  );
+  const cancelLog = path.join(dir, "log-limit-cancel.ndjson");
+  const jobRecord = queuedJobRecord(jobId);
+
+  const result = await runDelegateOnce({
+    workspaceRoot,
+    profileEntry: profileEntryFixture("prompt-cancel-ack", {
+      CONSULT_FAKE_AGENT_CANCEL_LOG: cancelLog,
+    }),
+    jobRecord,
+    prompt: "keep writing",
+    inline: true,
+    deps: {
+      ensureBrokerSession: async (input) => ({
+        client: createInlineClient({
+          ...input,
+          maxPersistedLogBytes,
+        }),
+      }),
+    },
+    output: collectOutput(),
+  });
+
+  assert.equal(result.exitCode, 6);
+  const record = await readJobRecordFile(workspaceRoot, jobId);
+  assert.equal(record.status, "failed");
+  assert.equal(record.finalText, "");
+  assert.match(record.errorMessage ?? "", new RegExp(`^${JOB_LOG_LIMIT_EXCEEDED}:`));
+  const logStat = await fs.stat(jobLogPath(workspaceRoot, jobId));
+  assert.ok(logStat.size <= maxPersistedLogBytes);
+  const entries = await readLogEntries(workspaceRoot, jobId);
+  assert.deepEqual(entries.map((entry) => entry.method), ["consult/finalized"]);
+  assert.deepEqual(await readNdjson(cancelLog), [{ sessionId: "sess-1" }]);
 });
 
 test("inline runner applies model and effort before prompting", async (t) => {

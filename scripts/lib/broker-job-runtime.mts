@@ -16,6 +16,14 @@ import { isInsideWorkspaceSync } from "./path-safety.mts";
 import { extractAgentMessageText } from "./session-update-renderer.mts";
 import type { JobAuthority } from "./job-authority.mts";
 import { canonicalizeRunParams } from "./job-agent.mts";
+import {
+  DEFAULT_JOB_LOG_LIMIT_BYTES,
+  DEFAULT_JOB_WALL_CLOCK_LIMIT_MS,
+  JOB_LOG_LIMIT_EXCEEDED,
+  JOB_WALL_CLOCK_LIMIT_EXCEEDED,
+  jobLimitErrorMessage,
+  jobLogLineBytes,
+} from "./job-reliability.mts";
 
 import type { ConsultRunParams } from "../consult-broker.mts";
 
@@ -109,6 +117,9 @@ export interface BrokerJob {
   originatorSocket: BrokerJobSocketLike;
   cancelRequested: boolean;
   cancelAckTimer: NodeJS.Timeout | null;
+  wallClockTimer: NodeJS.Timeout | null;
+  persistedLogBytes: number;
+  terminalLogReserveBytes: number;
   deniedPermissionSeen: boolean;
   deniedPermissionToolCallIds: Set<string>;
   workspaceRoot: string;
@@ -125,6 +136,10 @@ export interface CreateBrokerJobRuntimeOptions {
   onActivity?(): void;
   onTerminal?(job: BrokerJob): void;
   maxFinalTextChars?: number;
+  maxWallClockMs?: number;
+  maxPersistedLogBytes?: number;
+  scheduleWallClock?(handler: () => void, milliseconds: number): NodeJS.Timeout;
+  clearWallClock?(timer: NodeJS.Timeout): void;
 }
 
 export interface BrokerJobRuntime {
@@ -162,7 +177,13 @@ export function createBrokerJobRuntime({
   onActivity = () => {},
   onTerminal = () => {},
   maxFinalTextChars = DEFAULT_MAX_FINAL_TEXT_CHARS,
+  maxWallClockMs = DEFAULT_JOB_WALL_CLOCK_LIMIT_MS,
+  maxPersistedLogBytes = DEFAULT_JOB_LOG_LIMIT_BYTES,
+  scheduleWallClock = defaultScheduleWallClock,
+  clearWallClock = defaultClearWallClock,
 }: CreateBrokerJobRuntimeOptions): BrokerJobRuntime {
+  assertPositiveLimit("maxWallClockMs", maxWallClockMs);
+  assertPositiveLimit("maxPersistedLogBytes", maxPersistedLogBytes);
   const stateWorkspaceRoot = config.stateWorkspaceRoot ?? config.cwd;
   const sessionJobs = new Map<string | null, BrokerJob>();
   const activeJobs = new Map<string, BrokerJob>();
@@ -216,6 +237,9 @@ export function createBrokerJobRuntime({
         originatorSocket,
         cancelRequested: false,
         cancelAckTimer: null,
+        wallClockTimer: null,
+        persistedLogBytes: 0,
+        terminalLogReserveBytes: 0,
         deniedPermissionSeen: false,
         deniedPermissionToolCallIds: new Set(),
         workspaceRoot: config.cwd,
@@ -223,7 +247,23 @@ export function createBrokerJobRuntime({
         completedAt: null,
         finalText: "",
       };
+      job.terminalLogReserveBytes = jobLogLineBytes(
+        "consult/finalized",
+        { jobId: job.jobId, ...logLimitFinalized() },
+      );
+      if (job.terminalLogReserveBytes > maxPersistedLogBytes) {
+        throw new Error(
+          `maxPersistedLogBytes is too small for the terminal Job limit diagnostic`,
+        );
+      }
       activeJobs.set(canonicalParams.jobId, job);
+      job.wallClockTimer = scheduleWallClock(() => {
+        void failJobForReliabilityLimit(
+          job,
+          jobLimitErrorMessage(JOB_WALL_CLOCK_LIMIT_EXCEEDED, maxWallClockMs),
+        );
+      }, maxWallClockMs);
+      job.wallClockTimer.unref?.();
       onActivity();
       return job;
     },
@@ -268,6 +308,19 @@ export function createBrokerJobRuntime({
         return;
       }
       if (job?.status === "running") {
+        const notification = { jobId: job.jobId, update };
+        const updateBytes = jobLogLineBytes("consult/update", notification);
+        if (
+          job.persistedLogBytes + updateBytes + job.terminalLogReserveBytes >
+          maxPersistedLogBytes
+        ) {
+          await failJobForReliabilityLimit(
+            job,
+            jobLimitErrorMessage(JOB_LOG_LIMIT_EXCEEDED, maxPersistedLogBytes),
+          );
+          return;
+        }
+        job.persistedLogBytes += updateBytes;
         writeJobUpdate(job, update);
       }
     },
@@ -282,32 +335,34 @@ export function createBrokerJobRuntime({
     },
     async finalizeJob(job, finalized) {
       clearCancelAckTimer(job);
+      clearWallClockTimer(job);
       job.status = "finalized";
-      job.finalized = finalized;
+      job.finalized = boundedFinalized(job, finalized);
       job.completedAt = new Date().toISOString();
       sessionJobs.delete(job.sessionId);
       // ACP sessions outlive prompt turns; keep sessionModes until broker shutdown.
       // Persisted terminal state and finalized notifications are readiness
       // boundaries: observers may immediately submit the next Job.
       busy = false;
-      await writeJobRecord(job, finalized);
+      await writeJobRecord(job, job.finalized);
       // Keep finalized jobs for this daemon lifetime; eviction is deferred for v1.
-      notifyFinalized(job, finalized);
+      notifyFinalized(job, job.finalized);
       onActivity();
       onTerminal(job);
     },
     async failJob(job, errorMessage) {
       clearCancelAckTimer(job);
+      clearWallClockTimer(job);
       if (job.status === "finalized") {
         return;
       }
       job.status = "finalized";
       job.completedAt = new Date().toISOString();
-      job.finalized = {
+      job.finalized = boundedFinalized(job, {
         stopReason: "failed",
         sessionId: job.sessionId,
         errorMessage,
-      };
+      });
       sessionJobs.delete(job.sessionId);
       busy = false;
       await writeFailedJobRecord(job);
@@ -335,6 +390,7 @@ export function createBrokerJobRuntime({
     },
     noteTurnSettled(job) {
       clearCancelAckTimer(job);
+      clearWallClockTimer(job);
     },
     handleSocketClosed(socket) {
       for (const job of activeJobs.values()) {
@@ -375,14 +431,15 @@ export function createBrokerJobRuntime({
 
   async function failJobForPolicyViolation(job: BrokerJob, errorMessage: string) {
     clearCancelAckTimer(job);
+    clearWallClockTimer(job);
     // Defense in depth: an auto-approved edit update can arrive after the edit already hit disk.
     job.status = "finalized";
     job.completedAt = new Date().toISOString();
-    job.finalized = {
+    job.finalized = boundedFinalized(job, {
       stopReason: "failed",
       sessionId: job.sessionId,
       errorMessage,
-    };
+    });
     sessionJobs.delete(job.sessionId);
     // Busy stays set until the violated prompt turn settles (or the cancel-ack
     // timer fires), so a second consult/run cannot interleave prompt turns.
@@ -397,6 +454,36 @@ export function createBrokerJobRuntime({
     onTerminal(job);
   }
 
+  async function failJobForReliabilityLimit(job: BrokerJob, errorMessage: string) {
+    if (job.status !== "running") {
+      return;
+    }
+    clearCancelAckTimer(job);
+    clearWallClockTimer(job);
+    job.status = "finalized";
+    job.completedAt = new Date().toISOString();
+    job.finalized = boundedFinalized(job, {
+      stopReason: "failed",
+      sessionId: null,
+      errorMessage,
+    });
+    sessionJobs.delete(job.sessionId);
+    job.cancelRequested = true;
+    if (job.sessionId) {
+      startCancelAckTimer(job);
+      ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
+    // The subscriber persists the same terminal outcome after receiving the
+    // notification. Do not suppress cleanup/finalization if this first write
+    // fails because a full disk is itself a likely log-limit symptom.
+    await writeFailedJobRecord(job).catch(() => {});
+    notifyFinalized(job, job.finalized);
+    onActivity();
+    onTerminal(job);
+  }
+
   function startCancelAckTimer(job: BrokerJob) {
     if (job.cancelAckTimer) {
       return;
@@ -404,13 +491,14 @@ export function createBrokerJobRuntime({
     job.cancelAckTimer = setTimeout(() => {
       job.cancelAckTimer = null;
       if (job.status === "running") {
+        clearWallClockTimer(job);
         job.status = "finalized";
         job.completedAt = new Date().toISOString();
-        job.finalized = {
+        job.finalized = boundedFinalized(job, {
           stopReason: "failed",
           sessionId: job.sessionId,
           errorMessage: "agent did not acknowledge cancel",
-        };
+        });
         sessionJobs.delete(job.sessionId);
         writeFailedJobRecord(job).catch(() => {});
         busy = false;
@@ -430,6 +518,44 @@ export function createBrokerJobRuntime({
       clearTimeout(job.cancelAckTimer);
       job.cancelAckTimer = null;
     }
+  }
+
+  function clearWallClockTimer(job: BrokerJob) {
+    if (job.wallClockTimer) {
+      clearWallClock(job.wallClockTimer);
+      job.wallClockTimer = null;
+    }
+  }
+
+  function boundedFinalized(
+    job: BrokerJob,
+    finalized: BrokerJobFinalized,
+  ): BrokerJobFinalized {
+    let selected = finalized;
+    let bytes = jobLogLineBytes("consult/finalized", {
+      jobId: job.jobId,
+      ...selected,
+    });
+    if (job.persistedLogBytes + bytes > maxPersistedLogBytes) {
+      selected = logLimitFinalized();
+      bytes = jobLogLineBytes("consult/finalized", {
+        jobId: job.jobId,
+        ...selected,
+      });
+    }
+    if (job.persistedLogBytes + bytes > maxPersistedLogBytes) {
+      throw new Error("terminal Job limit diagnostic exceeds maxPersistedLogBytes");
+    }
+    job.persistedLogBytes += bytes;
+    return selected;
+  }
+
+  function logLimitFinalized(): BrokerJobFinalized {
+    return {
+      stopReason: "failed",
+      sessionId: null,
+      errorMessage: jobLimitErrorMessage(JOB_LOG_LIMIT_EXCEEDED, maxPersistedLogBytes),
+    };
   }
 
   function notifyFinalized(job: BrokerJob, finalized: BrokerJobFinalized) {
@@ -461,6 +587,20 @@ export function createBrokerJobRuntime({
       }
       throw error;
     }
+  }
+}
+
+function defaultScheduleWallClock(handler: () => void, milliseconds: number): NodeJS.Timeout {
+  return setTimeout(handler, milliseconds);
+}
+
+function defaultClearWallClock(timer: NodeJS.Timeout): void {
+  clearTimeout(timer);
+}
+
+function assertPositiveLimit(name: string, value: number): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive finite number`);
   }
 }
 

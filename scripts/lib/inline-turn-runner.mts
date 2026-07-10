@@ -3,7 +3,11 @@ import os from "node:os";
 import { cancelPrompt } from "./acp-client.mts";
 import type { StartedAgent } from "./acp-client.mts";
 import { createBrokerJobRuntime } from "./broker-job-runtime.mts";
-import type { BrokerJob, BrokerJobSocketLike } from "./broker-job-runtime.mts";
+import type {
+  BrokerJob,
+  BrokerJobSocketLike,
+  CreateBrokerJobRuntimeOptions,
+} from "./broker-job-runtime.mts";
 import type { BrokerProfileEntry } from "./broker-lifecycle.mts";
 import {
   agentErrorMessage,
@@ -47,6 +51,14 @@ import type { ConsultRunParams } from "../consult-broker.mts";
 
 export const INLINE_CANCEL_ACK_TIMEOUT_MS = 2000;
 
+export type InlineJobReliabilityOptions = Pick<
+  CreateBrokerJobRuntimeOptions,
+  | "maxWallClockMs"
+  | "maxPersistedLogBytes"
+  | "scheduleWallClock"
+  | "clearWallClock"
+>;
+
 export async function ensureInlineSession(
   input: EnsureBrokerSessionInput,
 ): Promise<EnsureBrokerSessionResult> {
@@ -62,7 +74,13 @@ export function createInlineClient({
   authority: expectedAuthority,
   profileEntry,
   cancelAckTimeoutMs = INLINE_CANCEL_ACK_TIMEOUT_MS,
-}: EnsureBrokerSessionInput & { cancelAckTimeoutMs?: number }): PromptTurnBrokerClient {
+  maxWallClockMs,
+  maxPersistedLogBytes,
+  scheduleWallClock,
+  clearWallClock,
+}: EnsureBrokerSessionInput &
+  { cancelAckTimeoutMs?: number } &
+  InlineJobReliabilityOptions): PromptTurnBrokerClient {
   const entry = profileEntry as BrokerProfileEntry;
   const sandbox = normalizeAgentSandbox(process.env.CONSULT_AGENT_SANDBOX);
   const handlers = new Map<string, (notification: unknown) => void>();
@@ -101,6 +119,10 @@ export function createInlineClient({
       }
       handlers.get(method)?.(params);
     },
+    maxWallClockMs,
+    maxPersistedLogBytes,
+    scheduleWallClock,
+    clearWallClock,
   });
 
   process.on("SIGINT", onSignal);
