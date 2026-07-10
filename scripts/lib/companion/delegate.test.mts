@@ -67,11 +67,19 @@ test("delegate streams agent text and finalizes the job record", async (t) => {
   assert.equal(record.hostSessionId, "claude-1");
   assert.equal(record.sessionId, "session-1");
   assert.equal(record.mode, "read-only");
+  assert.deepEqual(record.authority, {
+    schemaVersion: 1,
+    mode: "read-only",
+    confinement: "confined",
+    allowFetch: false,
+    allowExecute: false,
+  });
   assert.equal(record.chainId, "job-happy");
   assert.equal(record.parentJobId, null);
   assert.equal(record.delegationDepth, 0);
   assert.equal(record.finalText, "hello world");
   assert.equal(request.params.mode, "read-only");
+  assert.deepEqual(request.params.authority, record.authority);
   assert.equal(request.params.chainId, "job-happy");
   assert.equal(request.params.parentJobId, null);
   assert.equal(request.params.delegationDepth, 0);
@@ -107,6 +115,8 @@ test("delegate honors explicit write mode", async (t) => {
 
   assert.equal(result.exitCode, 0);
   assert.equal(record.mode, "write");
+  assert.equal(record.authority.mode, "write");
+  assert.equal(record.authority.confinement, "confined");
   assert.equal(request.params.mode, "write");
 });
 
@@ -198,12 +208,31 @@ test("delegate validates isolated and execute opt-ins before workspace discovery
   assert.equal(isolatedWithoutWrite.exitCode, 2);
   assert.equal(isolatedWithoutWrite.stderr, "--isolated requires --write\n");
   assert.equal(executeWithoutIsolation.exitCode, 2);
-  assert.equal(executeWithoutIsolation.stderr, "--allow-exec requires --write --isolated\n");
+  assert.match(executeWithoutIsolation.stderr, /^AUTHORITY_INVALID:/u);
+  assert.match(executeWithoutIsolation.stderr, /--write --isolated/u);
   assert.equal(executeUnavailable.exitCode, 2);
-  assert.equal(
-    executeUnavailable.stderr,
-    "--allow-exec is unavailable until Consult enforces proxy-confined networking\n",
-  );
+  assert.match(executeUnavailable.stderr, /^AUTHORITY_EXECUTE_UNAVAILABLE:/u);
+  assert.match(executeUnavailable.stderr, /Remove --allow-exec/u);
+});
+
+test("delegate validates fetch confinement and emits a structured authority error", async () => {
+  const result = await runDelegate({
+    args: {
+      positional: ["research"],
+      flags: { "allow-fetch": true, sandbox: "inherit", json: true },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  const diagnostic = JSON.parse(result.stderr);
+  assert.equal(diagnostic.schemaVersion, 1);
+  assert.equal(diagnostic.error.code, "AUTHORITY_INVALID");
+  assert.equal(diagnostic.error.reason, "fetch-requires-confined");
 });
 
 test("delegate pins one bounded diff into the actual prompt while keeping the record concise", async (t) => {

@@ -17,6 +17,8 @@ import {
   writeJobRecord as defaultWriteJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
+import { resolveJobAuthority } from "../job-authority.mts";
+import type { JobAuthority, JobAuthorityDiagnostic } from "../job-authority.mts";
 import { jobResultEnvelope } from "../job-result-contract.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import {
@@ -32,7 +34,7 @@ import type { InvocationContext, ResolveInvocationContextDeps } from "./invocati
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 import type { CliResult } from "./job-record-errors.mts";
 import { createOutput } from "./output.mts";
-import type { OutputDeps } from "./output.mts";
+import type { OutputDeps, OutputHandle } from "./output.mts";
 import {
   findResumeCandidate,
   findResumeJobCandidate,
@@ -62,6 +64,8 @@ export interface RunDelegateOptions {
 
 export interface ValidatedDelegateArgs {
   error?: string;
+  diagnostic?: JobAuthorityDiagnostic;
+  authority?: JobAuthority;
   mode?: string;
   writeExplicit?: boolean;
   parentJobId?: string | null;
@@ -75,6 +79,7 @@ export interface ValidatedDelegateArgs {
   includeDiff?: boolean;
   baseRef?: string;
   isolated?: boolean;
+  allowFetch?: boolean;
   allowExecute?: boolean;
 }
 
@@ -94,6 +99,10 @@ export async function runDelegate({
 }: RunDelegateOptions): Promise<DelegateResult> {
   const output = createOutput(deps);
   const validated = validateArgs(args);
+  if (validated.diagnostic) {
+    writeAuthorityDiagnostic(output, validated.diagnostic, boolFlag(args.flags?.json));
+    return output.result(2);
+  }
   if (validated.error) {
     output.stderr(`${validated.error}\n`);
     return output.result(2);
@@ -206,6 +215,10 @@ export async function runDelegate({
     output.stderr(`${chain.error}\n`);
     return output.result(2);
   }
+  const authority: JobAuthority = {
+    ...(validated.authority as JobAuthority),
+    mode: chain.mode as JobAuthority["mode"],
+  };
   let isolatedWorkspace: PreparedIsolatedWorkspace | undefined;
   if (validated.isolated) {
     try {
@@ -223,7 +236,8 @@ export async function runDelegate({
     kind: "delegate",
     submittedAt,
     ...chain.fields,
-    mode: chain.mode,
+    authority,
+    mode: authority.mode,
     host: hostIdentity.host,
     hostSessionId: hostIdentity.hostSessionId,
     profile: selected.profile,
@@ -234,7 +248,7 @@ export async function runDelegate({
       ? { includeDiff: true, baseRef: validated.baseRef }
       : {}),
     isolated: validated.isolated,
-    allowExecute: validated.allowExecute,
+    allowExecute: authority.allowExecute,
     isolatedWorkspace,
     cleanupMetadataPath: isolatedWorkspace?.cleanupMetadataPath,
     resumeSessionId: resumeSessionId as string | undefined,
@@ -316,7 +330,6 @@ export async function runDelegate({
     json: validated.json,
     inline: true,
     markFailedOnBrokerError: true,
-    allowExecute: validated.allowExecute,
     isolatedWorkspace,
   });
 }
@@ -336,6 +349,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     "resume-job",
     "prompt",
     "base",
+    "sandbox",
   ]);
   if (missingValue) {
     return { error: missingValue };
@@ -350,6 +364,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const includeDiff = boolFlag(flags["include-diff"]);
   const baseRef = stringFlag(flags.base);
   const isolated = boolFlag(flags.isolated);
+  const allowFetch = boolFlag(flags["allow-fetch"]);
   const allowExecute = boolFlag(flags["allow-exec"]);
   if (write && readOnly) {
     return { error: "--write and --read-only are mutually exclusive" };
@@ -372,14 +387,15 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   if (isolated && !write) {
     return { error: "--isolated requires --write" };
   }
-  if (allowExecute && (!write || !isolated)) {
-    return { error: "--allow-exec requires --write --isolated" };
-  }
-  if (allowExecute) {
-    return {
-      error:
-        "--allow-exec is unavailable until Consult enforces proxy-confined networking",
-    };
+  const authority = resolveJobAuthority({
+    mode: write ? "write" : "read-only",
+    confinement: stringFlag(flags.sandbox),
+    allowFetch,
+    allowExecute,
+    isolated,
+  });
+  if (!authority.ok) {
+    return { diagnostic: authority.diagnostic };
   }
   const promptFromFlag = stringFlag(flags.prompt);
   const promptFromPositionals = (args.positional ?? []).join(" ").trim();
@@ -388,7 +404,8 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   }
 
   return {
-    mode: write ? "write" : "read-only",
+    authority: authority.authority,
+    mode: authority.authority.mode,
     writeExplicit: write,
     parentJobId:
       stringFlag(flags["parent-job"]) ?? stringFlag(flags["parent-job-id"]) ?? null,
@@ -402,8 +419,23 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     includeDiff,
     baseRef,
     isolated,
+    allowFetch,
     allowExecute,
   };
+}
+
+export function writeAuthorityDiagnostic(
+  output: Pick<OutputHandle, "stderr">,
+  diagnostic: JobAuthorityDiagnostic,
+  json: boolean,
+): void {
+  if (json) {
+    output.stderr(`${JSON.stringify({ schemaVersion: 1, error: diagnostic })}\n`);
+    return;
+  }
+  output.stderr(
+    `${diagnostic.code}: ${diagnostic.message}\nRemediation: ${diagnostic.remediation}\n`,
+  );
 }
 
 function truncatePrompt(prompt: string): string {
