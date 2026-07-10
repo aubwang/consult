@@ -14,15 +14,18 @@ compatibility KEEP for two explicitly tested Host contexts and a KILL when
 Codex's outer network-disabled seccomp policy blocks nested networking and the
 runtime proxy listener.
 
-On 2026-07-10, the integrated Linux adapter completed real confined turns for
-Codex (`gpt-5.5`, Job `job-oHDFssztfWc9`) and Claude (`fable`, Job
-`job-u63Nh1CpUIXf`). Selective cross-process resume then passed for Codex
-(`job-tRD2PB7GIomI` -> `job-u9IU_4CMzXhW`) and Claude
-(`job-N7MhIfAbBYJP` -> `job-iP7BeSfUnu7g`): each source and resumed Job archived
-one Profile transcript while retaining direct-network denial and authenticated
-model proxying. Product-level macOS adapter conformance remains to be run from
-the Mac; the older spike is necessary evidence but not a substitute for that
-final run.
+On 2026-07-10, the complete deterministic packed Linux matrix passed for both
+Codex and Claude registry identities from the npm install; confined Doctor also
+passed for both identities from the Bun install. The real Profile overlay then
+passed direct ACP/model transport, exact confined Doctor, an unrevealed-secret
+resume challenge, and background/status/result for both Profiles. Codex used
+`gpt-5.5` (`job-t0DN3BfBjhk3` -> `job--jSjnLOVI2yl`, background
+`job-OXmiFZYih7zZ`); Claude used `fable` (`job-yl8RY_7IjHBy` ->
+`job-C-fFKwXeLRuO`, background `job-3Dg1z2SiIyYM`). Each source, resumed, and
+background Job archived exactly one Profile transcript while retaining
+direct-network denial and authenticated model proxying. Product-level macOS
+adapter conformance remains to be run from the Mac; the older spike is
+necessary evidence but not a substitute for that final run.
 
 Run the product-level harness from an unrestricted macOS terminal:
 
@@ -45,7 +48,8 @@ bun run conformance:job-authority -- --agent claude --expect unsupported
 
 The harness emits one redacted JSON object. Doctor/preflight performs real ACP
 initialization but no model prompt. `--direct` runs the exact configured ACP
-Profile without Consult confinement as an auth/transport control. `--turn`
+Profile with a temporary auth-only home but without the Consult OS boundary, so
+unrelated Host configuration cannot confound the auth/transport control. `--turn`
 asks the Profile to remember a random private marker while acknowledging with a
 different fixed response, then resumes through a second fresh confined Profile
 process and requires the unrevealed marker. `--background` verifies the queued,
