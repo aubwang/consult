@@ -89,7 +89,7 @@ test("read-only denies fetch", async () => {
     }),
     {
       allowed: false,
-      reason: "fetch denied in read-only mode (exfil vector)",
+      reason: "fetch denied in read-only mode (explicit opt-in required)",
     },
   );
 });
@@ -105,9 +105,23 @@ test("write-mode denies fetch", async () => {
     }),
     {
       allowed: false,
-      reason: "fetch denied in write mode (exfil vector)",
+      reason: "fetch denied in write mode (explicit opt-in required)",
     },
   );
+});
+
+test("explicit fetch authority permits ACP fetch requests in either mode", async () => {
+  for (const mode of ["read-only", "write"] as const) {
+    assert.deepEqual(
+      await decidePermission({
+        request: request("fetch", { url: "https://example.com" }),
+        mode,
+        workspaceRoot: makeRoot(),
+        allowFetch: true,
+      }),
+      { allowed: true },
+    );
+  }
 });
 
 test("read-only denies edit even inside workspace", async () => {
