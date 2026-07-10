@@ -42,6 +42,10 @@ export interface SandboxRuntimePolicyError extends Error {
   code: typeof SANDBOX_RUNTIME_POLICY_ERROR;
 }
 
+export function assertSandboxRuntimeLiteralPath(value: string, label: string): void {
+  assertSafeAbsolutePath(value, label);
+}
+
 /**
  * Tighten the declarative launch artifact produced by the pinned Sandbox
  * Runtime. The transform is deliberately format-sensitive: an upstream
@@ -556,6 +560,11 @@ function assertRuntimeVersion(version: string): void {
 }
 
 function assertSafeAbsolutePath(value: string, label: string): void {
+  if (/[*?\[\]]/u.test(value)) {
+    throw policyShapeError(
+      `${label} contains glob metacharacters that Sandbox Runtime cannot treat as a literal path`,
+    );
+  }
   if (
     !value.startsWith("/") ||
     value.includes("\0") ||

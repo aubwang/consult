@@ -24,6 +24,7 @@ import {
 import { pidIsAlive as defaultPidIsAlive } from "./process.mts";
 import {
   SANDBOX_RUNTIME_VERSION,
+  assertSandboxRuntimeLiteralPath,
   snapshotSandboxRuntimeSharedWritePaths,
   transformSandboxRuntimeLaunch,
 } from "./sandbox-runtime-policy.mts";
@@ -237,6 +238,8 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     root = await createPrivateJobRoot(now);
     const workspaceRoot = await realDirectory(input.workspaceRoot ?? input.cwd, "Workspace");
     const cwd = await realDirectory(input.cwd, "Profile working directory");
+    assertSandboxRuntimeLiteralPath(workspaceRoot, "Workspace path");
+    assertSandboxRuntimeLiteralPath(cwd, "Profile working directory");
     assertPathWithin(cwd, workspaceRoot, "Profile working directory");
 
     const home = path.join(root, "home");
@@ -318,6 +321,12 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       path.join(sourceHome, ".npm", "_logs"),
       path.join(sourceHome, ".claude", "debug"),
     ];
+    for (const readablePath of readPaths) {
+      assertSandboxRuntimeLiteralPath(readablePath, "Sandbox Runtime read path");
+    }
+    for (const deniedWritePath of existingPaths(hostDefaultWritePaths)) {
+      assertSandboxRuntimeLiteralPath(deniedWritePath, "Sandbox Runtime denied write path");
+    }
     const runtimeConfig: SandboxRuntimeConfig = {
       network: {
         allowedDomains: [],

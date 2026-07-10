@@ -270,3 +270,21 @@ test("accepts absolute macOS write paths containing spaces and Unicode", () => {
 
   assert.match(transformed.argv[2], /My Projects\/consult-é/u);
 });
+
+test("fails closed before SRT can interpret literal path characters as globs", () => {
+  assert.throws(
+    () =>
+      transformSandboxRuntimeLaunch({
+        launch: { argv: ["/bin/bash", "-c", "not reached"], env: {} },
+        platform: "linux",
+        runtimeVersion: SANDBOX_RUNTIME_VERSION,
+        jobTempDir: "/tmp/consult-job/temp",
+        proxyToken: TOKEN,
+        externalHttpPort: 41001,
+        externalSocksPort: 41002,
+        sharedDefaultWritePaths: ["/tmp/claude", "/private/tmp/claude"],
+        allowedWritePaths: ["/Users/me/repo[1]"],
+      }),
+    /glob metacharacters that Sandbox Runtime cannot treat as a literal path/u,
+  );
+});

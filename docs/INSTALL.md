@@ -36,6 +36,12 @@ policy for permitting bubblewrap in this environment. Deliberate ambient
 execution remains available with `--sandbox inherit`; Consult never selects it
 as an automatic fallback.
 
+The pinned Sandbox Runtime interprets `*`, `?`, `[` and `]` in policy paths as
+glob syntax rather than literal filename characters. Consult therefore fails
+confined preflight clearly when the Workspace path contains one of those
+characters. Rename or relocate that checkout before using confinement. Spaces
+and Unicode path characters are supported.
+
 ## Install From npm
 
 Install the supported package globally with one command:
