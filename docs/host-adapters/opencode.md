@@ -16,10 +16,10 @@ Use `--host` / `--host-session` or `CONSULT_HOST` /
 
 ## Manual setup
 
-Install the current GitHub version:
+Install the supported npm package:
 
 ```text
-npm install --global github:aubwang/consult
+npm install --global @aubwang/consult
 ```
 
 Install and select at least one Profile separately. Profile setup is shared
@@ -41,7 +41,7 @@ consult delegate --agent claude --read-only -- "review this diff"
 Run a background Job:
 
 ```text
-consult delegate --agent opencode --read-only --background -- "audit the permissions code"
+consult delegate --agent opencode --read-only --sandbox inherit --background -- "audit the permissions code"
 ```
 
 Check status, read results, or cancel:

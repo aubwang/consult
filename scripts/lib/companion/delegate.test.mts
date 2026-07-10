@@ -6,6 +6,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 
 import { jobsDir, logsDir } from "../broker-endpoint.mts";
+import type { JobAuthority } from "../job-authority.mts";
 import type {
   FinalizedIsolatedWorkspace,
   PreparedIsolatedWorkspace,
@@ -67,11 +68,19 @@ test("delegate streams agent text and finalizes the job record", async (t) => {
   assert.equal(record.hostSessionId, "claude-1");
   assert.equal(record.sessionId, "session-1");
   assert.equal(record.mode, "read-only");
+  assert.deepEqual(record.authority, {
+    schemaVersion: 1,
+    mode: "read-only",
+    confinement: "confined",
+    allowFetch: false,
+    allowExecute: false,
+  });
   assert.equal(record.chainId, "job-happy");
   assert.equal(record.parentJobId, null);
   assert.equal(record.delegationDepth, 0);
   assert.equal(record.finalText, "hello world");
   assert.equal(request.params.mode, "read-only");
+  assert.deepEqual(request.params.authority, record.authority);
   assert.equal(request.params.chainId, "job-happy");
   assert.equal(request.params.parentJobId, null);
   assert.equal(request.params.delegationDepth, 0);
@@ -107,6 +116,8 @@ test("delegate honors explicit write mode", async (t) => {
 
   assert.equal(result.exitCode, 0);
   assert.equal(record.mode, "write");
+  assert.equal(record.authority.mode, "write");
+  assert.equal(record.authority.confinement, "confined");
   assert.equal(request.params.mode, "write");
 });
 
@@ -121,12 +132,11 @@ test("delegate isolated write runs in the detached root and exposes finalized ar
   const resultPromise = runDelegate({
     args: {
       positional: ["make", "a", "transactional", "change"],
-      flags: { write: true, isolated: true, "allow-exec": true, json: true },
+      flags: { write: true, isolated: true, json: true },
     },
     env: {
       CONSULT_HOST: "terminal",
       CONSULT_HOST_SESSION_ID: "terminal-1",
-      CONSULT_AGENT_SANDBOX: "bwrap",
     },
     deps: quietDeps({
       resolveWorkspaceRoot: async () => workspaceRoot,
@@ -163,14 +173,14 @@ test("delegate isolated write runs in the detached root and exposes finalized ar
   assert.equal(result.exitCode, 0);
   assert.equal(ensureInput?.workspaceRoot, workspaceRoot);
   assert.equal(ensureInput?.executionRoot, prepared.executionRoot);
-  assert.equal(request.params.allowExecute, true);
+  assert.equal(request.params.allowExecute, undefined);
   assert.equal(record.isolated, true);
-  assert.equal(record.allowExecute, true);
+  assert.equal(record.allowExecute, false);
   assert.equal(record.patchPath, `${prepared.artifactsDir}/changes.patch`);
   assert.deepEqual(record.touchedFiles, ["src/changed.mts"]);
   assert.equal(cleanupCalls, 1);
   assert.equal(envelope.job.isolated, true);
-  assert.equal(envelope.job.allowExecute, true);
+  assert.equal(envelope.job.allowExecute, false);
   assert.equal(envelope.artifacts.patchPath, `${prepared.artifactsDir}/changes.patch`);
   assert.deepEqual(envelope.artifacts.touchedFiles, ["src/changed.mts"]);
 });
@@ -188,24 +198,42 @@ test("delegate validates isolated and execute opt-ins before workspace discovery
     env: { CONSULT_AGENT_SANDBOX: "bwrap" },
     deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
   });
-  const executeWithoutSandbox = await runDelegate({
+  const executeUnavailable = await runDelegate({
     args: {
       positional: ["fix"],
       flags: { write: true, isolated: true, "allow-exec": true },
     },
-    env: {},
     deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
   });
 
   assert.equal(isolatedWithoutWrite.exitCode, 2);
   assert.equal(isolatedWithoutWrite.stderr, "--isolated requires --write\n");
   assert.equal(executeWithoutIsolation.exitCode, 2);
-  assert.equal(executeWithoutIsolation.stderr, "--allow-exec requires --write --isolated\n");
-  assert.equal(executeWithoutSandbox.exitCode, 2);
-  assert.equal(
-    executeWithoutSandbox.stderr,
-    "--allow-exec requires CONSULT_AGENT_SANDBOX=bwrap\n",
-  );
+  assert.match(executeWithoutIsolation.stderr, /^AUTHORITY_INVALID:/u);
+  assert.match(executeWithoutIsolation.stderr, /--write --isolated/u);
+  assert.equal(executeUnavailable.exitCode, 2);
+  assert.match(executeUnavailable.stderr, /^AUTHORITY_EXECUTE_UNAVAILABLE:/u);
+  assert.match(executeUnavailable.stderr, /Remove --allow-exec/u);
+});
+
+test("delegate validates fetch confinement and emits a structured authority error", async () => {
+  const result = await runDelegate({
+    args: {
+      positional: ["research"],
+      flags: { "allow-fetch": true, sandbox: "inherit", json: true },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  const diagnostic = JSON.parse(result.stderr);
+  assert.equal(diagnostic.schemaVersion, 1);
+  assert.equal(diagnostic.error.code, "AUTHORITY_INVALID");
+  assert.equal(diagnostic.error.reason, "fetch-requires-confined");
 });
 
 test("delegate pins one bounded diff into the actual prompt while keeping the record concise", async (t) => {
@@ -296,6 +324,7 @@ test("delegate reports pinned diff errors before creating a Job", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   let generated = false;
+  let recordWritten = false;
 
   const result = await runDelegate({
     args: {
@@ -313,12 +342,65 @@ test("delegate reports pinned diff errors before creating a Job", async (t) => {
         generated = true;
         return "should-not-exist";
       },
+      writeJobRecord: async () => {
+        recordWritten = true;
+      },
     }),
   });
 
   assert.equal(result.exitCode, 2);
   assert.match(result.stderr, /unable to capture pinned git diff/);
-  assert.equal(generated, false);
+  assert.equal(generated, true);
+  assert.equal(recordWritten, false);
+});
+
+test("delegate fails authority preflight before diff, isolation, or Job persistence", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  let diffCalled = false;
+  let isolationCalled = false;
+  let recordWritten = false;
+  const result = await runDelegate({
+    args: {
+      positional: ["inspect"],
+      flags: { write: true, isolated: true, "include-diff": true, json: true },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-preflight-failed",
+      preflightAuthority: async (input: { profile: string; profileRegistryId?: string }) => {
+        assert.equal(input.profile, "codex");
+        assert.equal(input.profileRegistryId, "codex");
+        return {
+          ok: false as const,
+          diagnostic: {
+            code: "AUTHORITY_PREFLIGHT_FAILED" as const,
+            message: "nested confinement unavailable",
+            remediation: "Retry with --sandbox inherit if ambient authority is acceptable.",
+          },
+        };
+      },
+      getDiff: async () => {
+        diffCalled = true;
+        return "diff";
+      },
+      prepareIsolatedWorkspace: async () => {
+        isolationCalled = true;
+        throw new Error("should not run");
+      },
+      writeJobRecord: async () => {
+        recordWritten = true;
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(JSON.parse(result.stderr).error.code, "AUTHORITY_PREFLIGHT_FAILED");
+  assert.equal(diffCalled, false);
+  assert.equal(isolationCalled, false);
+  assert.equal(recordWritten, false);
 });
 
 test("delegate rejects --base without --include-diff", async () => {
@@ -399,6 +481,7 @@ test("delegate resume uses the latest finalized session for the selected profile
   await resultPromise;
 
   assert.equal(request.params.resume, "session-new");
+  assert.equal(request.params.resumeJobId, "job-new");
 });
 
 test("delegate resume ignores newer jobs from other Host sessions", async (t) => {
@@ -495,6 +578,45 @@ test("delegate resume-job resumes an explicit job across Host sessions", async (
   await resultPromise;
 
   assert.equal(request.params.resume, "session-other-chat");
+  assert.equal(request.params.resumeJobId, "job-other-chat");
+});
+
+test("confined resume rejects an unavailable archive before creating a Job", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await fs.mkdir(jobsDir(workspaceRoot), { recursive: true });
+  await fs.writeFile(
+    path.join(jobsDir(workspaceRoot), "job-source.json"),
+    JSON.stringify({
+      jobId: "job-source",
+      status: "completed",
+      profile: "codex",
+      completedAt: "2026-05-14T10:00:00.000Z",
+      sessionId: "session-source",
+    }),
+  );
+
+  const result = await runDelegate({
+    args: { positional: ["continue"], flags: { "resume-job": "job-source" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-must-not-exist",
+      validateSessionStateArchive: async () => {
+        throw new Error("archive missing");
+      },
+      ensureBrokerSession: async () => {
+        throw new Error("Broker should not start");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /RESUME_STATE_UNAVAILABLE.*archive missing/u);
+  await assert.rejects(
+    fs.access(path.join(jobsDir(workspaceRoot), "job-must-not-exist.json")),
+  );
 });
 
 test("delegate resume-job rejects jobs from another profile", async (t) => {
@@ -1405,6 +1527,11 @@ function withDataDir(t: TestContext, dataDir: string) {
 
 function quietDeps(deps: Record<string, unknown>): DelegateDeps {
   return {
+    preflightAuthority: async (input: { authority: JobAuthority }) => ({
+      ok: true as const,
+      authority: input.authority,
+    }),
+    validateSessionStateArchive: async () => {},
     ...deps,
     stdoutWrite: () => {},
     stderrWrite: () => {},

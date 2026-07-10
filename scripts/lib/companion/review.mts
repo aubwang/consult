@@ -1,5 +1,10 @@
 import { runCodexReview as defaultRunCodexReview } from "../../adapters/codex-review.mts";
-import { boolFlag, missingFlagValueError, stringFlag } from "../args.mts";
+import {
+  boolFlag,
+  missingFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import {
   appendPinnedDiff,
@@ -13,6 +18,16 @@ import {
 } from "../job-records.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import { processStartTime } from "../process-identity.mts";
+import { resolveJobAuthority } from "../job-authority.mts";
+import {
+  preflightJobAuthority as defaultPreflightJobAuthority,
+  probeInheritedProfileLaunch,
+} from "../job-authority-preflight.mts";
+import type {
+  JobAuthorityPreflightInput,
+  JobAuthorityPreflightResult,
+} from "../job-authority-preflight.mts";
+import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
 import type { ProfileRecord, ProfilesData } from "../profiles.mts";
 import { findRegistryEntry, loadRegistry as defaultLoadRegistry } from "../registry.mts";
 import type { Registry } from "../registry.mts";
@@ -22,6 +37,7 @@ import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import { createOutput } from "./output.mts";
 import type { CommandResult } from "./output.mts";
+import { writeAuthorityDiagnostic } from "./authority-diagnostic.mts";
 
 export const REVIEW_PROMPT = `Review the pinned Git changes for defects and regressions.
 
@@ -36,6 +52,9 @@ export interface ReviewDeps extends RunDelegateOnceDeps {
   generateJobId?: () => string;
   writeJobRecord?: typeof defaultWriteJobRecord;
   runCodexReview?: (args: Record<string, unknown>) => Promise<CommandResult>;
+  preflightAuthority?: (
+    input: JobAuthorityPreflightInput,
+  ) => Promise<JobAuthorityPreflightResult>;
   stdoutWrite?: (text: string) => void;
   stderrWrite?: (text: string) => void;
   [key: string]: unknown;
@@ -56,6 +75,14 @@ export async function runReview({
   deps?: ReviewDeps;
 }): Promise<CommandResult> {
   const output = createOutput(deps);
+  const unsupported = unsupportedFlagError(args.flags, [
+    "agent", "profile", "host", "host-session", "host-session-id", "base",
+    "sandbox", "json",
+  ]);
+  if (unsupported) {
+    output.stderr(`${unsupported}\n`);
+    return output.result(2);
+  }
   const usageError = missingFlagValueError(args.flags, [
     "agent",
     "profile",
@@ -63,11 +90,25 @@ export async function runReview({
     "host-session",
     "host-session-id",
     "base",
+    "sandbox",
   ]);
   if (usageError) {
     output.stderr(`${usageError}\n`);
     return output.result(2);
   }
+  const json = boolFlag(args.flags?.json);
+  const authorityResult = resolveJobAuthority({
+    mode: "read-only",
+    confinement: stringFlag(args.flags?.sandbox),
+    allowFetch: false,
+    allowExecute: false,
+    isolated: false,
+  });
+  if (!authorityResult.ok) {
+    writeAuthorityDiagnostic(output, authorityResult.diagnostic, json);
+    return output.result(2);
+  }
+  const authority = authorityResult.authority;
   const { context, errorResult } = await tryResolveInvocationContext({
     args,
     env,
@@ -80,6 +121,31 @@ export async function runReview({
   const { workspaceRoot, hostIdentity, selected } = context!;
   if (selected.error) {
     output.stderr(`${selected.error}\n`);
+    return output.result(2);
+  }
+
+  const preflight = await (
+    deps.preflightAuthority ??
+    ((input: JobAuthorityPreflightInput) =>
+      defaultPreflightJobAuthority(input, {
+        probeConfined: probeConfinedSandboxRuntime,
+        probeInherited: probeInheritedProfileLaunch,
+      }))
+  )({
+    authority,
+    workspaceRoot,
+    profile: selected.profile as string,
+    profileRegistryId: selected.profileEntry?.registryId,
+    profileLaunch: selected.profileEntry
+      ? {
+          binary: selected.profileEntry.binary,
+          args: selected.profileEntry.args,
+          env: selected.profileEntry.env,
+        }
+      : undefined,
+  });
+  if (!preflight.ok) {
+    writeAuthorityDiagnostic(output, preflight.diagnostic, json);
     return output.result(2);
   }
 
@@ -107,7 +173,8 @@ export async function runReview({
       baseRef,
       diff,
       kind: "review",
-      json: boolFlag(args.flags?.json),
+      json,
+      authority,
       deps,
     });
   }
@@ -123,6 +190,7 @@ export async function runReview({
     chainId: jobId,
     parentJobId: null,
     delegationDepth: 0,
+    authority,
     mode: "read-only",
     host: hostIdentity.host,
     hostSessionId: hostIdentity.hostSessionId,
@@ -144,7 +212,7 @@ export async function runReview({
     kind: "review",
     deps,
     output,
-    json: boolFlag(args.flags?.json),
+    json,
     renderSummary: true,
     inline: true,
   });

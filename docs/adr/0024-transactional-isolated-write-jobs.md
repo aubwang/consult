@@ -1,6 +1,7 @@
 # Transactional isolated write Jobs and sandbox-gated execution
 
-Status: Accepted
+Status: Accepted for transactional isolation; execute decision superseded by
+[ADR-0025](0025-fail-execute-closed-pending-egress-confinement.md)
 
 Consult adds opt-in `delegate --write --isolated`. It creates a detached Git
 worktree under Consult-owned Workspace state, seeds that Execution Workspace

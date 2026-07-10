@@ -39,16 +39,17 @@
     "pack:check": "node scripts/package-smoke.mjs",
     "prepack": "node scripts/build-package.mjs",
     "prepare": "node scripts/build-package.mjs",
+    "conformance:job-authority": "node scripts/live-job-authority-conformance.mts",
     "spike:sandbox-runtime-codex": "node scripts/live-sandbox-runtime-codex-spike.mts",
     "test": "node --test \"scripts/**/*.test.mts\"",
     "typecheck": "tsc --noEmit",
     "drill:companion-disconnect": "node scripts/live-companion-disconnect-drill.mts"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "0.21.0"
+    "@agentclientprotocol/sdk": "0.21.0",
+    "@anthropic-ai/sandbox-runtime": "0.0.64"
   },
   "devDependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.64",
     "@types/node": "^25.9.2",
     "typescript": "^6.0.3",
     "zod": "4.4.3"

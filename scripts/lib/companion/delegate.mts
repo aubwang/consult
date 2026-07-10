@@ -1,7 +1,12 @@
 import { spawn as defaultSpawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { boolFlag, missingFlagValueError, stringFlag } from "../args.mts";
+import {
+  boolFlag,
+  missingFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { resolveNewJobChain } from "../delegation-chain.mts";
 import {
@@ -17,6 +22,20 @@ import {
   writeJobRecord as defaultWriteJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
+import { resolveJobAuthority } from "../job-authority.mts";
+import type { JobAuthority, JobAuthorityDiagnostic } from "../job-authority.mts";
+import {
+  preflightJobAuthority as defaultPreflightJobAuthority,
+  probeInheritedProfileLaunch,
+} from "../job-authority-preflight.mts";
+import type {
+  JobAuthorityPreflightInput,
+  JobAuthorityPreflightResult,
+} from "../job-authority-preflight.mts";
+import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
+import {
+  validateConfinedSessionStateArchive as defaultValidateConfinedSessionStateArchive,
+} from "../confined-session-state.mts";
 import { jobResultEnvelope } from "../job-result-contract.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import {
@@ -25,7 +44,6 @@ import {
 } from "../isolated-workspace.mts";
 import type { PreparedIsolatedWorkspace } from "../isolated-workspace.mts";
 import { processStartTime } from "../process-identity.mts";
-import { normalizeAgentSandbox } from "../process-sandbox.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import { tryResolveInvocationContext } from "./invocation-context.mts";
@@ -34,6 +52,7 @@ import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.
 import type { CliResult } from "./job-record-errors.mts";
 import { createOutput } from "./output.mts";
 import type { OutputDeps } from "./output.mts";
+import { writeAuthorityDiagnostic } from "./authority-diagnostic.mts";
 import {
   findResumeCandidate,
   findResumeJobCandidate,
@@ -52,6 +71,10 @@ export interface DelegateDeps
   spawn?: typeof defaultSpawn;
   prepareIsolatedWorkspace?: typeof defaultPrepareIsolatedWorkspace;
   cleanupIsolatedWorkspace?: typeof defaultCleanupIsolatedWorkspace;
+  preflightAuthority?: (
+    input: JobAuthorityPreflightInput,
+  ) => Promise<JobAuthorityPreflightResult>;
+  validateSessionStateArchive?: typeof defaultValidateConfinedSessionStateArchive;
   [key: string]: unknown;
 }
 
@@ -63,6 +86,8 @@ export interface RunDelegateOptions {
 
 export interface ValidatedDelegateArgs {
   error?: string;
+  diagnostic?: JobAuthorityDiagnostic;
+  authority?: JobAuthority;
   mode?: string;
   writeExplicit?: boolean;
   parentJobId?: string | null;
@@ -76,6 +101,7 @@ export interface ValidatedDelegateArgs {
   includeDiff?: boolean;
   baseRef?: string;
   isolated?: boolean;
+  allowFetch?: boolean;
   allowExecute?: boolean;
 }
 
@@ -94,7 +120,11 @@ export async function runDelegate({
   deps = {},
 }: RunDelegateOptions): Promise<DelegateResult> {
   const output = createOutput(deps);
-  const validated = validateArgs(args, env);
+  const validated = validateArgs(args);
+  if (validated.diagnostic) {
+    writeAuthorityDiagnostic(output, validated.diagnostic, boolFlag(args.flags?.json));
+    return output.result(2);
+  }
   if (validated.error) {
     output.stderr(`${validated.error}\n`);
     return output.result(2);
@@ -113,69 +143,6 @@ export async function runDelegate({
   if (selected.error) {
     output.stderr(`${selected.error}\n`);
     return output.result(2);
-  }
-
-  let resumeSessionId: string | null | undefined = null;
-  if (validated.resumeJobId) {
-    try {
-      const resumeCandidate = await findResumeJobCandidate(
-        workspaceRoot,
-        validated.resumeJobId,
-        selected.profile!,
-      );
-      if (resumeCandidate.error) {
-        output.stderr(`${resumeCandidate.error}\n`);
-        return output.result(2);
-      }
-      resumeSessionId = resumeCandidate.record!.sessionId;
-    } catch (error) {
-      const lookupResult = jobLookupErrorResult(
-        error,
-        validated.resumeJobId,
-        "resume job not found",
-      );
-      output.stderr(lookupResult.stderr);
-      return output.result(lookupResult.exitCode);
-    }
-  } else if (validated.resume) {
-    try {
-      const resumeCandidate = await findResumeCandidate(workspaceRoot, selected.profile!, {
-        host: hostIdentity.host,
-        hostSessionId: hostIdentity.hostSessionId,
-      });
-      resumeSessionId = resumeCandidate?.sessionId ?? null;
-    } catch (error) {
-      const malformedResult = jobRecordErrorResult(error);
-      if (malformedResult) {
-        output.stderr(malformedResult.stderr);
-        return output.result(malformedResult.exitCode);
-      }
-      throw error;
-    }
-    if (!resumeSessionId) {
-      output.stderr(
-        `No finalized delegate job found for profile '${selected.profile}' in this workspace; rerun with --fresh to start a new session\n`,
-      );
-      return output.result(2);
-    }
-  }
-
-  let delegatedPrompt = validated.prompt as string;
-  if (validated.includeDiff) {
-    try {
-      const getDiff = deps.getDiff ?? defaultGetDiff;
-      const diff = await getDiff(
-        validated.baseRef
-          ? { baseRef: validated.baseRef, cwd: workspaceRoot }
-          : { cwd: workspaceRoot },
-      );
-      delegatedPrompt = appendPinnedDiff(delegatedPrompt, diff, {
-        baseRef: validated.baseRef ?? null,
-      });
-    } catch (error) {
-      output.stderr(`${pinnedDiffErrorMessage(error)}\n`);
-      return output.result(2);
-    }
   }
 
   const now = deps.now ?? (() => new Date().toISOString());
@@ -207,6 +174,132 @@ export async function runDelegate({
     output.stderr(`${chain.error}\n`);
     return output.result(2);
   }
+  const authority: JobAuthority = {
+    ...(validated.authority as JobAuthority),
+    mode: chain.mode as JobAuthority["mode"],
+  };
+  const preflight = await (
+    deps.preflightAuthority ??
+    ((input: JobAuthorityPreflightInput) =>
+      defaultPreflightJobAuthority(input, {
+        probeConfined: probeConfinedSandboxRuntime,
+        probeInherited: probeInheritedProfileLaunch,
+      }))
+  )({
+    authority,
+    parentJob: chain.parent,
+    workspaceRoot,
+    profile: selected.profile as string,
+    profileRegistryId: selected.profileEntry?.registryId,
+    profileLaunch: selected.profileEntry
+      ? {
+          binary: selected.profileEntry.binary,
+          args: selected.profileEntry.args,
+          env: selected.profileEntry.env,
+        }
+      : undefined,
+  });
+  if (!preflight.ok) {
+    writeAuthorityDiagnostic(output, preflight.diagnostic, validated.json === true);
+    return output.result(2);
+  }
+
+  let resumeSessionId: string | null | undefined = null;
+  let resumeSourceJobId: string | null | undefined = null;
+  if (validated.resumeJobId) {
+    try {
+      const resumeCandidate = await findResumeJobCandidate(
+        workspaceRoot,
+        validated.resumeJobId,
+        selected.profile!,
+      );
+      if (resumeCandidate.error) {
+        output.stderr(`${resumeCandidate.error}\n`);
+        return output.result(2);
+      }
+      resumeSessionId = resumeCandidate.record!.sessionId;
+      resumeSourceJobId = resumeCandidate.record!.jobId;
+    } catch (error) {
+      const lookupResult = jobLookupErrorResult(
+        error,
+        validated.resumeJobId,
+        "resume job not found",
+      );
+      output.stderr(lookupResult.stderr);
+      return output.result(lookupResult.exitCode);
+    }
+  } else if (validated.resume) {
+    try {
+      const resumeCandidate = await findResumeCandidate(workspaceRoot, selected.profile!, {
+        host: hostIdentity.host,
+        hostSessionId: hostIdentity.hostSessionId,
+      });
+      resumeSessionId = resumeCandidate?.sessionId ?? null;
+      resumeSourceJobId = resumeCandidate?.jobId ?? null;
+    } catch (error) {
+      const malformedResult = jobRecordErrorResult(error);
+      if (malformedResult) {
+        output.stderr(malformedResult.stderr);
+        return output.result(malformedResult.exitCode);
+      }
+      throw error;
+    }
+    if (!resumeSessionId) {
+      output.stderr(
+        `No finalized delegate job found for profile '${selected.profile}' in this workspace; rerun with --fresh to start a new session\n`,
+      );
+      return output.result(2);
+    }
+  }
+
+  if (
+    authority.confinement === "confined" &&
+    resumeSourceJobId &&
+    resumeSessionId
+  ) {
+    if (validated.isolated) {
+      output.stderr(
+        "confined resume is unavailable with --isolated because the Execution Workspace cwd changes; use a non-isolated Job or --fresh\n",
+      );
+      return output.result(2);
+    }
+    try {
+      await (
+        deps.validateSessionStateArchive ?? defaultValidateConfinedSessionStateArchive
+      )({
+        workspaceRoot,
+        jobId: resumeSourceJobId,
+        profileRegistryId:
+          selected.profileEntry?.registryId ?? (selected.profile as string),
+        sessionId: resumeSessionId,
+        cwd: workspaceRoot,
+      });
+    } catch (error) {
+      output.stderr(
+        `RESUME_STATE_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}; rerun with --fresh\n`,
+      );
+      return output.result(2);
+    }
+  }
+
+  let delegatedPrompt = validated.prompt as string;
+  if (validated.includeDiff) {
+    try {
+      const getDiff = deps.getDiff ?? defaultGetDiff;
+      const diff = await getDiff(
+        validated.baseRef
+          ? { baseRef: validated.baseRef, cwd: workspaceRoot }
+          : { cwd: workspaceRoot },
+      );
+      delegatedPrompt = appendPinnedDiff(delegatedPrompt, diff, {
+        baseRef: validated.baseRef ?? null,
+      });
+    } catch (error) {
+      output.stderr(`${pinnedDiffErrorMessage(error)}\n`);
+      return output.result(2);
+    }
+  }
+
   let isolatedWorkspace: PreparedIsolatedWorkspace | undefined;
   if (validated.isolated) {
     try {
@@ -224,7 +317,8 @@ export async function runDelegate({
     kind: "delegate",
     submittedAt,
     ...chain.fields,
-    mode: chain.mode,
+    authority,
+    mode: authority.mode,
     host: hostIdentity.host,
     hostSessionId: hostIdentity.hostSessionId,
     profile: selected.profile,
@@ -235,10 +329,11 @@ export async function runDelegate({
       ? { includeDiff: true, baseRef: validated.baseRef }
       : {}),
     isolated: validated.isolated,
-    allowExecute: validated.allowExecute,
+    allowExecute: authority.allowExecute,
     isolatedWorkspace,
     cleanupMetadataPath: isolatedWorkspace?.cleanupMetadataPath,
     resumeSessionId: resumeSessionId as string | undefined,
+    resumeJobId: resumeSourceJobId as string | undefined,
     // Foreground jobs run in-process (ADR-0021); record the runner kind,
     // companion pid, and pid start time so `consult cancel` can signal it
     // (without pid-reuse risk) instead of dialing a Broker endpoint.
@@ -312,21 +407,25 @@ export async function runDelegate({
     model: validated.model,
     effort: validated.effort,
     resumeSessionId,
+    resumeJobId: resumeSourceJobId,
     deps,
     output,
     json: validated.json,
     inline: true,
     markFailedOnBrokerError: true,
-    allowExecute: validated.allowExecute,
     isolatedWorkspace,
   });
 }
 
-function validateArgs(
-  args: ParsedArgs,
-  env: Record<string, string | undefined> = process.env,
-): ValidatedDelegateArgs {
+function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const flags = args.flags ?? {};
+  const unsupported = unsupportedFlagError(flags, [
+    "agent", "profile", "model", "effort", "host", "host-session",
+    "host-session-id", "parent-job", "parent-job-id", "resume-job", "prompt",
+    "base", "sandbox", "write", "read-only", "resume", "fresh", "background",
+    "wait", "include-diff", "isolated", "allow-fetch", "allow-exec", "json",
+  ]);
+  if (unsupported) return { error: unsupported };
   const missingValue = missingFlagValueError(flags, [
     "agent",
     "profile",
@@ -340,6 +439,7 @@ function validateArgs(
     "resume-job",
     "prompt",
     "base",
+    "sandbox",
   ]);
   if (missingValue) {
     return { error: missingValue };
@@ -354,6 +454,7 @@ function validateArgs(
   const includeDiff = boolFlag(flags["include-diff"]);
   const baseRef = stringFlag(flags.base);
   const isolated = boolFlag(flags.isolated);
+  const allowFetch = boolFlag(flags["allow-fetch"]);
   const allowExecute = boolFlag(flags["allow-exec"]);
   if (write && readOnly) {
     return { error: "--write and --read-only are mutually exclusive" };
@@ -376,19 +477,15 @@ function validateArgs(
   if (isolated && !write) {
     return { error: "--isolated requires --write" };
   }
-  if (allowExecute && (!write || !isolated)) {
-    return { error: "--allow-exec requires --write --isolated" };
-  }
-  if (allowExecute) {
-    let sandbox;
-    try {
-      sandbox = normalizeAgentSandbox(env.CONSULT_AGENT_SANDBOX);
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
-    if (sandbox !== "bwrap") {
-      return { error: "--allow-exec requires CONSULT_AGENT_SANDBOX=bwrap" };
-    }
+  const authority = resolveJobAuthority({
+    mode: write ? "write" : "read-only",
+    confinement: stringFlag(flags.sandbox),
+    allowFetch,
+    allowExecute,
+    isolated,
+  });
+  if (!authority.ok) {
+    return { diagnostic: authority.diagnostic };
   }
   const promptFromFlag = stringFlag(flags.prompt);
   const promptFromPositionals = (args.positional ?? []).join(" ").trim();
@@ -397,7 +494,8 @@ function validateArgs(
   }
 
   return {
-    mode: write ? "write" : "read-only",
+    authority: authority.authority,
+    mode: authority.authority.mode,
     writeExplicit: write,
     parentJobId:
       stringFlag(flags["parent-job"]) ?? stringFlag(flags["parent-job-id"]) ?? null,
@@ -411,6 +509,7 @@ function validateArgs(
     includeDiff,
     baseRef,
     isolated,
+    allowFetch,
     allowExecute,
   };
 }

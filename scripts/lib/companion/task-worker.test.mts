@@ -70,6 +70,13 @@ test("task-worker runs isolated background jobs inline and persists artifacts", 
     prompt: "background isolated prompt",
     hostSessionId: "terminal-1",
     isolated: true,
+    authority: {
+      schemaVersion: 1,
+      mode: "write",
+      confinement: "confined",
+      allowFetch: false,
+      allowExecute: true,
+    },
     allowExecute: true,
     isolatedWorkspace: prepared,
   });

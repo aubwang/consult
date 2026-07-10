@@ -8,6 +8,12 @@ import type { TestContext } from "node:test";
 import { createBrokerJobRuntime } from "./broker-job-runtime.mts";
 import type { BrokerAgentHandle, BrokerJobSocketLike } from "./broker-job-runtime.mts";
 import { TEXT_TRUNCATED_MARKER } from "./bounded-text.mts";
+import { readWorkspaceJobRecord } from "./job-records.mts";
+import {
+  JOB_LOG_LIMIT_EXCEEDED,
+  JOB_WALL_CLOCK_LIMIT_EXCEEDED,
+  jobLogLineBytes,
+} from "./job-reliability.mts";
 
 test("broker job runtime buffers updates and notifies subscribers on finalize", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
@@ -42,7 +48,7 @@ test("broker job runtime buffers updates and notifies subscribers on finalize", 
     fakeSocket("originator"),
   );
   runtime.attachJob(job, subscriber);
-  runtime.trackSession("session-1", job, "write");
+  runtime.trackSession("session-1", job);
 
   await runtime.handleSessionUpdate({
     sessionId: "session-1",
@@ -62,6 +68,57 @@ test("broker job runtime buffers updates and notifies subscribers on finalize", 
   assert.equal(notifications.at(0)!.params.update.content.text, "hello");
   assert.equal(notifications.at(1)!.params.stopReason, "end_turn");
   assert.equal(job.finalText, "hello");
+});
+
+test("broker job runtime reports unconfirmed cleanup as a failed terminal outcome", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => {
+      throw new Error("agent should not be needed");
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) {
+      notifications.push({ method, params });
+    },
+    beforeTerminal: async () => {
+      throw new Error("process target remained alive after SIGKILL");
+    },
+  });
+  const job = runtime.createJob(
+    {
+      jobId: "job-cleanup-unconfirmed",
+      profile: "codex",
+      mode: "read-only",
+      prompt: "inspect",
+    },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-cleanup", job);
+
+  await runtime.finalizeJob(job, {
+    stopReason: "end_turn",
+    sessionId: "session-cleanup",
+  });
+
+  assert.equal(job.finalized?.stopReason, "failed");
+  assert.match(
+    job.finalized?.errorMessage ?? "",
+    /PROFILE_CLEANUP_UNCONFIRMED: process target remained alive after SIGKILL/u,
+  );
+  assert.equal(notifications.at(-1)?.method, "consult/finalized");
+  assert.equal(notifications.at(-1)?.params.stopReason, "failed");
+  const record = await readWorkspaceJobRecord(workspaceRoot, job.jobId);
+  assert.equal(record.status, "failed");
+  assert.match(record.errorMessage ?? "", /PROFILE_CLEANUP_UNCONFIRMED/u);
 });
 
 test("broker job runtime caps accumulated final text", async (t: TestContext) => {
@@ -91,7 +148,7 @@ test("broker job runtime caps accumulated final text", async (t: TestContext) =>
     },
     fakeSocket("originator"),
   );
-  runtime.trackSession("session-1", job, "write");
+  runtime.trackSession("session-1", job);
 
   await runtime.handleSessionUpdate({
     sessionId: "session-1",
@@ -135,7 +192,7 @@ test("broker job runtime keeps tool progress out of accumulated final text", asy
     fakeSocket("originator"),
   );
   runtime.attachJob(job, fakeSocket("subscriber"));
-  runtime.trackSession("session-progress", job, "write");
+  runtime.trackSession("session-progress", job);
 
   await runtime.handleSessionUpdate({
     sessionId: "session-progress",
@@ -153,7 +210,7 @@ test("broker job runtime keeps tool progress out of accumulated final text", asy
   assert.equal(notifications.length, 2);
 });
 
-test("broker job runtime carries only an explicit execute opt-in to the tracked session", async (t: TestContext) => {
+test("broker job runtime carries canonical authority to the tracked session", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   const runtime = createBrokerJobRuntime({
@@ -174,6 +231,7 @@ test("broker job runtime carries only an explicit execute opt-in to the tracked 
       jobId: "job-execute-enabled",
       profile: "codex",
       mode: "write",
+      authority: authority({ mode: "write", allowExecute: true }),
       prompt: "run tests",
       allowExecute: true,
     },
@@ -184,19 +242,31 @@ test("broker job runtime carries only an explicit execute opt-in to the tracked 
       jobId: "job-execute-default",
       profile: "codex",
       mode: "write",
+      authority: authority({ mode: "write" }),
       prompt: "run tests",
     },
     fakeSocket("default-originator"),
   );
+  const fetchJob = runtime.createJob(
+    {
+      jobId: "job-fetch-enabled",
+      profile: "codex",
+      authority: authority({ allowFetch: true }),
+      prompt: "research",
+    },
+    fakeSocket("fetch-originator"),
+  );
 
-  runtime.trackSession("session-enabled", enabledJob, "write");
-  runtime.trackSession("session-default", defaultJob, "write");
+  runtime.trackSession("session-enabled", enabledJob);
+  runtime.trackSession("session-default", defaultJob);
+  runtime.trackSession("session-fetch", fetchJob);
 
   assert.equal(enabledJob.allowExecute, true);
   assert.equal(defaultJob.allowExecute, false);
-  assert.equal(runtime.getSessionAllowExecute("session-enabled"), true);
-  assert.equal(runtime.getSessionAllowExecute("session-default"), false);
-  assert.equal(runtime.getSessionAllowExecute("session-unknown"), false);
+  assert.deepEqual(runtime.getSessionAuthority("session-enabled"), enabledJob.authority);
+  assert.deepEqual(runtime.getSessionAuthority("session-default"), defaultJob.authority);
+  assert.equal(runtime.getSessionAuthority("session-fetch")?.allowFetch, true);
+  assert.equal(runtime.getSessionAuthority("session-unknown"), undefined);
 });
 
 test("cancelJob ensures the agent with the running job's own mode", async (t: TestContext) => {
@@ -211,8 +281,8 @@ test("cancelJob ensures the agent with the running job's own mode", async (t: Te
       hostSessionId: "default",
       cancelAckTimeoutMs: 2000,
     },
-    ensureAgent: async (mode?: string) => {
-      modes.push(mode);
+    ensureAgent: async (authority) => {
+      modes.push(authority.mode);
       return {
         connection: {
           cancel: async ({ sessionId }: { sessionId: string }) => {
@@ -234,7 +304,7 @@ test("cancelJob ensures the agent with the running job's own mode", async (t: Te
     },
     fakeSocket("originator"),
   );
-  runtime.trackSession("session-1", job, "write");
+  runtime.trackSession("session-1", job);
 
   await runtime.cancelJob(job);
 
@@ -243,6 +313,175 @@ test("cancelJob ensures the agent with the running job's own mode", async (t: Te
   assert.deepEqual(modes, ["write"]);
   assert.deepEqual(cancelledSessions, ["session-1"]);
   await runtime.finalizeJob(job, { stopReason: "cancelled", sessionId: "session-1" });
+});
+
+test("persisted log limit drops the overflowing update, preserves partial output, and cancels", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  const cancelledSessions: string[] = [];
+  const terminalJobs: string[] = [];
+  const jobId = "job-log-limit";
+  const keptUpdate = {
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "kept partial" },
+  };
+  const maxPersistedLogBytes = 1024;
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => ({
+      connection: {
+        cancel: async ({ sessionId }: { sessionId: string }) => {
+          cancelledSessions.push(sessionId);
+        },
+      },
+    } as unknown as BrokerAgentHandle),
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) {
+      notifications.push({ method, params });
+    },
+    onTerminal(job) {
+      terminalJobs.push(job.jobId);
+    },
+    maxPersistedLogBytes,
+  });
+  const job = runtime.createJob(
+    { jobId, profile: "codex", mode: "read-only", prompt: "inspect" },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-log-limit", job);
+
+  await runtime.handleSessionUpdate({ sessionId: "session-log-limit", update: keptUpdate });
+  await runtime.handleSessionUpdate({
+    sessionId: "session-log-limit",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "x".repeat(2000) },
+    },
+  });
+  await waitFor(() => cancelledSessions.length === 1);
+
+  assert.equal(job.status, "finalized");
+  assert.equal(job.finalized?.stopReason, "failed");
+  assert.match(job.finalized?.errorMessage ?? "", new RegExp(`^${JOB_LOG_LIMIT_EXCEEDED}:`));
+  assert.equal(job.finalText, "kept partial");
+  assert.deepEqual(cancelledSessions, ["session-log-limit"]);
+  assert.deepEqual(terminalJobs, [jobId]);
+  assert.deepEqual(notifications.map((entry) => entry.method), ["consult/update", "consult/finalized"]);
+  assert.ok(
+    notifications.reduce(
+      (total, entry) => total + jobLogLineBytes(entry.method, entry.params),
+      0,
+    ) <= maxPersistedLogBytes,
+  );
+  const record = await readWorkspaceJobRecord(workspaceRoot, jobId);
+  assert.equal(record.status, "failed");
+  assert.equal(record.finalText, "kept partial");
+  assert.match(record.errorMessage ?? "", new RegExp(`^${JOB_LOG_LIMIT_EXCEEDED}:`));
+  runtime.noteTurnSettled(job);
+});
+
+test("wall-clock limit preserves partial output, finalizes failed, and cancels", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  let wallClockHandler: (() => void) | undefined;
+  const clearedTimers: unknown[] = [];
+  const cancelledSessions: string[] = [];
+  let finalizedResolve!: () => void;
+  const finalized = new Promise<void>((resolve) => {
+    finalizedResolve = resolve;
+  });
+  const timer = { unref() {} } as unknown as NodeJS.Timeout;
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => ({
+      connection: {
+        cancel: async ({ sessionId }: { sessionId: string }) => {
+          cancelledSessions.push(sessionId);
+        },
+      },
+    } as unknown as BrokerAgentHandle),
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method) {
+      if (method === "consult/finalized") finalizedResolve();
+    },
+    maxWallClockMs: 25,
+    scheduleWallClock(handler, milliseconds) {
+      assert.equal(milliseconds, 25);
+      wallClockHandler = handler;
+      return timer;
+    },
+    clearWallClock(value) {
+      clearedTimers.push(value);
+    },
+  });
+  const job = runtime.createJob(
+    { jobId: "job-wall-limit", profile: "codex", mode: "read-only", prompt: "wait" },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-wall-limit", job);
+  await runtime.handleSessionUpdate({
+    sessionId: "session-wall-limit",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "partial before timeout" },
+    },
+  });
+
+  assert.ok(wallClockHandler);
+  wallClockHandler!();
+  await finalized;
+  await waitFor(() => cancelledSessions.length === 1);
+
+  assert.equal(job.status, "finalized");
+  assert.equal(job.finalized?.stopReason, "failed");
+  assert.match(job.finalized?.errorMessage ?? "", new RegExp(`^${JOB_WALL_CLOCK_LIMIT_EXCEEDED}:`));
+  assert.equal(job.finalText, "partial before timeout");
+  assert.deepEqual(cancelledSessions, ["session-wall-limit"]);
+  assert.deepEqual(clearedTimers, [timer]);
+  runtime.noteTurnSettled(job);
+});
+
+test("normal finalization clears the wall-clock guard", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const timer = { unref() {} } as unknown as NodeJS.Timeout;
+  const clearedTimers: unknown[] = [];
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => { throw new Error("agent should not be needed"); },
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+    scheduleWallClock: () => timer,
+    clearWallClock(value) {
+      clearedTimers.push(value);
+    },
+  });
+  const job = runtime.createJob(
+    { jobId: "job-clear-wall", profile: "codex", mode: "read-only", prompt: "finish" },
+    fakeSocket("originator"),
+  );
+
+  await runtime.finalizeJob(job, { stopReason: "end_turn", sessionId: "session-clear" });
+
+  assert.deepEqual(clearedTimers, [timer]);
 });
 
 interface FakeSocket extends BrokerJobSocketLike {
@@ -254,6 +493,32 @@ function fakeSocket(name: string): FakeSocket {
     name,
     once() {},
   };
+}
+
+function authority(
+  overrides: Partial<{
+    mode: "read-only" | "write";
+    confinement: "confined" | "inherit";
+    allowFetch: boolean;
+    allowExecute: boolean;
+  }> = {},
+) {
+  return {
+    schemaVersion: 1 as const,
+    mode: "read-only" as const,
+    confinement: "confined" as const,
+    allowFetch: false,
+    allowExecute: false,
+    ...overrides,
+  };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("condition was not met before timeout");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 async function makeWorkspace() {

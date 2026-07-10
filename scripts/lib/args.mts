@@ -7,6 +7,7 @@ export const BOOLEAN_FLAGS = new Set([
   "fresh",
   "include-diff",
   "isolated",
+  "allow-fetch",
   "allow-exec",
   "follow",
   "json",
@@ -30,7 +31,7 @@ export function stringFlag(value: unknown): string | undefined {
 
 export function boolFlag(value: unknown): boolean {
   const last = Array.isArray(value) ? value.at(-1) : value;
-  return last !== undefined && last !== false;
+  return last === true || last === "true";
 }
 
 export function missingFlagValueError(
@@ -45,6 +46,15 @@ export function missingFlagValueError(
     }
   }
   return null;
+}
+
+export function unsupportedFlagError(
+  flags: Record<string, FlagValue | undefined> | undefined,
+  allowedNames: readonly string[],
+): string | null {
+  const allowed = new Set(allowedNames);
+  const unsupported = Object.keys(flags ?? {}).find((name) => !allowed.has(name));
+  return unsupported ? `--${unsupported} is not supported by this command` : null;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {

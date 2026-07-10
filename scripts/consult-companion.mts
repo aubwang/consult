@@ -50,7 +50,7 @@ Common workflow:
   consult delegate --agent claude --read-only -- "review this design"
   consult review --agent claude --base main
   consult delegate --agent codex --read-only --include-diff -- "find edge cases"
-  consult delegate --agent opencode --write --isolated --background -- "add the test"
+  consult delegate --agent opencode --write --isolated --sandbox inherit --background -- "add the test"
   consult status <job-id> --wait
   consult result <job-id>
   consult logs <job-id> --follow
@@ -62,6 +62,7 @@ Commands:
              Options: --set <profile>, --host <host>, --json
   delegate   Send one prompt turn to a Profile.
              Options: --agent <profile>, --read-only, --write, --isolated,
+                      --sandbox <confined|inherit>, --allow-fetch,
                       --allow-exec, --background, --include-diff,
                       --base <ref>, --resume, --resume-job <job-id>, --fresh,
                       --parent-job <job-id>, --model <name>, --effort <level>,
@@ -69,9 +70,12 @@ Commands:
              --model accepts an exact id or an advertised family alias:
              Codex sol/terra/luna; Claude sonnet/opus/haiku/fable.
   review     Run a pinned, read-only review through any configured Profile.
-             Options: --agent <profile>, --base <ref>, --json
-  doctor     Diagnose Profile, Host Identity, Job, Broker, and sandbox state.
-             Options: --agent <profile>, --profile <profile>, --json
+             Options: --agent <profile>, --base <ref>,
+                      --sandbox <confined|inherit>, --json
+  doctor     Diagnose Profile, Host Identity, Job, Broker, and Job Authority.
+             Options: --agent <profile>, --profile <profile>, --read-only,
+                      --write, --isolated, --sandbox <confined|inherit>,
+                      --allow-fetch, --allow-exec, --json
   status     Show all Workspace Jobs or inspect one Job.
              Options: --wait, --follow, --json
   result     Print stored final agent text for a finished Job.
@@ -104,24 +108,45 @@ The Profile does not receive the current Host conversation. Everything after
 concrete question, constraints, and acceptance criteria.
 
 Optional --model and --effort values pass through to the selected Profile.
-Omit --model to preserve that Profile's configured default. Family aliases
-resolve only against models advertised at Session start. OpenCode exact model
-ids use provider/model.
+Omit --model to use that confined Profile runtime's default. Confined launch
+does not copy Codex config.toml or Claude settings.json, so pass --model when
+Host config controls the desired choice. Family aliases resolve only against
+models advertised at Session start. OpenCode exact model ids use provider/model.
 
 ## Modes and isolation
 
-- Default or --read-only: inspect only; edits and execute are denied.
+- Default or --read-only: inspect only; edits, fetch, and execute are denied.
 - --write: permit workspace-confined edits in the current checkout.
 - --write --isolated: seed a detached worktree from current staged,
   unstaged, and safe nonignored untracked state. Gitignored files are not
   seeded or captured. The original checkout stays unchanged;
   Job artifacts contain the Profile-only binary patch and touched-files list.
-- --allow-exec: valid only with --write --isolated and an active
-  CONSULT_AGENT_SANDBOX=bwrap. Execute requests remain cwd-confined. The flag
-  alone never weakens an unsandboxed Job. Network fetch requests stay denied.
+- --sandbox confined (default): launch built-in codex or claude Profiles inside
+  Consult-managed native confinement on Linux or macOS. Direct networking is
+  blocked; model traffic uses an authenticated model-host allowlist proxy.
+- --allow-fetch: additionally permit arbitrary public TCP/443 through that proxy
+  for HTTPS-oriented research; Consult does not inspect the encrypted protocol.
+  This is task-specific authority, not a harmless convenience: the Profile also
+  holds its selected model credential, so prompt-injected content could send
+  readable data to a public host.
+- --sandbox inherit: deliberately add no Consult OS boundary and use only the
+  trusted Host's ambient authority. Read-only/path checks are then cooperative
+  and detective, not OS-preventive. Consult never retries with inheritance implicitly.
+- --allow-exec: currently fails preflight while execute-specific resource and
+  cross-Profile conformance work remains incomplete.
 
 --write and --read-only are mutually exclusive. --isolated requires --write;
---allow-exec requires --write --isolated plus bubblewrap.
+--allow-fetch requires confinement; fetch and execute cannot be combined.
+Confined nesting is unsupported: have the trusted root Host create a sibling
+Job, or choose inheritance explicitly for a cooperative ambient chain.
+
+Native Windows is unsupported, including inheritance. Confined authority is
+currently implemented only for built-in codex and claude Profile identities;
+custom and opencode Profiles require explicit --sandbox inherit. Run
+consult doctor --agent <profile> before delegation to check the exact Profile
+launch in the current Host context. Doctor briefly stages the selected
+credential and initializes/disposes the Profile, but sends no model prompt. A
+failed preflight creates no Job.
 
 ## Pinned diffs and review
 

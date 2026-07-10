@@ -120,6 +120,10 @@ _Avoid_: marketplace, plugin manifest
 - A Job may have zero or one live Broker while running.
 - A Job Result describes that Job only, not an automatic chain rollup.
 - Every root Job has a Job Authority granted by its trusted Host.
+- New Jobs default to read-only confined Job Authority with fetch and execute
+  disabled; any broader grant is explicit.
+- Inherited Job Authority means Consult adds no OS boundary and never selects
+  inheritance as an implicit fallback from failed confinement.
 - A Job may belong to zero or one Delegation Chain.
 - A Delegation Chain has exactly one Chain Id and one or more Jobs.
 - Cancelling a parent Job cancels active descendants in the same chain.

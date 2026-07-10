@@ -1,6 +1,6 @@
 # Opt-in bubblewrap agent sandbox
 
-Status: Accepted
+Status: Superseded by ADR-0027
 
 Consult should keep the default ACP agent launch path unchanged, and expose the
 workspace filesystem sandbox as opt-in with `CONSULT_AGENT_SANDBOX=bwrap`.

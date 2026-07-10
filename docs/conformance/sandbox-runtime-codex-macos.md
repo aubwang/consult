@@ -2,13 +2,15 @@
 
 Date: 2026-07-10
 
-Status: **KILL for `Host=Codex` on macOS.** Do not integrate the pinned runtime
-into Consult's macOS Codex launch path. The same package remains a candidate
-for separately tested Host/platform combinations.
+Status: **KILL for nested confinement under `Host=Codex` on macOS.** Product
+preflight must reject that exact Host context without implicit fallback. The
+same package remains a candidate for unrestricted terminal and separately
+tested Host/platform combinations.
 
-This harness/report is spike evidence, not shipped product behavior. It does
-not change the current `off | bwrap` sandbox surface and does not establish or
-supersede an ADR.
+This harness/report remains spike evidence. ADR-0027 later adopted portable Job
+Authority and uses this report as the reason nested confinement under the
+macOS Codex Host must fail preflight rather than fall back implicitly. The
+unrestricted terminal control still requires a product-level adapter rerun.
 
 ## Candidate and environment
 
@@ -51,10 +53,12 @@ initialization, wrapped `/usr/bin/true`, and proxy cleanup all passed. This
 control isolates the incompatibility to nesting under the Codex Host rather
 than a broken package or unsupported Mac.
 
-## Secondary blockers found by static audit
+## Secondary blockers found by static audit (historical)
 
-These did not need to be reached to make the Host-specific kill decision, but
-they remain required gates if nesting becomes possible:
+These were blockers at spike time. ADR-0027 and the later adapter addressed
+process-tree ownership, the Consult-owned pinned-address proxy, broad read
+denial/default-write removal, and Job-private credential staging. They remain
+useful regression requirements, not descriptions of the current implementation:
 
 1. Consult currently disposes only the direct ACP child. Sandbox Runtime adds
    an outer shell, `sandbox-exec`, and an inner shell before the Profile. Static
@@ -83,8 +87,7 @@ when Consult is invoked from the Codex Host. Preflight for any future
 experimental integration must report this combination as unsupported and must
 never retry with inherited ambient authority implicitly.
 
-Keep the broader runtime evaluation open. Native Linux requires its own probe,
-and an unsandboxed terminal Host on macOS is a distinct combination. Neither
-may be inferred from this result. Do not begin product integration or accept a
-portable-confinement ADR until the required combination-specific evidence is
-complete.
+At spike time, broader runtime evaluation remained open because native Linux
+and an unrestricted macOS terminal were distinct combinations. ADR-0027 later
+accepted the portable adapter only with combination-specific preflight and
+fail-closed nesting; this historical KILL still governs nested macOS Codex.

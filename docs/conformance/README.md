@@ -2,12 +2,88 @@
 
 Live conformance status for the implemented Consult Profiles.
 
-Experimental confinement work is recorded separately from shipped Profile
-conformance. The pinned Sandbox Runtime candidate is currently **rejected for
-the macOS Codex Host path** because it cannot establish its own proxy or nested
-Seatbelt boundary inside Codex's inherited sandbox. See the
+Job Authority confinement is now implemented for the built-in Codex and Claude
+Profile identities on native Linux/macOS, with exact live preflight deciding
+whether the current Host context is usable. The pinned runtime remains
+**rejected for the nested macOS Codex Host path** because it cannot establish
+its own proxy or Seatbelt boundary inside Codex's inherited sandbox. See the
 [macOS Codex Sandbox Runtime spike](sandbox-runtime-codex-macos.md). This does
-not imply a Linux result or change shipped sandbox behavior.
+not imply a global macOS result: the unrestricted terminal control passed. The
+[Linux Codex Sandbox Runtime spike](sandbox-runtime-codex-linux.md) records a
+compatibility KEEP for two explicitly tested Host contexts and a KILL when
+Codex's outer network-disabled seccomp policy blocks nested networking and the
+runtime proxy listener.
+
+On 2026-07-10, the complete deterministic packed Linux matrix passed for both
+Codex and Claude registry identities from the npm install; confined Doctor also
+passed for both identities from the Bun install. The real Profile overlay then
+passed direct ACP/model transport, exact confined Doctor, an unrevealed-secret
+resume challenge, and background/status/result for both Profiles. Codex used
+`gpt-5.5` (`job-t0DN3BfBjhk3` -> `job--jSjnLOVI2yl`, background
+`job-OXmiFZYih7zZ`); Claude used `fable` (`job-yl8RY_7IjHBy` ->
+`job-C-fFKwXeLRuO`, background `job-3Dg1z2SiIyYM`). Each source, resumed, and
+background Job archived exactly one Profile transcript while retaining
+direct-network denial and authenticated model proxying. Product-level macOS
+adapter conformance remains to be run from the Mac; the older spike is
+necessary evidence but not a substitute for that final run.
+
+Run the product-level harness from an unrestricted macOS terminal:
+
+Before testing Claude, confirm that the Host environment has a supported token
+or a stageable credential file without printing the token:
+
+```sh
+test -f "$HOME/.claude/.credentials.json" || \
+  test -n "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}${CLAUDE_CODE_OAUTH_TOKEN:-}"
+```
+
+Keychain-only login is insufficient. The same prerequisite must be present in
+the environment that launches an already-confined Codex Host before running
+the nested Claude control; otherwise credential staging correctly fails before
+Seatbelt is attempted and cannot prove the nesting diagnostic.
+
+```sh
+CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check
+bun run conformance:job-authority -- --agent codex --expect ready
+bun run conformance:job-authority -- --agent claude --expect ready
+bun run conformance:job-authority -- --agent codex --expect ready \
+  --direct --turn --background
+bun run conformance:job-authority -- --agent claude --expect ready \
+  --direct --turn --background
+```
+
+The real controls use each Profile's advertised default model. Add `--model`
+only with an actual supported model id or family alias; do not paste shell
+angle-bracket placeholders as arguments.
+
+Then run the fail-closed control from the already-sandboxed macOS Codex Host:
+
+```sh
+bun run conformance:job-authority -- --agent codex --expect unsupported
+bun run conformance:job-authority -- --agent claude --expect unsupported
+```
+
+The harness emits one redacted JSON object. Doctor/preflight performs real ACP
+initialization but no model prompt. `--direct` runs the exact configured ACP
+Profile with a temporary auth-only home but without the Consult OS boundary, so
+unrelated Host configuration cannot confound the auth/transport control. `--turn`
+asks the Profile to remember a random private marker while acknowledging with a
+different fixed response, then resumes through a second fresh confined Profile
+process and requires the unrevealed marker. `--background` verifies the queued,
+status/result, model-transport, archive, and cleanup path. An `--expect
+unsupported` run additionally attempts delegation, requires the stable nesting
+diagnostic, and proves no Job was created.
+
+`CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check` installs the produced
+tarball through both npm and Bun. Its deterministic fake built-in matrix uses
+both Codex and Claude registry identities to prove the native packed adapter's
+filesystem, direct-egress/proxy, foreground/background, isolated-write,
+cancellation, resume, credential-minimization, and cleanup behavior. The real
+Profile harness above is the complementary proof of vendor auth, ACP/model
+transport, and transcript compatibility; neither layer is treated as a
+substitute for the other. The positive packed fetch probe requires outbound
+reachability to public TCP/443 (`1.1.1.1:443`); failure of that external
+prerequisite is a failed release gate until it is rerun in a suitable network.
 
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -35,28 +111,34 @@ The backstop's path-extraction (`extractTouchedPath` in `scripts/consult-broker.
 
 Both codex and claude shapes are unit-tested in `scripts/consult-broker.test.mts`. Opencode appears to share the codex-style shape from live testing (`auto_approved: false` but rawInput.path on the tool call); not separately unit-fixtured.
 
-## Workspace-level filesystem sandbox
+## Job Authority confinement
 
-None of the backstops above are a hard boundary by themselves.
-`CONSULT_AGENT_SANDBOX=bwrap` adds an opt-in bubblewrap layer around the ACP
-agent process: read-only jobs mount the workspace read-only, and write jobs mount
-only the workspace writable. It is off by default because real backends may need
-explicit auth/config mounts before they can run inside the namespace. The
-`claude` registry profile now mounts host `~/.claude` read-only at `/tmp/.claude`
-inside the sandbox.
+The cooperative ACP/backstop results above are not hard boundaries by
+themselves. Current `delegate` and `review` requests default to canonical
+read-only confined Job Authority. Built-in Codex and Claude launches receive a
+private Job home/temp directory, a copied credential file or one selected
+credential environment variable, Workspace access according to mode, and no
+direct network. Model traffic uses an authenticated pinned-address proxy;
+`--allow-fetch` deliberately broadens it to public TCP/443. That supports normal
+HTTPS clients, but the proxy does not terminate TLS or prove the tunneled
+application protocol is HTTP.
 
-The `codex` registry profile mounts selected host `~/.codex` auth/config files
-read-only into a writable sandbox `~/.codex`. Mounting the whole directory
-read-only authenticated Codex but broke runtime/helper writes, so the narrower
-file mount is the supported shape.
+Whole Host config is not staged: Codex `config.toml` and Claude `settings.json`
+are absent. Exact Profile initialization happens before Job creation, and
+`consult doctor` runs that same live check. `--sandbox inherit` is an explicit
+ambient-authority escape hatch and is never an automatic retry. The opencode
+and custom Profile paths currently require inheritance; native Windows and
+confined nesting are unsupported.
 
-The `opencode` registry profile may require provider credentials from the host
-environment. In the live proof, no secret value was printed or persisted by
-Consult.
+On macOS, Claude conformance requires a supported token environment variable or
+a stageable `.claude/.credentials.json`. A Keychain-only Claude login is not a
+valid confined test prerequisite because Consult does not broker Keychain
+credentials.
 
-On 2026-05-19, release-readiness probes reran and passed direct CLI,
-unsandboxed Consult delegation, and `CONSULT_AGENT_SANDBOX=bwrap` Consult
-delegation for `claude`, `codex`, and `opencode`.
+The older `CONSULT_AGENT_SANDBOX=bwrap` results below remain historical
+conformance evidence for the legacy backend, not the current default contract.
+On 2026-05-19 those probes passed direct CLI, unsandboxed Consult delegation,
+and the optional legacy bubblewrap path for Claude, Codex, and opencode.
 
 On 2026-05-22, Host autodetection was live-verified for the primary supporter
 goal: `consult delegate --agent opencode` returned

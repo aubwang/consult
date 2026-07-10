@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { spawn } from "node:child_process";
 
 import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 
@@ -42,6 +43,7 @@ const clientLogPath = process.env.CONSULT_FAKE_AGENT_CLIENT_LOG;
 const methodLogPath = process.env.CONSULT_FAKE_AGENT_METHOD_LOG;
 const envLogPath = process.env.CONSULT_FAKE_AGENT_ENV_LOG;
 const targetPath = process.env.CONSULT_FAKE_AGENT_TARGET_PATH;
+const descendantPidPath = process.env.CONSULT_FAKE_AGENT_DESCENDANT_PID_PATH;
 const AUTO_APPROVED_EDIT_SCENARIOS = new Set([
   "prompt-auto-approved-edit",
   "prompt-auto-approved-edit-outside-workspace",
@@ -68,6 +70,11 @@ if (envLogPath) {
   );
 }
 
+if (mode === "exit-stderr-flood") {
+  fs.writeSync(2, `discarded-prefix\n${"x".repeat(96 * 1024)}retained-suffix\n`);
+  process.exit(1);
+}
+
 if (mode === "exit") {
   fs.writeSync(2, "boom\n");
   process.exit(1);
@@ -79,9 +86,18 @@ if (mode === "hang") {
   await new Promise(() => {});
 }
 
-if (mode === "sessions" || mode === "stubborn") {
+if (mode === "sessions" || mode === "stubborn" || mode === "descendant") {
   if (mode === "stubborn") {
     process.on("SIGTERM", () => {});
+  }
+  if (mode === "descendant") {
+    const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    descendant.unref();
+    if (descendantPidPath && descendant.pid !== undefined) {
+      fs.writeFileSync(descendantPidPath, String(descendant.pid));
+    }
   }
   const buffer = Buffer.alloc(4096);
   let input = "";

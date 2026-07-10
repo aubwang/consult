@@ -62,6 +62,7 @@ export interface RunDelegateOnceOptions {
   model?: string;
   effort?: string;
   resumeSessionId?: string | null;
+  resumeJobId?: string | null;
   deps?: RunDelegateOnceDeps;
   output?: NullOutput;
   json?: boolean;
@@ -82,13 +83,13 @@ export async function runDelegateOnce({
   model,
   effort,
   resumeSessionId = null,
+  resumeJobId = null,
   deps = {},
   output = createNullOutput(),
   json = false,
   renderSummary = true,
   markFailedOnBrokerError = false,
   inline = false,
-  allowExecute = false,
   isolatedWorkspace,
 }: RunDelegateOnceOptions): Promise<NullOutputResult> {
   // Foreground delegates run the ACP agent in-process (ADR-0021); background
@@ -108,9 +109,9 @@ export async function runDelegateOnce({
       payloadFields: {
         kind,
         resume: resumeSessionId,
+        resumeJobId,
         model,
         effort,
-        allowExecute: allowExecute ? true : undefined,
       },
       deps: effectiveDeps,
       output,

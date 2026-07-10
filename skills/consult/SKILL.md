@@ -27,6 +27,11 @@ The CLI resolves Host identity in this order:
    - `CODEX_THREAD_ID` -> `codex`
 4. `terminal/default`.
 
+Claude Code has no product Host Adapter or stable auto-detected session
+variable. A Claude spawning Host must pass `--host claude-code
+--host-session <stable-session-id>` (or set the two `CONSULT_*` variables), or
+its Jobs intentionally fall into the shared `terminal/default` scope.
+
 ## Commands
 
 Supported first:
@@ -44,7 +49,7 @@ Examples:
 
 ```sh
 consult delegate --agent claude --read-only -- "review this diff"
-consult delegate --agent opencode --read-only -- "summarize this repo"
+consult delegate --agent opencode --read-only --sandbox inherit -- "summarize this repo"
 consult delegate --agent codex --read-only --include-diff -- "look for missed edge cases"
 consult review --agent claude --base main
 consult delegate --agent codex --write --isolated -- "implement the focused fix"
@@ -63,9 +68,9 @@ Forward user arguments directly to `consult`. Do not inspect
 
 ## Manual Setup
 
-1. Put the Consult CLI on `PATH`. Until the npm package is published, install
-   it with `npm install --global github:aubwang/consult`; repository developers
-   may instead run `bun link` from a checkout.
+1. Put the Consult CLI on `PATH` with
+   `npm install --global @aubwang/consult`; repository developers may instead
+   run `bun link` from a checkout.
 2. Make this skill visible to the Host by copying or symlinking `skills/consult`
    into the Host's skill directory.
 3. Configure Profiles with the Consult CLI before first delegation, for example:
@@ -74,17 +79,34 @@ Forward user arguments directly to `consult`. Do not inspect
 consult setup
 consult setup --install codex
 consult agents --set codex --host codex
+consult doctor --agent codex
 ```
 
 ## Safety Defaults
 
-- Default delegated work to `--read-only`.
+- Delegation defaults to read-only, Consult-managed confinement. Built-in
+  `codex` and `claude` Profiles are confined on native Linux and macOS after an
+  exact Profile preflight; a failed preflight creates no Job.
+- `consult doctor` runs that live preflight: it briefly stages the selected
+  credential and initializes/disposes the Profile, but sends no model prompt.
+- Confined Claude on macOS needs a supported token environment variable or a
+  stageable `.claude/.credentials.json`. Consult does not broker a Keychain-only
+  Claude login; surface the Doctor failure instead of retrying with inheritance.
 - Use `--include-diff` or `review` when the Profile needs an immutable snapshot
   of current changes.
 - When edits are explicitly requested, prefer `--write --isolated`; Consult
   returns a patch artifact without changing the invoking checkout.
-- Pass `--allow-exec` only when the user explicitly authorizes command
-  execution. It additionally requires `--write --isolated` and an active
-  `CONSULT_AGENT_SANDBOX=bwrap` sandbox.
+- Add `--allow-fetch` only when task-specific public TCP/443 research is worth
+  delegating. The Profile holds its selected model credential, so fetch
+  increases prompt-injection exfiltration risk; the Host may search instead.
+- `--sandbox inherit` is a deliberate trusted-Host escape hatch with no Consult
+  OS boundary. Read-only and path checks are then cooperative/detective: a
+  Profile backend may act before Consult observes a violation. Never retry with
+  inheritance silently after confined preflight fails.
+- Custom and `opencode` Profiles currently require explicit inheritance.
+  Confined nested delegation and native Windows (including inheritance) are
+  unsupported.
+- Do not pass `--allow-exec`; execute-specific resource limits and
+  cross-Profile conformance remain incomplete, so it fails preflight.
 - Prefer `--json` when parsing Job output. Public Job JSON is versioned and
   grouped under `job`, `outcome`, `artifacts`, and `lineage`.
