@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
+import path from "node:path";
 
 import {
   newSession,
@@ -295,19 +297,21 @@ async function runDirectProfileControl(
     );
   }
   const marker = `DIRECT_${input.agent.toUpperCase()}_${crypto.randomBytes(8).toString("hex")}`;
-  const agent = await startAgent({
-    binary: profile.binary,
-    args: profile.args,
-    env: profile.env,
-    cwd,
-    workspaceRoot: cwd,
-    mode: "read-only",
-    sandbox: "off",
-    profileRegistryId: profile.registryId,
-  });
+  const directEnvironment = await createDirectControlEnvironment(input.agent, profile.env);
+  let agent: Awaited<ReturnType<typeof startAgent>> | undefined;
   let finalText = "";
   let stopReason: string | null = null;
   try {
+    agent = await startAgent({
+      binary: profile.binary,
+      args: profile.args,
+      env: directEnvironment.env,
+      cwd,
+      workspaceRoot: cwd,
+      mode: "read-only",
+      sandbox: "off",
+      profileRegistryId: profile.registryId,
+    });
     const session = await newSession(agent.connection, { cwd });
     await applySessionControls(agent.connection, {
       sessionId: session.sessionId,
@@ -326,7 +330,8 @@ async function runDirectProfileControl(
       }
     }
   } finally {
-    await agent.dispose();
+    if (agent) await agent.dispose();
+    await fs.rm(directEnvironment.root, { recursive: true, force: true });
   }
   if (finalText.trim() !== marker) {
     throw new Error(
@@ -334,6 +339,57 @@ async function runDirectProfileControl(
     );
   }
   return { ok: true, markerMatched: true, stopReason };
+}
+
+async function createDirectControlEnvironment(
+  profile: Options["agent"],
+  configuredEnv: Record<string, string>,
+): Promise<{ root: string; env: NodeJS.ProcessEnv }> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-direct-control-"));
+  await fs.chmod(root, 0o700);
+  const home = path.join(root, "home");
+  const temp = path.join(root, "tmp");
+  const config = path.join(home, profile === "codex" ? ".codex" : ".claude");
+  await Promise.all([
+    fs.mkdir(config, { recursive: true, mode: 0o700 }),
+    fs.mkdir(temp, { recursive: true, mode: 0o700 }),
+    fs.mkdir(path.join(home, ".cache"), { recursive: true, mode: 0o700 }),
+    fs.mkdir(path.join(home, ".config"), { recursive: true, mode: 0o700 }),
+    fs.mkdir(path.join(home, ".local", "share"), { recursive: true, mode: 0o700 }),
+  ]);
+  const hostEnv = { ...process.env, ...configuredEnv };
+  const sourceConfig =
+    profile === "codex"
+      ? hostEnv.CODEX_HOME ?? path.join(os.homedir(), ".codex")
+      : hostEnv.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+  const credential = profile === "codex" ? "auth.json" : ".credentials.json";
+  try {
+    await fs.copyFile(
+      path.join(sourceConfig, credential),
+      path.join(config, credential),
+      fs.constants.COPYFILE_EXCL,
+    );
+    await fs.chmod(path.join(config, credential), 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      await fs.rm(root, { recursive: true, force: true });
+      throw error;
+    }
+  }
+  return {
+    root,
+    env: {
+      ...configuredEnv,
+      HOME: home,
+      TMPDIR: temp,
+      XDG_CACHE_HOME: path.join(home, ".cache"),
+      XDG_CONFIG_HOME: path.join(home, ".config"),
+      XDG_DATA_HOME: path.join(home, ".local", "share"),
+      ...(profile === "codex"
+        ? { CODEX_HOME: config }
+        : { CLAUDE_CONFIG_DIR: config }),
+    },
+  };
 }
 
 async function runBackgroundControl(input: Options): Promise<Record<string, unknown>> {
