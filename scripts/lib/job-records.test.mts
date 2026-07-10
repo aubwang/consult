@@ -8,8 +8,10 @@ import type { TestContext } from "node:test";
 import { jobsDir, logsDir } from "./broker-endpoint.mts";
 import {
   appendJobLogLine,
+  brokerJobMetadata,
   createQueuedJobRecord,
   failJobRecord,
+  finalizedBrokerJobRecord,
   finalizeJobRecord,
   isFinalStatus,
   jobLogPath,
@@ -39,6 +41,51 @@ test("createQueuedJobRecord creates a queued record with a submitted timestamp",
     status: "queued",
     submittedAt: "2026-05-21T10:00:00.000Z",
   });
+});
+
+test("queued and Broker records preserve canonical Job Authority", () => {
+  const authority = {
+    schemaVersion: 1 as const,
+    mode: "write" as const,
+    confinement: "confined" as const,
+    allowFetch: true,
+    allowExecute: false,
+  };
+  const queued = createQueuedJobRecord(
+    {
+      jobId: "job-authority",
+      kind: "delegate",
+      authority,
+    },
+    { now: () => "2026-07-10T10:00:00.000Z" },
+  );
+
+  assert.deepEqual(queued.authority, authority);
+  assert.deepEqual(
+    brokerJobMetadata({
+      profile: "codex",
+      mode: "write",
+      authority,
+      allowExecute: false,
+    }),
+    {
+      profile: "codex",
+      mode: "write",
+      authority,
+      allowExecute: false,
+    },
+  );
+
+  const finalized = finalizedBrokerJobRecord(
+    queued,
+    {
+      jobId: "job-authority",
+      authority,
+      completedAt: "2026-07-10T10:01:00.000Z",
+    },
+    { stopReason: "end_turn", sessionId: "session-authority" },
+  );
+  assert.deepEqual(finalized.authority, authority);
 });
 
 test("markJobRunning records running status and preserves an existing started timestamp", () => {

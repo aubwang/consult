@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { jobResultEnvelope } from "./job-result-contract.mts";
+import type { JobAuthority } from "./job-authority.mts";
 
 test("job result envelope exposes a stable versioned shape without internal fields", () => {
   const envelope = jobResultEnvelope(
@@ -24,6 +25,14 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       includeDiff: true,
       isolated: true,
       allowExecute: true,
+      authority: {
+        schemaVersion: 1,
+        mode: "write",
+        confinement: "confined",
+        allowFetch: true,
+        allowExecute: false,
+        ignoredFutureField: "must not leak",
+      } as JobAuthority & Record<string, unknown>,
       patchPath: "/state/changes.patch",
       patchBytes: 321,
       touchedFilesPath: "/state/touched-files.json",
@@ -65,6 +74,13 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       includeDiff: true,
       isolated: true,
       allowExecute: true,
+      authority: {
+        schemaVersion: 1,
+        mode: "write",
+        confinement: "confined",
+        allowFetch: true,
+        allowExecute: false,
+      },
     },
     outcome: {
       stopReason: "end_turn",
@@ -97,8 +113,34 @@ test("job result envelope uses explicit nulls and empty artifact lists", () => {
   assert.equal(envelope.schemaVersion, 1);
   assert.equal(envelope.job.id, "job-queued");
   assert.equal(envelope.job.profile, null);
+  assert.equal(envelope.job.mode, null);
   assert.equal(envelope.job.includeDiff, false);
+  assert.deepEqual(envelope.job.authority, {
+    schemaVersion: 1,
+    mode: "read-only",
+    confinement: "inherit",
+    allowFetch: false,
+    allowExecute: false,
+  });
   assert.equal(envelope.outcome.finalText, null);
   assert.deepEqual(envelope.artifacts.touchedFiles, []);
   assert.deepEqual(envelope.lineage.childJobIds, []);
+});
+
+test("legacy Job result authority reflects ambient mode and execute fields", () => {
+  const envelope = jobResultEnvelope({
+    jobId: "job-legacy",
+    mode: "write",
+    allowExecute: true,
+  });
+
+  assert.deepEqual(envelope.job.authority, {
+    schemaVersion: 1,
+    mode: "write",
+    confinement: "inherit",
+    allowFetch: false,
+    allowExecute: true,
+  });
+  assert.equal(envelope.job.mode, "write");
+  assert.equal(envelope.job.allowExecute, true);
 });

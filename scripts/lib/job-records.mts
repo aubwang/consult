@@ -10,6 +10,7 @@ import {
 import { omitUndefined } from "./objects.mts";
 import { safeSegment } from "./path-segments.mts";
 import type { PreparedIsolatedWorkspace } from "./isolated-workspace.mts";
+import type { JobAuthority } from "./job-authority.mts";
 
 export const JOB_STATUS = Object.freeze({
   QUEUED: "queued",
@@ -33,6 +34,7 @@ export interface JobRecord extends Record<string, unknown> {
   host?: string;
   hostSessionId?: string;
   profile?: string;
+  authority?: JobAuthority;
   mode?: string;
   prompt?: string;
   status?: string;
@@ -220,6 +222,7 @@ export interface BrokerJobMetadataFields {
   host?: string;
   hostSessionId?: string;
   profile?: string;
+  authority?: JobAuthority;
   mode?: string;
   prompt?: string;
   submittedAt?: string;
@@ -256,6 +259,7 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["host", job.host],
       ["hostSessionId", job.hostSessionId],
       ["profile", job.profile],
+      ["authority", job.authority],
       ["mode", job.mode],
       ["prompt", job.prompt],
       ["submittedAt", job.submittedAt],
