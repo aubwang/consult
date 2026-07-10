@@ -71,6 +71,7 @@ export interface StartAgentOptions {
 
 export interface AgentLaunchLease {
   launch: AgentLaunch;
+  archiveSessionState?(input: { sessionId: string; cwd: string }): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -87,7 +88,9 @@ export interface StartedAgent {
   connection: AcpConnection;
   capabilities: InitializeResponse;
   agentChild: ChildProcessByStdio<Writable, Readable, Readable>;
-  dispose: () => Promise<void>;
+  dispose: (options?: {
+    archiveSessionState?: { sessionId: string; cwd: string };
+  }) => Promise<void>;
 }
 
 interface SessionUpdateState {
@@ -355,7 +358,7 @@ export async function startAgent(
       connection,
       capabilities,
       agentChild,
-      dispose: async () => await disposeAgentChild(true),
+      dispose: async (options) => await disposeAgentChild(true, options),
     };
   } catch (error) {
     try {
@@ -368,7 +371,10 @@ export async function startAgent(
     clearTimeout(timeoutId);
   }
 
-  async function disposeAgentChild(graceful: boolean): Promise<void> {
+  async function disposeAgentChild(
+    graceful: boolean,
+    options?: { archiveSessionState?: { sessionId: string; cwd: string } },
+  ): Promise<void> {
     disposePromise ??= (async () => {
       let processTerminated = agentChild.pid === undefined;
       try {
@@ -395,6 +401,14 @@ export async function startAgent(
         }
         await onceExit(agentChild);
         processTerminated = true;
+        if (options?.archiveSessionState) {
+          if (!lease.archiveSessionState) {
+            throw new Error(
+              "SESSION_STATE_ARCHIVE_FAILED: confined launch does not support selective Session archival",
+            );
+          }
+          await lease.archiveSessionState(options.archiveSessionState);
+        }
       } finally {
         if (processTerminated) {
           await releaseLease();

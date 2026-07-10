@@ -49,6 +49,8 @@ export interface StartJobAgentOptions {
   sandbox?: string;
   profileRegistryId?: string;
   jobId?: string | null;
+  resumeSourceJobId?: string | null;
+  resumeSessionId?: string | null;
   runtime: JobAgentRuntimeHooks;
 }
 
@@ -68,6 +70,8 @@ export async function startJobAgent(
     sandbox = "off",
     profileRegistryId,
     jobId = null,
+    resumeSourceJobId = null,
+    resumeSessionId = null,
     runtime,
   }: StartJobAgentOptions,
   deps: StartJobAgentDeps = {},
@@ -83,6 +87,10 @@ export async function startJobAgent(
           await (deps.acquireConfinedLaunch ?? acquireConfinedSandboxRuntimeLaunch)({
             ...launchOptions,
             authority: canonicalAuthority,
+            stateWorkspaceRoot,
+            jobId: jobId ?? undefined,
+            resumeSourceJobId,
+            resumeSessionId,
           })
       : undefined;
   return await (deps.startAgent ?? startAgent)({
@@ -142,7 +150,13 @@ export async function startJobAgent(
 
 export interface AgentTurnContext {
   config: { cwd: string };
-  ensureAgent(authority: JobAuthority, jobId?: string | null): Promise<StartedAgent>;
+  ensureAgent(
+    authority: JobAuthority,
+    jobId?: string | null,
+    resumeSourceJobId?: string | null,
+    resumeSessionId?: string | null,
+    parentJobId?: string | null,
+  ): Promise<StartedAgent>;
   getSession(): string | undefined;
   getSessionState?(): AgentSessionState | undefined;
   setSession(sessionId: string, sessionState?: AgentSessionState | null): void;
@@ -157,7 +171,13 @@ export async function runAgentJobTurn(
   ctx: AgentTurnContext,
 ): Promise<void> {
   const canonicalParams = canonicalizeRunParams(params);
-  const agent = await ctx.ensureAgent(canonicalParams.authority, canonicalParams.jobId);
+  const agent = await ctx.ensureAgent(
+    canonicalParams.authority,
+    canonicalParams.jobId,
+    canonicalParams.resumeJobId,
+    canonicalParams.resume,
+    canonicalParams.parentJobId,
+  );
   let sessionId: string | undefined;
   let sessionState: AgentSessionState | null = null;
   if (job.resumeSessionId) {
@@ -280,6 +300,7 @@ export function hashRunPayload(
         profile: params.profile,
         authority,
         resume: params.resume ?? null,
+        resumeJobId: params.resumeJobId ?? null,
         model: params.model ?? null,
         effort: params.effort ?? null,
       }),

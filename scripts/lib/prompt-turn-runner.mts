@@ -43,6 +43,7 @@ export interface FinalizedNotification {
   sessionId?: string;
   touchedFiles?: string[];
   errorMessage?: string;
+  sessionStateArchived?: boolean;
 }
 
 export interface PromptTurnContext {
@@ -214,6 +215,9 @@ export async function runPromptTurn({
         finalText,
         errorMessage: finalizedNotification.errorMessage,
       });
+      if (finalizedNotification.sessionStateArchived) {
+        jobRecord.sessionStateArchived = true;
+      }
       await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord).catch(reportWriteFailure);
       finalizedResolve(finalizedNotification);
     });
@@ -232,6 +236,7 @@ export async function runPromptTurn({
       parentJobId: jobRecord.parentJobId,
       delegationDepth: jobRecord.delegationDepth,
       resume: jobRecord.resumeSessionId ?? null,
+      resumeJobId: jobRecord.resumeJobId ?? null,
       prompt: prompt ?? jobRecord.prompt,
       model: jobRecord.model,
       effort: jobRecord.effort,

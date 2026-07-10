@@ -81,6 +81,7 @@ export interface ConsultRunParams {
   mode?: string;
   allowExecute?: boolean;
   resume?: string | null;
+  resumeJobId?: string | null;
   model?: string | null;
   effort?: string | null;
   kind?: string;
@@ -134,7 +135,13 @@ interface SocketBrokerContext {
   cancelJobCascade: (job: BrokerJob) => string[];
   noteTurnSettled: (job: BrokerJob) => void;
   isTainted: () => boolean;
-  ensureAgent: (authority: JobAuthority, jobId?: string | null) => Promise<AgentHandle>;
+  ensureAgent: (
+    authority: JobAuthority,
+    jobId?: string | null,
+    resumeSourceJobId?: string | null,
+    resumeSessionId?: string | null,
+    parentJobId?: string | null,
+  ) => Promise<AgentHandle>;
   isBusy: () => boolean;
   setBusy: (value: boolean) => void;
   shutdown: () => Promise<{ code: number }>;
@@ -184,7 +191,9 @@ export async function serveBroker(
     ensureAgent,
     hashRunPayload,
     writeNotification,
-    beforeTerminal: config.shutdownAfterJob ? async () => await disposeAgent() : undefined,
+    beforeTerminal: config.shutdownAfterJob
+      ? async (terminalJob) => await disposeAgent(terminalJob)
+      : undefined,
     onActivity: () => scheduleIdleShutdown(),
     onTerminal: () => scheduleFinalizedShutdown(),
   });
@@ -292,6 +301,9 @@ export async function serveBroker(
   async function ensureAgent(
     authority: JobAuthority,
     jobId: string | null = null,
+    resumeSourceJobId: string | null = null,
+    resumeSessionId: string | null = null,
+    _parentJobId: string | null = null,
   ): Promise<AgentHandle> {
     if (agent && agentAuthority && !jobAuthoritiesEqual(agentAuthority, authority)) {
       await agent.dispose();
@@ -314,6 +326,8 @@ export async function serveBroker(
       sandbox: config.sandbox,
       profileRegistryId: config.profileRegistryId,
       jobId,
+      resumeSourceJobId,
+      resumeSessionId,
       runtime,
     });
     agentAuthority = authority;
@@ -321,12 +335,19 @@ export async function serveBroker(
     return agent;
   }
 
-  async function disposeAgent(): Promise<void> {
+  async function disposeAgent(terminalJob: BrokerJob | null = null): Promise<void> {
     const current = agent;
     if (!current) {
       return;
     }
-    await current.dispose();
+    const archiveSessionState =
+      terminalJob?.authority.confinement === "confined" && terminalJob.sessionId
+        ? { sessionId: terminalJob.sessionId, cwd: config.cwd }
+        : undefined;
+    await current.dispose({ archiveSessionState });
+    if (archiveSessionState && terminalJob) {
+      terminalJob.sessionStateArchived = true;
+    }
     agent = null;
     agentAuthority = null;
     capabilities = null;
@@ -574,7 +595,13 @@ async function handleRunMessage(
   broker.setBusy(true);
   try {
     if (params.resume) {
-      const agent = await broker.ensureAgent(params.authority, params.jobId);
+      const agent = await broker.ensureAgent(
+        params.authority,
+        params.jobId,
+        params.resumeJobId,
+        params.resume,
+        params.parentJobId,
+      );
       if (!supportsResume(agent.capabilities) && !supportsLoad(agent.capabilities)) {
         writeError(socket, message.id, {
           code: "RESUME_UNSUPPORTED",

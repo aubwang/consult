@@ -52,6 +52,8 @@ export interface JobRecord extends Record<string, unknown> {
   model?: string;
   effort?: string;
   resumeSessionId?: string;
+  resumeJobId?: string;
+  sessionStateArchived?: boolean;
   baseRef?: string;
   includeDiff?: boolean;
   isolated?: boolean;
@@ -232,6 +234,8 @@ export interface BrokerJobMetadataFields {
   model?: string;
   effort?: string;
   resumeSessionId?: string;
+  resumeJobId?: string;
+  sessionStateArchived?: boolean;
   baseRef?: string;
   isolated?: boolean;
   allowExecute?: boolean;
@@ -241,6 +245,7 @@ export interface FinalizedJobOutcome {
   stopReason?: string;
   sessionId?: string;
   errorMessage?: string;
+  sessionStateArchived?: boolean;
 }
 
 export interface BrokerJobSnapshot extends BrokerJobMetadataFields {
@@ -269,6 +274,8 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["model", job.model],
       ["effort", job.effort],
       ["resumeSessionId", job.resumeSessionId],
+      ["resumeJobId", job.resumeJobId],
+      ["sessionStateArchived", job.sessionStateArchived],
       ["baseRef", job.baseRef],
       ["isolated", job.isolated],
       ["allowExecute", job.allowExecute],

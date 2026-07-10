@@ -25,6 +25,9 @@ import type {
   JobAuthorityPreflightResult,
 } from "../job-authority-preflight.mts";
 import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
+import {
+  validateConfinedSessionStateArchive as defaultValidateConfinedSessionStateArchive,
+} from "../confined-session-state.mts";
 import { jobResultEnvelope } from "../job-result-contract.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import {
@@ -63,6 +66,7 @@ export interface DelegateDeps
   preflightAuthority?: (
     input: JobAuthorityPreflightInput,
   ) => Promise<JobAuthorityPreflightResult>;
+  validateSessionStateArchive?: typeof defaultValidateConfinedSessionStateArchive;
   [key: string]: unknown;
 }
 
@@ -192,6 +196,7 @@ export async function runDelegate({
   }
 
   let resumeSessionId: string | null | undefined = null;
+  let resumeSourceJobId: string | null | undefined = null;
   if (validated.resumeJobId) {
     try {
       const resumeCandidate = await findResumeJobCandidate(
@@ -204,6 +209,7 @@ export async function runDelegate({
         return output.result(2);
       }
       resumeSessionId = resumeCandidate.record!.sessionId;
+      resumeSourceJobId = resumeCandidate.record!.jobId;
     } catch (error) {
       const lookupResult = jobLookupErrorResult(
         error,
@@ -220,6 +226,7 @@ export async function runDelegate({
         hostSessionId: hostIdentity.hostSessionId,
       });
       resumeSessionId = resumeCandidate?.sessionId ?? null;
+      resumeSourceJobId = resumeCandidate?.jobId ?? null;
     } catch (error) {
       const malformedResult = jobRecordErrorResult(error);
       if (malformedResult) {
@@ -231,6 +238,36 @@ export async function runDelegate({
     if (!resumeSessionId) {
       output.stderr(
         `No finalized delegate job found for profile '${selected.profile}' in this workspace; rerun with --fresh to start a new session\n`,
+      );
+      return output.result(2);
+    }
+  }
+
+  if (
+    authority.confinement === "confined" &&
+    resumeSourceJobId &&
+    resumeSessionId
+  ) {
+    if (validated.isolated) {
+      output.stderr(
+        "confined resume is unavailable with --isolated because the Execution Workspace cwd changes; use a non-isolated Job or --fresh\n",
+      );
+      return output.result(2);
+    }
+    try {
+      await (
+        deps.validateSessionStateArchive ?? defaultValidateConfinedSessionStateArchive
+      )({
+        workspaceRoot,
+        jobId: resumeSourceJobId,
+        profileRegistryId:
+          selected.profileEntry?.registryId ?? (selected.profile as string),
+        sessionId: resumeSessionId,
+        cwd: workspaceRoot,
+      });
+    } catch (error) {
+      output.stderr(
+        `RESUME_STATE_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}; rerun with --fresh\n`,
       );
       return output.result(2);
     }
@@ -287,6 +324,7 @@ export async function runDelegate({
     isolatedWorkspace,
     cleanupMetadataPath: isolatedWorkspace?.cleanupMetadataPath,
     resumeSessionId: resumeSessionId as string | undefined,
+    resumeJobId: resumeSourceJobId as string | undefined,
     // Foreground jobs run in-process (ADR-0021); record the runner kind,
     // companion pid, and pid start time so `consult cancel` can signal it
     // (without pid-reuse risk) instead of dialing a Broker endpoint.
@@ -360,6 +398,7 @@ export async function runDelegate({
     model: validated.model,
     effort: validated.effort,
     resumeSessionId,
+    resumeJobId: resumeSourceJobId,
     deps,
     output,
     json: validated.json,

@@ -124,6 +124,7 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
     model: jobRecord.model,
     effort: jobRecord.effort,
     resumeSessionId: jobRecord.resumeSessionId,
+    resumeJobId: jobRecord.resumeJobId,
     deps,
     output,
     renderSummary: false,

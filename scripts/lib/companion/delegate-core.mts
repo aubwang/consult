@@ -62,6 +62,7 @@ export interface RunDelegateOnceOptions {
   model?: string;
   effort?: string;
   resumeSessionId?: string | null;
+  resumeJobId?: string | null;
   deps?: RunDelegateOnceDeps;
   output?: NullOutput;
   json?: boolean;
@@ -82,6 +83,7 @@ export async function runDelegateOnce({
   model,
   effort,
   resumeSessionId = null,
+  resumeJobId = null,
   deps = {},
   output = createNullOutput(),
   json = false,
@@ -107,6 +109,7 @@ export async function runDelegateOnce({
       payloadFields: {
         kind,
         resume: resumeSessionId,
+        resumeJobId,
         model,
         effort,
       },
