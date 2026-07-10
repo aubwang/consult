@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import type { AgentInitError, PromptTurnEvent } from "./acp-client.mts";
 import { loadSession, newSession, promptTurn, resumeSession, startAgent } from "./acp-client.mts";
+import { pidIsAlive } from "./process.mts";
 
 const fixturePath = fileURLToPath(
   new URL("./__fixtures__/fake-acp-agent.mts", import.meta.url),
@@ -113,6 +114,26 @@ test("dispose escalates to SIGKILL when the agent ignores SIGTERM", async () => 
   await agent.dispose();
 
   assert.deepEqual(await exit, { code: null, signal: "SIGKILL" });
+});
+
+test("dispose terminates a Profile descendant after the direct child exits", async (t) => {
+  const descendantPidPath = path.join(
+    path.dirname(fixturePath),
+    `.consult-descendant-${process.pid}-${Date.now()}`,
+  );
+  t.after(() => fs.promises.unlink(descendantPidPath).catch(() => {}));
+  const agent = await startAgent({
+    binary: process.execPath,
+    args: [fixturePath, "descendant"],
+    env: { CONSULT_FAKE_AGENT_DESCENDANT_PID_PATH: descendantPidPath },
+    cwd: path.dirname(fixturePath),
+    clientHandlers: {},
+  });
+  const descendantPid = await waitForPidFile(descendantPidPath);
+
+  assert.equal(pidIsAlive(descendantPid), true);
+  await agent.dispose();
+  assert.equal(pidIsAlive(descendantPid), false);
 });
 
 test("startAgent rejects when the agent exits before initialize completes", async () => {
@@ -333,3 +354,18 @@ test("promptTurn fans out session updates to caller-supplied handlers", async ()
     await agent.dispose();
   }
 });
+
+async function waitForPidFile(filePath: string): Promise<number> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    try {
+      return Number(await fs.promises.readFile(filePath, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for descendant pid: ${filePath}`);
+}
