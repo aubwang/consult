@@ -10,6 +10,8 @@ export interface JobAuthorityPreflightInput {
   parentJob?: unknown;
   platform?: NodeJS.Platform;
   workspaceRoot: string;
+  /** Built-in Profile identity; configured aliases remain user-facing `profile`. */
+  profileRegistryId?: string;
   profile: string;
 }
 
