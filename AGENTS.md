@@ -39,6 +39,28 @@ job-scoped Brokers.
   `scripts/`.
 - Update docs and ADRs when a shipped behavior or architecture decision changes.
 
+## Releasing
+
+- Consult ships on npm as `@aubwang/consult` (`npm i -g @aubwang/consult`).
+  Prefer npm over a `github:` install: the git-clone path has to compile
+  `dist/` and needs the dev toolchain, so it is not a supported install route.
+- Releases are automated with release-please. Write Conventional Commits on
+  `main`: `feat:` and `fix:` drive releases (minor/patch), `feat!:` /
+  `BREAKING CHANGE:` bump major, and `chore:`/`ci:`/`docs:`/`refactor:` do not
+  release.
+- Flow: merge conventional commits to `main` → release-please opens/updates a
+  Release PR (version bump + `CHANGELOG.md`) → merge that PR → the same
+  `.github/workflows/publish.yml` run tags, cuts the GitHub Release, and runs
+  `npm publish --provenance`. Do not hand-run `npm version` / `npm publish` or
+  create releases manually; let the Release PR carry the version.
+- Publishing uses npm trusted publishing over GitHub Actions OIDC — no npm
+  tokens or secrets. Config lives in `release-please-config.json` and
+  `.release-please-manifest.json` (baseline version); tags are `vX.Y.Z`
+  (`include-component-in-tag: false`).
+- Deprecate a version only when it is actually broken (e.g. superseded by a
+  security fix): `npm deprecate @aubwang/consult@<ver> "<reason>"`. Do not
+  auto-deprecate prior versions just because a newer one exists.
+
 ## Agent Context Map
 
 ### Domain glossary
