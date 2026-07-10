@@ -10,6 +10,7 @@ import {
   processGroupIsAlive,
   terminateProcessGroup,
   terminateProcessTree,
+  waitForTargetExit,
 } from "./process.mts";
 
 test("terminateProcessTree terminates a running child process", async (t) => {
@@ -69,6 +70,31 @@ test("terminateProcessGroup kills a grandchild after its group leader exits", as
 
   assert.equal(processGroupIsAlive(leader.pid), false);
   assert.equal(pidIsAlive(grandchildPid), false);
+});
+
+test("waitForTargetExit rejects when SIGKILL does not terminate the target", async () => {
+  let now = 0;
+  let forceKillCalls = 0;
+
+  await assert.rejects(
+    waitForTargetExit(
+      () => true,
+      () => {
+        forceKillCalls += 1;
+      },
+      50,
+      {
+        now: () => now,
+        sleep: async (milliseconds) => {
+          now += milliseconds;
+        },
+        forceKillGraceMs: 100,
+      },
+    ),
+    /process target remained alive after SIGKILL/u,
+  );
+  assert.equal(forceKillCalls, 1);
+  assert.equal(now, 150);
 });
 
 async function spawnNodeChild(
