@@ -1,0 +1,91 @@
+# Sandbox Runtime spike: Codex on macOS
+
+Date: 2026-07-10
+
+Status: **KILL for `Host=Codex` on macOS.** Do not integrate the pinned runtime
+into Consult's macOS Codex launch path. The same package remains a candidate
+for separately tested Host/platform combinations.
+
+This is spike evidence, not shipped product behavior. It does not change the
+current `off | bwrap` sandbox surface and does not establish or supersede an
+ADR.
+
+## Candidate and environment
+
+- Package: `@anthropic-ai/sandbox-runtime@0.0.64`
+- npm SHA-1: `5152b83683672010f57d46460343ce5b90da2b84`
+- lockfile integrity:
+  `sha512-7w/+8g9p9RjUr7G9k1v/B5Edbw2GzjQ4Kigqdq0/LSudqOYi90+8+olOmwc1uInBbe2YLN+NDNrIf/jA4tNbCA==`
+- Machine: Apple arm64, macOS 26.5.1, Darwin 25.5.0
+- Host context: Codex with inherited Seatbelt confinement
+- Profile target: Consult's pinned `codex-acp` integration
+
+The opt-in probe is `bun run spike:sandbox-runtime-codex`. It initializes the
+runtime with network allowlists empty, local binding disabled, weaker network
+and nested modes disabled, Apple Events disabled, and no writable paths. It
+then tests native Seatbelt launch, runtime proxy initialization, wrapped child
+launch, and proxy cleanup. The script is excluded from the published package.
+
+## Results
+
+### Inside the Codex Host sandbox
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Runtime platform/dependencies | PASS | macOS supported; no dependency errors or warnings |
+| Native nested Seatbelt | **FAIL** | exit 71: `sandbox-exec: sandbox_apply: Operation not permitted` |
+| Runtime initialization | **FAIL** | `listen EPERM` while binding the runtime's temporary `srt-mux-*.sock` |
+| Runtime-wrapped Profile launch | SKIP | initialization failed before any Profile/model work |
+| Cleanup after failed startup | PASS | no proxy listener was established |
+
+Both failures are fail-closed, which is necessary, but they make the runtime
+unusable for this Host path. Removing Codex marker environment variables does
+not make native nesting work; the inherited kernel sandbox, not the marker, is
+the outer ceiling.
+
+### Standalone macOS control
+
+The identical probe was run from an unrestricted terminal context on the same
+machine. Platform/dependency preflight, native Seatbelt launch, runtime proxy
+initialization, wrapped `/usr/bin/true`, and proxy cleanup all passed. This
+control isolates the incompatibility to nesting under the Codex Host rather
+than a broken package or unsupported Mac.
+
+## Secondary blockers found by static and native audit
+
+These did not need to be reached to make the Host-specific kill decision, but
+they remain required gates if nesting becomes possible:
+
+1. Consult currently disposes only the direct ACP child. Sandbox Runtime adds
+   an outer shell, `sandbox-exec`, and an inner shell before the Profile. A
+   controlled native probe showed that terminating the wrapper can leave its
+   grandchild alive. Any future adapter needs process-group ownership and a
+   regression test proving full Profile-tree termination before Broker/Job
+   finalization.
+2. The pinned proxy checks the requested hostname allowlist, then lets the host
+   resolver and `net.connect` choose the destination. The audited HTTP and
+   SOCKS paths do not classify and reject loopback, private, link-local, or
+   metadata addresses and pin an approved resolved address. This does not meet
+   Consult's provisional DNS-rebinding/TOCTOU requirement without an upstream
+   fix or a narrowly maintained patch.
+3. macOS reads are allow-by-default, so a Consult adapter would need broad
+   `denyRead` plus explicit Workspace/runtime/auth re-allows. Sandbox Runtime
+   also unions default writable paths into an otherwise empty write allowlist;
+   strict read-only policy must explicitly deny those defaults.
+4. Codex auth/config must be staged into a fresh, writable runtime home using
+   only selected files. Mounting or allowing the full host `~/.codex` tree
+   would violate the credential-minimization target and expose unrelated Host
+   state.
+
+## Decision
+
+Kill `@anthropic-ai/sandbox-runtime@0.0.64` as the macOS confinement backend
+when Consult is invoked from the Codex Host. Preflight for any future
+experimental integration must report this combination as unsupported and must
+never retry with inherited ambient authority implicitly.
+
+Keep the broader runtime evaluation open. Native Linux requires its own probe,
+and an unsandboxed terminal Host on macOS is a distinct combination. Neither
+may be inferred from this result. Do not begin product integration or accept a
+portable-confinement ADR until the required combination-specific evidence is
+complete.
