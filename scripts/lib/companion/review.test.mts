@@ -375,3 +375,12 @@ function agentTextUpdate(text: string) {
     },
   };
 }
+test("review rejects unsupported authority flags instead of silently narrowing them", async () => {
+  const result = await runReview({
+    args: { positional: [], flags: { "allow-fetch": true } },
+    deps: { stdoutWrite: () => {}, stderrWrite: () => {} },
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /--allow-fetch is not supported by this command/u);
+});

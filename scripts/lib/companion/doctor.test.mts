@@ -154,6 +154,44 @@ test("doctor marks default confinement unready with the probe diagnostic", async
   assert.equal(report.authority.inherit.available, true);
 });
 
+test("doctor validates an explicitly inherited Profile even when default confinement is unavailable", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "opencode",
+    hostDefaults: {},
+    profiles: { opencode: profile("opencode") },
+  });
+
+  const result = await runDoctor({
+    args: {
+      positional: [],
+      flags: { json: true, sandbox: "inherit", agent: "opencode" },
+    },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "linux",
+      probeInherited: async ({ authority }) => ({ ok: true, authority }),
+      probeConfined: async () => ({
+        ok: false,
+        diagnostic: {
+          code: "AUTHORITY_COMBINATION_UNSUPPORTED",
+          message: "opencode confinement unavailable",
+          remediation: "Use explicit inheritance.",
+        },
+      }),
+    },
+  });
+
+  const report = JSON.parse(result.stdout) as DoctorReport;
+  assert.equal(result.exitCode, 0);
+  assert.equal(report.canDelegate, true);
+  assert.equal(report.authority.requested.ok, true);
+  assert.equal(report.authority.requestedAuthority?.confinement, "inherit");
+  assert.equal(report.authority.confined.ok, false);
+});
+
 test("doctor reports malformed job records inside the diagnostic payload", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

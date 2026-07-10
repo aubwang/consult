@@ -225,7 +225,7 @@ export function createInlineClient({
     jobId: string | null = null,
     resumeSourceJobId: string | null = null,
     resumeSessionId: string | null = null,
-    _parentJobId: string | null = null,
+    parentJobId: string | null = null,
   ): Promise<StartedAgent> {
     // One inline client runs exactly one job in exactly one mode, so unlike
     // the Broker there is never a mode change requiring an agent restart.
@@ -242,6 +242,7 @@ export function createInlineClient({
         jobId,
         resumeSourceJobId,
         resumeSessionId,
+        parentJobId,
         runtime,
       });
     }

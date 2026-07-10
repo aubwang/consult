@@ -4,6 +4,7 @@ import {
   type JobAuthority,
   type JobAuthorityDiagnostic,
 } from "./job-authority.mts";
+import { startAgent } from "./acp-client.mts";
 
 export interface JobAuthorityPreflightInput {
   authority: JobAuthority;
@@ -26,15 +27,23 @@ export type JobAuthorityPreflightResult =
   | { ok: false; diagnostic: JobAuthorityDiagnostic };
 
 export interface JobAuthorityPreflightDeps {
+  probeInherited?: (
+    input: JobAuthorityPreflightInput,
+  ) => Promise<JobAuthorityPreflightResult>;
   probeConfined?: (
     input: JobAuthorityPreflightInput,
   ) => Promise<JobAuthorityPreflightResult>;
 }
 
-export async function preflightJobAuthority(
-  input: JobAuthorityPreflightInput,
-  deps: JobAuthorityPreflightDeps = {},
-): Promise<JobAuthorityPreflightResult> {
+export interface JobAuthorityRuntimeBoundaryInput {
+  authority: JobAuthority;
+  parentJob?: unknown;
+  platform?: NodeJS.Platform;
+}
+
+export function validateJobAuthorityRuntimeBoundary(
+  input: JobAuthorityRuntimeBoundaryInput,
+): JobAuthorityPreflightResult {
   const requested = validateJobAuthority(input.authority);
   if (!requested.ok) {
     return requested;
@@ -46,6 +55,14 @@ export async function preflightJobAuthority(
       "AUTHORITY_PLATFORM_UNSUPPORTED",
       "native Windows does not support Consult Job Authority confinement or inheritance",
       "Run Consult on native Linux, WSL2, or macOS.",
+    );
+  }
+
+  if (authority.allowExecute) {
+    return failure(
+      "AUTHORITY_EXECUTE_UNAVAILABLE",
+      "execute authority is unavailable at the runtime launch boundary",
+      "Recreate the Job without execute authority.",
     );
   }
 
@@ -66,8 +83,34 @@ export async function preflightJobAuthority(
     }
   }
 
+  return { ok: true, authority };
+}
+
+export async function preflightJobAuthority(
+  input: JobAuthorityPreflightInput,
+  deps: JobAuthorityPreflightDeps = {},
+): Promise<JobAuthorityPreflightResult> {
+  const boundary = validateJobAuthorityRuntimeBoundary(input);
+  if (!boundary.ok) return boundary;
+  const authority = boundary.authority;
+
   if (authority.confinement === "inherit") {
-    return { ok: true, authority };
+    if (!deps.probeInherited) {
+      return failure(
+        "AUTHORITY_COMBINATION_UNSUPPORTED",
+        `inherited authority preflight requires the exact '${input.profile}' Profile launch`,
+        "Re-run Consult setup for this Profile and retry; no Job was created.",
+      );
+    }
+    try {
+      return await deps.probeInherited({ ...input, authority });
+    } catch (error) {
+      return failure(
+        "AUTHORITY_PREFLIGHT_FAILED",
+        `inherited authority preflight failed: ${error instanceof Error ? error.message : String(error)}`,
+        "Run consult doctor for the inherited Profile launch and fix its ACP initialization; no Job was created.",
+      );
+    }
   }
   if (!deps.probeConfined) {
     return failure(
@@ -86,6 +129,50 @@ export async function preflightJobAuthority(
       "Run consult doctor --json and fix the reported sandbox dependency or nesting failure; no Job was created.",
     );
   }
+}
+
+export async function probeInheritedProfileLaunch(
+  input: JobAuthorityPreflightInput,
+): Promise<JobAuthorityPreflightResult> {
+  if (!input.profileLaunch) {
+    return failure(
+      "AUTHORITY_COMBINATION_UNSUPPORTED",
+      `inherited authority preflight requires the exact '${input.profile}' Profile launch`,
+      "Re-run Consult setup for this Profile and retry; no Job was created.",
+    );
+  }
+  let agent: Awaited<ReturnType<typeof startAgent>> | undefined;
+  let launchFailure: unknown;
+  try {
+    agent = await startAgent({
+      binary: input.profileLaunch.binary,
+      args: input.profileLaunch.args,
+      env: input.profileLaunch.env,
+      cwd: input.workspaceRoot,
+      workspaceRoot: input.workspaceRoot,
+      mode: input.authority.mode,
+      sandbox: "off",
+      profileRegistryId: input.profileRegistryId,
+    });
+  } catch (error) {
+    launchFailure = error;
+  } finally {
+    if (agent) {
+      try {
+        await agent.dispose();
+      } catch (error) {
+        launchFailure ??= error;
+      }
+    }
+  }
+  if (launchFailure !== undefined) {
+    return failure(
+      "AUTHORITY_PREFLIGHT_FAILED",
+      `inherited authority preflight failed: ${launchFailure instanceof Error ? launchFailure.message : String(launchFailure)}`,
+      "Run consult doctor for the inherited Profile launch and fix its ACP initialization; no Job was created.",
+    );
+  }
+  return { ok: true, authority: input.authority };
 }
 
 function failure(

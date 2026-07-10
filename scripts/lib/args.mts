@@ -48,6 +48,15 @@ export function missingFlagValueError(
   return null;
 }
 
+export function unsupportedFlagError(
+  flags: Record<string, FlagValue | undefined> | undefined,
+  allowedNames: readonly string[],
+): string | null {
+  const allowed = new Set(allowedNames);
+  const unsupported = Object.keys(flags ?? {}).find((name) => !allowed.has(name));
+  return unsupported ? `--${unsupported} is not supported by this command` : null;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
   const flags: Record<string, FlagValue | undefined> = {};

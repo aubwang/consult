@@ -15,6 +15,8 @@ import { decidePermission } from "./permissions.mts";
 import type { PermissionMode } from "./permissions.mts";
 import { normalizeAgentSandbox } from "./process-sandbox.mts";
 import { acquireConfinedSandboxRuntimeLaunch } from "./sandbox-runtime-launch.mts";
+import { readWorkspaceJobRecord } from "./job-records.mts";
+import { validateJobAuthorityRuntimeBoundary } from "./job-authority-preflight.mts";
 import { applySessionControls, openResumedSession } from "./session-controls.mts";
 import type { BrokerJob, BrokerSessionUpdate } from "./broker-job-runtime.mts";
 
@@ -51,6 +53,7 @@ export interface StartJobAgentOptions {
   jobId?: string | null;
   resumeSourceJobId?: string | null;
   resumeSessionId?: string | null;
+  parentJobId?: string | null;
   runtime: JobAgentRuntimeHooks;
 }
 
@@ -72,11 +75,22 @@ export async function startJobAgent(
     jobId = null,
     resumeSourceJobId = null,
     resumeSessionId = null,
+    parentJobId = null,
     runtime,
   }: StartJobAgentOptions,
   deps: StartJobAgentDeps = {},
 ): Promise<StartedAgent> {
   const canonicalAuthority = canonicalRunAuthority({ authority });
+  const parentJob = parentJobId
+    ? await readWorkspaceJobRecord(stateWorkspaceRoot, parentJobId)
+    : undefined;
+  const boundary = validateJobAuthorityRuntimeBoundary({
+    authority: canonicalAuthority,
+    parentJob,
+  });
+  if (!boundary.ok) {
+    throw authorityDiagnosticError(boundary.diagnostic);
+  }
   const sandboxMode =
     canonicalAuthority.confinement === "inherit"
       ? "off"

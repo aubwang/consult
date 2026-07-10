@@ -1,18 +1,27 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { missingFlagValueError } from "../args.mts";
+import {
+  boolFlag,
+  missingFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { brokersDir, profilesPath } from "../broker-endpoint.mts";
 import { pidAlive as defaultPidAlive } from "../broker-lifecycle.mts";
 import { resolveHostIdentity } from "../host-identity.mts";
-import { DEFAULT_JOB_AUTHORITY } from "../job-authority.mts";
+import { DEFAULT_JOB_AUTHORITY, resolveJobAuthority } from "../job-authority.mts";
 import type { JobAuthority, JobAuthorityDiagnostic } from "../job-authority.mts";
 import { isFinalStatus, listWorkspaceJobRecords } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
 import { isRecord } from "../objects.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
+import {
+  preflightJobAuthority,
+  probeInheritedProfileLaunch,
+} from "../job-authority-preflight.mts";
 import { resolveInvocationContext } from "./invocation-context.mts";
 import type {
   InvocationContext,
@@ -26,6 +35,7 @@ export interface DoctorDeps extends ResolveInvocationContextDeps {
   pidAlive?: (pid: number) => Promise<boolean>;
   platform?: NodeJS.Platform;
   probeConfined?: typeof probeConfinedSandboxRuntime;
+  probeInherited?: typeof probeInheritedProfileLaunch;
   resolveWorkspaceRoot?: () => Promise<string>;
 }
 
@@ -76,6 +86,11 @@ interface JobAuthorityDoctorReport {
   ok: boolean;
   platform: NodeJS.Platform;
   defaultAuthority: JobAuthority;
+  requestedAuthority: JobAuthority | null;
+  requested: {
+    ok: boolean;
+    diagnostic: JobAuthorityDiagnostic | null;
+  };
   selectedProfile: string | null;
   profileRegistryId: string | null;
   confined: {
@@ -110,12 +125,20 @@ export async function runDoctor({
   env?: Record<string, string | undefined>;
   deps?: DoctorDeps;
 }): Promise<CliResult> {
+  const unsupported = unsupportedFlagError(args.flags, [
+    "agent", "profile", "host", "host-session", "host-session-id", "read-only",
+    "write", "isolated", "sandbox", "allow-fetch", "allow-exec", "json",
+  ]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
   const usageError = missingFlagValueError(args.flags, [
     "agent",
     "profile",
     "host",
     "host-session",
     "host-session-id",
+    "sandbox",
   ]);
   if (usageError) {
     return { exitCode: 2, stdout: "", stderr: `${usageError}\n` };
@@ -312,6 +335,11 @@ async function inspectAuthority({
   const base = {
     platform,
     defaultAuthority: { ...DEFAULT_JOB_AUTHORITY },
+    requestedAuthority: null,
+    requested: {
+      ok: false,
+      diagnostic: null,
+    },
     inherit: {
       available: inheritAvailable,
       explicitFlag: "--sandbox inherit" as const,
@@ -343,7 +371,50 @@ async function inspectAuthority({
         },
       );
     }
-    const confined = await (deps.probeConfined ?? probeConfinedSandboxRuntime)({
+    const readOnly = boolFlag(args.flags?.["read-only"]);
+    const write = boolFlag(args.flags?.write);
+    if (readOnly && write) {
+      return authorityFailure(base, selectedProfile, profileEntry.registryId, {
+        code: "AUTHORITY_INVALID",
+        reason: "unknown-mode",
+        message: "--read-only and --write are mutually exclusive",
+        remediation: "Choose exactly one mode.",
+      });
+    }
+    const resolved = resolveJobAuthority({
+      mode: write ? "write" : "read-only",
+      confinement: stringFlag(args.flags?.sandbox),
+      allowFetch: boolFlag(args.flags?.["allow-fetch"]),
+      allowExecute: boolFlag(args.flags?.["allow-exec"]),
+      isolated: boolFlag(args.flags?.isolated),
+    });
+    if (!resolved.ok) {
+      return authorityFailure(
+        { ...base, requested: { ok: false, diagnostic: resolved.diagnostic } },
+        selectedProfile,
+        profileEntry.registryId,
+        resolved.diagnostic,
+      );
+    }
+    const requestedAuthority = resolved.authority;
+    const requested = await preflightJobAuthority({
+      authority: requestedAuthority,
+      platform,
+      workspaceRoot,
+      profile: selectedProfile,
+      profileRegistryId: profileEntry.registryId,
+      profileLaunch: {
+        binary: profileEntry.binary,
+        args: profileEntry.args,
+        env: profileEntry.env,
+      },
+    }, {
+      probeConfined: deps.probeConfined ?? probeConfinedSandboxRuntime,
+      probeInherited: deps.probeInherited ?? probeInheritedProfileLaunch,
+    });
+    const confined = requestedAuthority.confinement === "confined"
+      ? requested
+      : await (deps.probeConfined ?? probeConfinedSandboxRuntime)({
       authority: { ...DEFAULT_JOB_AUTHORITY },
       platform,
       workspaceRoot,
@@ -354,10 +425,15 @@ async function inspectAuthority({
         args: profileEntry.args,
         env: profileEntry.env,
       },
-    });
+        });
     return {
       ...base,
-      ok: confined.ok,
+      ok: requested.ok,
+      requestedAuthority,
+      requested: {
+        ok: requested.ok,
+        diagnostic: requested.ok ? null : requested.diagnostic,
+      },
       selectedProfile,
       profileRegistryId: profileEntry.registryId,
       confined: {
@@ -377,7 +453,12 @@ async function inspectAuthority({
 function authorityFailure(
   base: Pick<
     JobAuthorityDoctorReport,
-    "platform" | "defaultAuthority" | "inherit" | "legacySandboxEnv"
+    | "platform"
+    | "defaultAuthority"
+    | "requestedAuthority"
+    | "requested"
+    | "inherit"
+    | "legacySandboxEnv"
   >,
   selectedProfile: string | null,
   profileRegistryId: string | null,
@@ -386,6 +467,10 @@ function authorityFailure(
   return {
     ...base,
     ok: false,
+    requested: {
+      ok: false,
+      diagnostic: base.requested.diagnostic ?? diagnostic,
+    },
     selectedProfile,
     profileRegistryId,
     confined: { ok: false, diagnostic },
@@ -442,6 +527,10 @@ function renderDoctor(report: DoctorReport): string {
     `  malformed: ${report.brokers.malformed}`,
     "",
     "job authority:",
+    `  requested: ${report.authority.requested.ok ? "ready" : `unready: ${report.authority.requested.diagnostic?.message}`}`,
+    `  requested mode: ${report.authority.requestedAuthority?.mode ?? "-"}`,
+    `  requested confinement: ${report.authority.requestedAuthority?.confinement ?? "-"}`,
+    `  requested fetch: ${yesNo(report.authority.requestedAuthority?.allowFetch ?? false)}`,
     `  default confined: ${report.authority.confined.ok ? "ready" : `unready: ${report.authority.confined.diagnostic?.message}`}`,
     `  platform: ${report.authority.platform}`,
     `  profile: ${valueOrDash(report.authority.selectedProfile)}`,

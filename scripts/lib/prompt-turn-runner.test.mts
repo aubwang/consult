@@ -83,6 +83,7 @@ test("runPromptTurn streams updates, writes logs, and finalizes the job record",
     parentJobId: null,
     delegationDepth: 0,
     resume: null,
+    resumeJobId: null,
     prompt: "/review\n\ndiff",
     baseRef: "origin/main",
     authority: {

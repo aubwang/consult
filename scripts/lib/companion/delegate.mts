@@ -1,7 +1,12 @@
 import { spawn as defaultSpawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { boolFlag, missingFlagValueError, stringFlag } from "../args.mts";
+import {
+  boolFlag,
+  missingFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { resolveNewJobChain } from "../delegation-chain.mts";
 import {
@@ -19,7 +24,10 @@ import {
 import type { JobRecord } from "../job-records.mts";
 import { resolveJobAuthority } from "../job-authority.mts";
 import type { JobAuthority, JobAuthorityDiagnostic } from "../job-authority.mts";
-import { preflightJobAuthority as defaultPreflightJobAuthority } from "../job-authority-preflight.mts";
+import {
+  preflightJobAuthority as defaultPreflightJobAuthority,
+  probeInheritedProfileLaunch,
+} from "../job-authority-preflight.mts";
 import type {
   JobAuthorityPreflightInput,
   JobAuthorityPreflightResult,
@@ -175,6 +183,7 @@ export async function runDelegate({
     ((input: JobAuthorityPreflightInput) =>
       defaultPreflightJobAuthority(input, {
         probeConfined: probeConfinedSandboxRuntime,
+        probeInherited: probeInheritedProfileLaunch,
       }))
   )({
     authority,
@@ -410,6 +419,13 @@ export async function runDelegate({
 
 function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const flags = args.flags ?? {};
+  const unsupported = unsupportedFlagError(flags, [
+    "agent", "profile", "model", "effort", "host", "host-session",
+    "host-session-id", "parent-job", "parent-job-id", "resume-job", "prompt",
+    "base", "sandbox", "write", "read-only", "resume", "fresh", "background",
+    "wait", "include-diff", "isolated", "allow-fetch", "allow-exec", "json",
+  ]);
+  if (unsupported) return { error: unsupported };
   const missingValue = missingFlagValueError(flags, [
     "agent",
     "profile",

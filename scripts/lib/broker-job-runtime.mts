@@ -438,7 +438,10 @@ export function createBrokerJobRuntime({
         ...(job.sessionStateArchived ? { sessionStateArchived: true } : {}),
       };
     } catch (error) {
-      const cleanupMessage = `PROFILE_CLEANUP_UNCONFIRMED: ${errorMessage(error)}`;
+      const message = errorMessage(error);
+      const cleanupMessage = message.startsWith("SESSION_STATE_ARCHIVE_FAILED:")
+        ? message
+        : `PROFILE_CLEANUP_UNCONFIRMED: ${message}`;
       return {
         stopReason: "failed",
         sessionId: outcome.sessionId,

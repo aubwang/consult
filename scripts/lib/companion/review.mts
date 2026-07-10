@@ -1,5 +1,10 @@
 import { runCodexReview as defaultRunCodexReview } from "../../adapters/codex-review.mts";
-import { boolFlag, missingFlagValueError, stringFlag } from "../args.mts";
+import {
+  boolFlag,
+  missingFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import {
   appendPinnedDiff,
@@ -14,7 +19,10 @@ import {
 import { defaultGenerateJobId } from "../job-ids.mts";
 import { processStartTime } from "../process-identity.mts";
 import { resolveJobAuthority } from "../job-authority.mts";
-import { preflightJobAuthority as defaultPreflightJobAuthority } from "../job-authority-preflight.mts";
+import {
+  preflightJobAuthority as defaultPreflightJobAuthority,
+  probeInheritedProfileLaunch,
+} from "../job-authority-preflight.mts";
 import type {
   JobAuthorityPreflightInput,
   JobAuthorityPreflightResult,
@@ -67,6 +75,14 @@ export async function runReview({
   deps?: ReviewDeps;
 }): Promise<CommandResult> {
   const output = createOutput(deps);
+  const unsupported = unsupportedFlagError(args.flags, [
+    "agent", "profile", "host", "host-session", "host-session-id", "base",
+    "sandbox", "json",
+  ]);
+  if (unsupported) {
+    output.stderr(`${unsupported}\n`);
+    return output.result(2);
+  }
   const usageError = missingFlagValueError(args.flags, [
     "agent",
     "profile",
@@ -113,6 +129,7 @@ export async function runReview({
     ((input: JobAuthorityPreflightInput) =>
       defaultPreflightJobAuthority(input, {
         probeConfined: probeConfinedSandboxRuntime,
+        probeInherited: probeInheritedProfileLaunch,
       }))
   )({
     authority,
