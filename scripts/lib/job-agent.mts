@@ -9,6 +9,8 @@ import { newSession, promptTurn, startAgent } from "./acp-client.mts";
 import type { StartedAgent } from "./acp-client.mts";
 import { createFsHandlers } from "./fs-handlers.mts";
 import type { FsHandlerMode } from "./fs-handlers.mts";
+import { jobAuthorityFromRecord } from "./job-authority.mts";
+import type { JobAuthority } from "./job-authority.mts";
 import { decidePermission } from "./permissions.mts";
 import type { PermissionMode } from "./permissions.mts";
 import { normalizeAgentSandbox } from "./process-sandbox.mts";
@@ -188,21 +190,38 @@ export function agentErrorMessage(error: CodedAgentError): string {
   return error.message;
 }
 
-export function hashRunPayload(params: ConsultRunParams): string {
+export function hashRunPayload(
+  params: ConsultRunParams & { authority?: unknown },
+): string {
+  const authority = runPayloadAuthority(params);
   return crypto
     .createHash("sha256")
     .update(
       stableJson({
         prompt: params.prompt,
         profile: params.profile,
-        mode: params.mode,
+        authority,
         resume: params.resume ?? null,
         model: params.model ?? null,
         effort: params.effort ?? null,
-        allowExecute: params.allowExecute === true,
       }),
     )
     .digest("hex");
+}
+
+function runPayloadAuthority(
+  params: ConsultRunParams & { authority?: unknown },
+): JobAuthority {
+  const result = jobAuthorityFromRecord(params);
+  if (result.ok) {
+    return result.authority;
+  }
+  const error = new Error(result.diagnostic.message) as CodedAgentError & {
+    diagnostic?: unknown;
+  };
+  error.code = result.diagnostic.code;
+  error.diagnostic = result.diagnostic;
+  throw error;
 }
 
 function stableJson(value: unknown): string {
