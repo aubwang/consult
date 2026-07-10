@@ -12,6 +12,14 @@ const SHARED_DEFAULT_WRITE_PATHS = [
   "/tmp/claude",
   "/private/tmp/claude",
 ] as const;
+const REQUIRED_DEVICE_WRITE_PATHS = [
+  "/dev/stdout",
+  "/dev/stderr",
+  "/dev/null",
+  "/dev/tty",
+  "/dev/dtracehelper",
+  "/dev/autofs_nowait",
+] as const;
 
 export interface SandboxRuntimeLaunch {
   argv: string[];
@@ -153,7 +161,7 @@ function transformLinuxPolicy(
     tightened.push(words[index]);
   }
   relocateLinuxProxySocketBinds(tightened);
-  replaceSetenvExactlyOnce(tightened, "TMPDIR", "/tmp/claude", jobTempDir);
+  replaceSetenvValueExactlyOnce(tightened, "TMPDIR", jobTempDir);
   replaceSetenvExactlyOnce(tightened, "NO_PROXY", DEFAULT_NO_PROXY, "");
   replaceSetenvExactlyOnce(tightened, "no_proxy", DEFAULT_NO_PROXY, "");
   const authenticated = authenticateProxyWords(
@@ -261,26 +269,23 @@ function transformMacosPolicy(
   }
 
   for (const sharedPath of sharedDefaultWritePaths) {
-    let removed = 0;
     for (const operation of ["file-write-unlink", "file-write-create", "file-write\\*"]) {
       const rule = new RegExp(
         `\\(allow ${operation}\\n  \\(subpath "${escapeRegExp(sharedPath)}"\\)\\n  \\(with message "[^"\\n]+"\\)\\)\\n?`,
         "gu",
       );
-      profile = profile.replace(rule, () => {
-        removed += 1;
-        return "";
-      });
-    }
-    if (removed !== 3 || profile.includes(`(subpath "${sharedPath}")`)) {
-      throw policyShapeError(
-        `macOS shared write rules for ${sharedPath} did not match the pinned shape`,
-      );
+      profile = profile.replace(rule, "");
     }
   }
-  assertMacosWriteRules(profile, new Set(allowedWritePaths));
+  assertMacosWriteRules(
+    profile,
+    new Set([
+      ...snapshotPolicyPaths(allowedWritePaths),
+      ...snapshotPolicyPaths(REQUIRED_DEVICE_WRITE_PATHS),
+    ]),
+  );
   words[sandboxIndex + 2] = profile;
-  replaceEnvAssignmentExactlyOnce(words, "TMPDIR", "/tmp/claude", jobTempDir);
+  replaceEnvAssignmentValueExactlyOnce(words, "TMPDIR", jobTempDir);
   replaceEnvAssignmentExactlyOnce(words, "NO_PROXY", DEFAULT_NO_PROXY, "");
   replaceEnvAssignmentExactlyOnce(words, "no_proxy", DEFAULT_NO_PROXY, "");
   const authenticated = authenticateProxyWords(
@@ -474,6 +479,23 @@ function replaceSetenvExactlyOnce(
   words[matches[0]] = replacement;
 }
 
+function replaceSetenvValueExactlyOnce(
+  words: string[],
+  name: string,
+  replacement: string,
+): void {
+  const matches: number[] = [];
+  for (let index = 0; index < words.length - 2; index += 1) {
+    if (words[index] === "--setenv" && words[index + 1] === name) {
+      matches.push(index + 2);
+    }
+  }
+  if (matches.length !== 1) {
+    throw policyShapeError(`Linux ${name} does not occur exactly once`);
+  }
+  words[matches[0]] = replacement;
+}
+
 function replaceEnvAssignmentExactlyOnce(
   words: string[],
   name: string,
@@ -490,11 +512,30 @@ function replaceEnvAssignmentExactlyOnce(
   words[matches[0].index] = `${name}=${replacement}`;
 }
 
+function replaceEnvAssignmentValueExactlyOnce(
+  words: string[],
+  name: string,
+  replacement: string,
+): void {
+  const prefix = `${name}=`;
+  const matches = words
+    .map((word, index) => ({ word, index }))
+    .filter(({ word }) => word.startsWith(prefix));
+  if (matches.length !== 1) {
+    throw policyShapeError(`macOS ${name} does not occur exactly once`);
+  }
+  words[matches[0].index] = `${name}=${replacement}`;
+}
+
 export function snapshotSandboxRuntimeSharedWritePaths(
   additionalPaths: readonly string[] = [],
 ): string[] {
+  return snapshotPolicyPaths([...SHARED_DEFAULT_WRITE_PATHS, ...additionalPaths]);
+}
+
+function snapshotPolicyPaths(paths: readonly string[]): string[] {
   const snapshot = new Set<string>();
-  for (const sharedPath of [...SHARED_DEFAULT_WRITE_PATHS, ...additionalPaths]) {
+  for (const sharedPath of paths) {
     assertSafeAbsolutePath(sharedPath, "shared default write path");
     snapshot.add(sharedPath);
     try {
@@ -515,7 +556,13 @@ function assertRuntimeVersion(version: string): void {
 }
 
 function assertSafeAbsolutePath(value: string, label: string): void {
-  if (!/^\/[A-Za-z0-9._/-]+$/u.test(value) || value.includes("//") || value.includes("/../")) {
+  if (
+    !value.startsWith("/") ||
+    value.includes("\0") ||
+    /[\r\n"\\]/u.test(value) ||
+    value.includes("//") ||
+    value.split("/").some((segment) => segment === "." || segment === "..")
+  ) {
     throw policyShapeError(`${label} is not a safe absolute policy path`);
   }
 }

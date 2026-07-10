@@ -24,7 +24,7 @@ jobs:
       - name: Enable bubblewrap (Ubuntu 24.04 restricts unprivileged userns)
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y bubblewrap socat ripgrep
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Verify tracked symlinks resolve
         run: |
@@ -35,4 +35,16 @@ jobs:
       - run: bun run typecheck
       - run: bun run test
       - name: Verify packed npm and Bun installs through confinement
+        run: CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check
+
+  macos-confinement:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Verify packed npm and Bun installs through Seatbelt confinement
         run: CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check

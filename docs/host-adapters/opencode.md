@@ -16,10 +16,10 @@ Use `--host` / `--host-session` or `CONSULT_HOST` /
 
 ## Manual setup
 
-Install the current GitHub version:
+Install the supported npm package:
 
 ```text
-npm install --global github:aubwang/consult
+npm install --global @aubwang/consult
 ```
 
 Install and select at least one Profile separately. Profile setup is shared

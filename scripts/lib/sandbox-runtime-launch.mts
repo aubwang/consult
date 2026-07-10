@@ -307,6 +307,8 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     const readPaths = existingPaths([
       ...(platform === "linux" ? LINUX_READ_PATHS : MACOS_READ_PATHS),
       workspaceRoot,
+      home,
+      temp,
       bin,
       ...executableReadScopes(require.resolve("@anthropic-ai/sandbox-runtime")),
       ...executableReadScopes(resolvedBinary),
@@ -479,7 +481,7 @@ export async function probeConfinedSandboxRuntime(
       ok: false,
       diagnostic: {
         code: "AUTHORITY_PREFLIGHT_FAILED",
-        message: `confined authority preflight failed: ${errorMessage(failure)}`,
+        message: `confined authority preflight failed: ${preflightFailureMessage(failure)}`,
         remediation:
           "Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created.",
       },
@@ -799,4 +801,27 @@ function noteCleanupFailure(primary: unknown, cleanup: unknown): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function preflightFailureMessage(error: unknown): string {
+  const stderr =
+    typeof error === "object" &&
+    error !== null &&
+    "stderr" in error &&
+    typeof error.stderr === "string"
+      ? error.stderr
+      : "";
+  if (
+    /sandbox-exec:[^\r\n]*(?:sandbox_apply|operation not permitted)/iu.test(stderr)
+  ) {
+    return "nested macOS sandbox initialization failed: sandbox-exec was denied by the parent sandbox";
+  }
+  if (
+    /bwrap:[^\r\n]*(?:namespace[^\r\n]*operation not permitted|no permissions to create new namespace)/iu.test(
+      stderr,
+    )
+  ) {
+    return "nested Linux sandbox initialization failed: bwrap namespace creation was denied by the parent sandbox";
+  }
+  return errorMessage(error);
 }

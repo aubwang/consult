@@ -333,6 +333,11 @@ trees, MCP configuration, secret-manager paths, and ambient proxy variables are
 not forwarded. Credentials are process-tree readable; the security property is
 egress-constrained, not credential invisibility.
 
+Consult does not broker macOS Keychain entries. A confined Claude Profile on
+macOS must therefore receive one supported token environment variable or a
+stageable `.claude/.credentials.json`; a Keychain-only Claude login cannot be
+copied into the private Job home.
+
 In particular, confined Codex does not copy Host `config.toml`, and confined
 Claude does not copy Host `settings.json`. Model/provider preferences that
 exist only in those files can therefore differ from inherited launches; the
