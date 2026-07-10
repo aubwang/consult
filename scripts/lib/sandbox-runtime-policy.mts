@@ -26,6 +26,7 @@ export interface TransformSandboxRuntimeLaunchInput {
   proxyToken: string;
   externalHttpPort: number;
   externalSocksPort: number;
+  sharedDefaultWritePaths: readonly string[];
 }
 
 export interface SandboxRuntimePolicyError extends Error {
@@ -45,6 +46,7 @@ export function transformSandboxRuntimeLaunch({
   proxyToken,
   externalHttpPort,
   externalSocksPort,
+  sharedDefaultWritePaths,
 }: TransformSandboxRuntimeLaunchInput): SandboxRuntimeLaunch {
   assertRuntimeVersion(runtimeVersion);
   assertSafeAbsolutePath(jobTempDir, "Job temp directory");
@@ -53,6 +55,12 @@ export function transformSandboxRuntimeLaunch({
   }
   assertPort(externalHttpPort, "external HTTP proxy");
   assertPort(externalSocksPort, "external SOCKS proxy");
+  if (sharedDefaultWritePaths.length === 0) {
+    throw policyShapeError("shared default write-path snapshot is empty");
+  }
+  for (const sharedPath of sharedDefaultWritePaths) {
+    assertSafeAbsolutePath(sharedPath, "shared default write path");
+  }
   if (
     launch.argv.length !== 3 ||
     launch.argv[1] !== "-c" ||
@@ -69,6 +77,7 @@ export function transformSandboxRuntimeLaunch({
           proxyToken,
           externalHttpPort,
           externalSocksPort,
+          sharedDefaultWritePaths,
         )
       : transformMacosPolicy(
           launch.argv[2],
@@ -76,6 +85,7 @@ export function transformSandboxRuntimeLaunch({
           proxyToken,
           externalHttpPort,
           externalSocksPort,
+          sharedDefaultWritePaths,
         );
   return { argv: [launch.argv[0], "-c", command], env: { ...launch.env } };
 }
@@ -86,56 +96,58 @@ function transformLinuxPolicy(
   proxyToken: string,
   externalHttpPort: number,
   externalSocksPort: number,
+  sharedDefaultWritePaths: readonly string[],
 ): string {
-  for (const marker of [
-    "bwrap --new-session --die-with-parent --unshare-net ",
-    " --ro-bind / / ",
-    " --tmpfs /tmp ",
-    " --unshare-pid --proc /proc -- ",
-    ` --setenv CLAUDE_CODE_HOST_HTTP_PROXY_PORT ${externalHttpPort} `,
-    ` --setenv CLAUDE_CODE_HOST_SOCKS_PROXY_PORT ${externalSocksPort} `,
-  ]) {
-    assertContains(source, marker, `Linux policy marker ${JSON.stringify(marker)}`);
+  const words = parseShellWords(source);
+  if (
+    words[0] !== "bwrap" ||
+    !hasSequence(words, ["--new-session", "--die-with-parent", "--unshare-net"]) ||
+    !hasSequence(words, ["--ro-bind", "/", "/"]) ||
+    !hasSequence(words, ["--tmpfs", "/tmp"]) ||
+    !hasSequence(words, ["--unshare-pid", "--proc", "/proc", "--"])
+  ) {
+    throw policyShapeError("Linux bwrap policy does not match the pinned shape");
   }
+  assertSetenv(words, "CLAUDE_CODE_HOST_HTTP_PROXY_PORT", String(externalHttpPort));
+  assertSetenv(words, "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT", String(externalSocksPort));
 
-  let command = source;
-  for (const sharedPath of SHARED_DEFAULT_WRITE_PATHS) {
-    const bind = ` --bind ${sharedPath} ${sharedPath}`;
-    command = command.split(bind).join("");
-    if (command.includes(bind)) {
-      throw policyShapeError(`shared write grant remained for ${sharedPath}`);
+  const shared = new Set(sharedDefaultWritePaths);
+  const tightened: string[] = [];
+  for (let index = 0; index < words.length; index += 1) {
+    if (
+      words[index] === "--bind" &&
+      words[index + 1] === words[index + 2] &&
+      shared.has(words[index + 1])
+    ) {
+      index += 2;
+      continue;
     }
+    tightened.push(words[index]);
   }
-  command = replaceExactlyOnce(
-    command,
-    "--setenv TMPDIR /tmp/claude",
-    `--setenv TMPDIR ${jobTempDir}`,
-    "Linux TMPDIR",
-  );
-  command = replaceExactlyOnce(
-    command,
-    `--setenv NO_PROXY ${DEFAULT_NO_PROXY}`,
-    "--setenv NO_PROXY ''",
-    "Linux NO_PROXY",
-  );
-  command = replaceExactlyOnce(
-    command,
-    `--setenv no_proxy ${DEFAULT_NO_PROXY}`,
-    "--setenv no_proxy ''",
-    "Linux no_proxy",
-  );
-  command = authenticateProxyUrls(
-    command,
+  replaceSetenvExactlyOnce(tightened, "TMPDIR", "/tmp/claude", jobTempDir);
+  replaceSetenvExactlyOnce(tightened, "NO_PROXY", DEFAULT_NO_PROXY, "");
+  replaceSetenvExactlyOnce(tightened, "no_proxy", DEFAULT_NO_PROXY, "");
+  const authenticated = authenticateProxyWords(
+    tightened,
     LINUX_HTTP_PROXY_PORT,
     LINUX_SOCKS_PROXY_PORT,
     proxyToken,
   );
-  assertNoUnauthenticatedProxyUrls(
-    command,
+  assertNoUnauthenticatedProxyWords(
+    authenticated,
     LINUX_HTTP_PROXY_PORT,
     LINUX_SOCKS_PROXY_PORT,
   );
-  return command;
+  for (let index = 0; index < authenticated.length - 2; index += 1) {
+    if (
+      authenticated[index] === "--bind" &&
+      authenticated[index + 1] === authenticated[index + 2] &&
+      shared.has(authenticated[index + 1])
+    ) {
+      throw policyShapeError(`shared write grant remained for ${authenticated[index + 1]}`);
+    }
+  }
+  return quoteShellWords(authenticated);
 }
 
 function transformMacosPolicy(
@@ -144,96 +156,255 @@ function transformMacosPolicy(
   proxyToken: string,
   externalHttpPort: number,
   externalSocksPort: number,
+  sharedDefaultWritePaths: readonly string[],
 ): string {
+  const words = parseShellWords(source);
+  const sandboxIndex = words.indexOf("/usr/bin/sandbox-exec");
+  if (
+    words[0] !== "env" ||
+    sandboxIndex < 1 ||
+    words[sandboxIndex + 1] !== "-p" ||
+    typeof words[sandboxIndex + 2] !== "string"
+  ) {
+    throw policyShapeError("macOS sandbox-exec policy does not match the pinned argv shape");
+  }
+  let profile = words[sandboxIndex + 2];
   for (const marker of [
-    "/usr/bin/sandbox-exec -p '",
     "(deny default ",
     "; File read\n",
     "; File write\n",
     `(allow network-outbound (remote ip "localhost:${externalHttpPort}"))`,
     `(allow network-outbound (remote ip "localhost:${externalSocksPort}"))`,
   ]) {
-    assertContains(source, marker, `macOS policy marker ${JSON.stringify(marker)}`);
+    assertContains(profile, marker, `macOS policy marker ${JSON.stringify(marker)}`);
   }
 
-  let command = source;
-  for (const sharedPath of SHARED_DEFAULT_WRITE_PATHS) {
+  for (const sharedPath of sharedDefaultWritePaths) {
     let removed = 0;
     for (const operation of ["file-write-unlink", "file-write-create", "file-write\\*"]) {
       const rule = new RegExp(
         `\\(allow ${operation}\\n  \\(subpath "${escapeRegExp(sharedPath)}"\\)\\n  \\(with message "[^"\\n]+"\\)\\)\\n?`,
         "gu",
       );
-      command = command.replace(rule, () => {
+      profile = profile.replace(rule, () => {
         removed += 1;
         return "";
       });
     }
-    if (removed !== 3 || command.includes(`(subpath "${sharedPath}")`)) {
+    if (removed !== 3 || profile.includes(`(subpath "${sharedPath}")`)) {
       throw policyShapeError(
         `macOS shared write rules for ${sharedPath} did not match the pinned shape`,
       );
     }
   }
-  command = replaceExactlyOnce(
-    command,
-    "TMPDIR=/tmp/claude",
-    `TMPDIR=${jobTempDir}`,
-    "macOS TMPDIR",
-  );
-  command = replaceExactlyOnce(
-    command,
-    `NO_PROXY=${DEFAULT_NO_PROXY}`,
-    "NO_PROXY=",
-    "macOS NO_PROXY",
-  );
-  command = replaceExactlyOnce(
-    command,
-    `no_proxy=${DEFAULT_NO_PROXY}`,
-    "no_proxy=",
-    "macOS no_proxy",
-  );
-  command = authenticateProxyUrls(
-    command,
+  words[sandboxIndex + 2] = profile;
+  replaceEnvAssignmentExactlyOnce(words, "TMPDIR", "/tmp/claude", jobTempDir);
+  replaceEnvAssignmentExactlyOnce(words, "NO_PROXY", DEFAULT_NO_PROXY, "");
+  replaceEnvAssignmentExactlyOnce(words, "no_proxy", DEFAULT_NO_PROXY, "");
+  const authenticated = authenticateProxyWords(
+    words,
     externalHttpPort,
     externalSocksPort,
     proxyToken,
   );
-  assertNoUnauthenticatedProxyUrls(command, externalHttpPort, externalSocksPort);
-  return command;
+  assertNoUnauthenticatedProxyWords(authenticated, externalHttpPort, externalSocksPort);
+  return quoteShellWords(authenticated);
 }
 
-function authenticateProxyUrls(
-  source: string,
+function authenticateProxyWords(
+  words: readonly string[],
   httpPort: number,
   socksPort: number,
   token: string,
-): string {
+): string[] {
   const httpSource = `http://localhost:${httpPort}`;
   const socksSource = `socks5h://localhost:${socksPort}`;
-  const httpCount = occurrenceCount(source, httpSource);
-  const socksCount = occurrenceCount(source, socksSource);
+  const httpCount = words.reduce((count, word) => count + occurrenceCount(word, httpSource), 0);
+  const socksCount = words.reduce((count, word) => count + occurrenceCount(word, socksSource), 0);
   if (httpCount < 6 || socksCount < 2) {
     throw policyShapeError("runtime proxy environment does not match the pinned shape");
   }
-  return source
-    .split(httpSource)
-    .join(`http://${PROXY_USERNAME}:${token}@localhost:${httpPort}`)
-    .split(socksSource)
-    .join(`socks5h://${PROXY_USERNAME}:${token}@localhost:${socksPort}`);
+  return words.map((word) =>
+    word
+      .split(httpSource)
+      .join(`http://${PROXY_USERNAME}:${token}@localhost:${httpPort}`)
+      .split(socksSource)
+      .join(`socks5h://${PROXY_USERNAME}:${token}@localhost:${socksPort}`),
+  );
 }
 
-function assertNoUnauthenticatedProxyUrls(
-  source: string,
+function assertNoUnauthenticatedProxyWords(
+  words: readonly string[],
   httpPort: number,
   socksPort: number,
 ): void {
   if (
-    source.includes(`http://localhost:${httpPort}`) ||
-    source.includes(`socks5h://localhost:${socksPort}`)
+    words.some(
+      (word) =>
+        word.includes(`http://localhost:${httpPort}`) ||
+        word.includes(`socks5h://localhost:${socksPort}`),
+    )
   ) {
     throw policyShapeError("unauthenticated proxy URL remained in runtime policy");
   }
+}
+
+function parseShellWords(source: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let started = false;
+  let quote: "single" | "double" | null = null;
+
+  const finishWord = (): void => {
+    if (!started) return;
+    words.push(word);
+    word = "";
+    started = false;
+  };
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote === "single") {
+      if (character === "'") {
+        quote = null;
+      } else {
+        word += character;
+      }
+      continue;
+    }
+    if (quote === "double") {
+      if (character === '"') {
+        quote = null;
+        continue;
+      }
+      if (character === "\\") {
+        if (index + 1 >= source.length) {
+          throw policyShapeError("runtime shell artifact ends in an escape");
+        }
+        word += source[index + 1];
+        index += 1;
+        continue;
+      }
+      if (character === "$" || character === "`") {
+        throw policyShapeError("runtime shell artifact contains expansion syntax");
+      }
+      word += character;
+      continue;
+    }
+
+    if (/\s/u.test(character)) {
+      finishWord();
+      continue;
+    }
+    if (character === "'") {
+      quote = "single";
+      started = true;
+      continue;
+    }
+    if (character === '"') {
+      quote = "double";
+      started = true;
+      continue;
+    }
+    if (character === "\\") {
+      if (index + 1 >= source.length) {
+        throw policyShapeError("runtime shell artifact ends in an escape");
+      }
+      word += source[index + 1];
+      started = true;
+      index += 1;
+      continue;
+    }
+    if (/[;$`|&<>()#]/u.test(character)) {
+      throw policyShapeError("runtime shell artifact contains unsupported control syntax");
+    }
+    word += character;
+    started = true;
+  }
+  if (quote !== null) {
+    throw policyShapeError("runtime shell artifact has an unterminated quote");
+  }
+  finishWord();
+  if (words.length === 0) {
+    throw policyShapeError("runtime shell artifact is empty");
+  }
+  return words;
+}
+
+function quoteShellWords(words: readonly string[]): string {
+  return words.map(quoteShellWord).join(" ");
+}
+
+function quoteShellWord(word: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/u.test(word)) {
+    return word;
+  }
+  return `'${word.replace(/'/gu, `'"'"'`)}'`;
+}
+
+function hasSequence(words: readonly string[], sequence: readonly string[]): boolean {
+  return words.some(
+    (_word, start) =>
+      start + sequence.length <= words.length &&
+      sequence.every((expected, offset) => words[start + offset] === expected),
+  );
+}
+
+function assertSetenv(words: readonly string[], name: string, value: string): void {
+  if (!hasSequence(words, ["--setenv", name, value])) {
+    throw policyShapeError(`Linux ${name} does not match the pinned shape`);
+  }
+}
+
+function replaceSetenvExactlyOnce(
+  words: string[],
+  name: string,
+  expected: string,
+  replacement: string,
+): void {
+  const matches: number[] = [];
+  for (let index = 0; index < words.length - 2; index += 1) {
+    if (
+      words[index] === "--setenv" &&
+      words[index + 1] === name &&
+      words[index + 2] === expected
+    ) {
+      matches.push(index + 2);
+    }
+  }
+  if (matches.length !== 1) {
+    throw policyShapeError(`Linux ${name} does not occur exactly once`);
+  }
+  words[matches[0]] = replacement;
+}
+
+function replaceEnvAssignmentExactlyOnce(
+  words: string[],
+  name: string,
+  expected: string,
+  replacement: string,
+): void {
+  const target = `${name}=${expected}`;
+  const matches = words
+    .map((word, index) => ({ word, index }))
+    .filter(({ word }) => word === target);
+  if (matches.length !== 1) {
+    throw policyShapeError(`macOS ${name} does not occur exactly once`);
+  }
+  words[matches[0].index] = `${name}=${replacement}`;
+}
+
+export function snapshotSandboxRuntimeSharedWritePaths(): string[] {
+  const snapshot = new Set<string>();
+  for (const sharedPath of SHARED_DEFAULT_WRITE_PATHS) {
+    snapshot.add(sharedPath);
+    try {
+      snapshot.add(fs.realpathSync(sharedPath));
+    } catch {
+      // A missing path is omitted by SRT; retain the raw spelling as the tripwire.
+    }
+  }
+  return [...snapshot];
 }
 
 function assertRuntimeVersion(version: string): void {
@@ -262,18 +433,6 @@ function assertContains(source: string, marker: string, label: string): void {
   }
 }
 
-function replaceExactlyOnce(
-  source: string,
-  search: string,
-  replacement: string,
-  label: string,
-): string {
-  if (occurrenceCount(source, search) !== 1) {
-    throw policyShapeError(`${label} does not occur exactly once`);
-  }
-  return source.replace(search, replacement);
-}
-
 function occurrenceCount(source: string, search: string): number {
   return source.split(search).length - 1;
 }
@@ -287,3 +446,4 @@ function policyShapeError(message: string): SandboxRuntimePolicyError {
   error.code = SANDBOX_RUNTIME_POLICY_ERROR;
   return error;
 }
+import fs from "node:fs";

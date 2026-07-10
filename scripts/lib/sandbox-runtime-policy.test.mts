@@ -29,6 +29,7 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
     "--setenv CLAUDE_CODE_HOST_SOCKS_PROXY_PORT 41002",
     "--ro-bind / /",
     "--bind /tmp/claude /tmp/claude",
+    "--bind /var/tmp/shared-target /var/tmp/shared-target",
     "--tmpfs /tmp",
     "--bind /tmp/claude /tmp/claude",
     "--unshare-pid --proc /proc -- /bin/bash -c agent",
@@ -41,6 +42,11 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
     proxyToken: TOKEN,
     externalHttpPort: 41001,
     externalSocksPort: 41002,
+    sharedDefaultWritePaths: [
+      "/tmp/claude",
+      "/private/tmp/claude",
+      "/var/tmp/shared-target",
+    ],
   });
 
   assert.equal(transformed.argv[0], "/bin/bash");
@@ -51,6 +57,7 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
   assert.match(transformed.argv[2], new RegExp(`http://consult:${TOKEN}@localhost:3128`, "u"));
   assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@localhost:1080`, "u"));
   assert.doesNotMatch(transformed.argv[2], /--bind \/tmp\/claude \/tmp\/claude/u);
+  assert.doesNotMatch(transformed.argv[2], /--bind \/var\/tmp\/shared-target/u);
 });
 
 test("tightens the pinned macOS profile rules and proxy environment", () => {
@@ -83,6 +90,7 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
     proxyToken: TOKEN,
     externalHttpPort: 41001,
     externalSocksPort: 41002,
+    sharedDefaultWritePaths: ["/tmp/claude", "/private/tmp/claude"],
   });
 
   assert.match(transformed.argv[2], /TMPDIR=\/private\/tmp\/consult-job\/temporary/u);
@@ -102,6 +110,7 @@ test("fails closed for version, shape, token, and unexpected macOS rule drift", 
     proxyToken: TOKEN,
     externalHttpPort: 41001,
     externalSocksPort: 41002,
+    sharedDefaultWritePaths: ["/tmp/claude", "/private/tmp/claude"],
   };
   for (const input of [
     { ...base, runtimeVersion: "0.0.65" },
