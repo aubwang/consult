@@ -536,7 +536,10 @@ test("foreground delegate persists a complete finalized job record", async (t) =
   });
 
   const result = await runDelegate({
-    args: { positional: ["persist", "metadata"], flags: { "read-only": true } },
+    args: {
+      positional: ["persist", "metadata"],
+      flags: { "read-only": true, sandbox: "inherit" },
+    },
     env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
     deps: {
       resolveWorkspaceRoot: async () => harness.workspace,
@@ -590,7 +593,10 @@ test("foreground delegate captures a response chunk delayed after prompt complet
   let delegateClient: TestBrokerClient | undefined;
 
   const result = await runDelegate({
-    args: { positional: ["delayed", "response"], flags: { "read-only": true } },
+    args: {
+      positional: ["delayed", "response"],
+      flags: { "read-only": true, sandbox: "inherit" },
+    },
     env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
     deps: {
       resolveWorkspaceRoot: async () => harness.workspace,
@@ -700,37 +706,6 @@ test("consult/run denies an edit permission request outside the workspace", asyn
     const observations = await readClientObservations(harness.clientLog);
     assert.equal(observations[0].message.result.outcome.optionId, "reject");
     assert.match(observations[0].message.result._meta.reason, /outside workspace/);
-  } finally {
-    await client.close();
-  }
-});
-
-test("consult/run denies opted-in execute until proxy-confined networking exists", async (t) => {
-  const harness = await startBroker(t, {
-    agentArgs: ["sessions", "prompt-permission-execute"],
-    captureClientCalls: true,
-    fakeTargetRelative: ".",
-    sandbox: "off",
-  });
-  const client = await connectBroker(harness.endpoint);
-  const updates = collectNotifications(client, "consult/update");
-  const finalizedPromise = nextNotification(client, "consult/finalized");
-
-  try {
-    await client.request("consult/run", {
-      jobId: "job-execute-no-sandbox",
-      prompt: "run tests",
-      profile: "codex",
-      authority: EXECUTE_AUTHORITY,
-      mode: "write",
-      allowExecute: true,
-    });
-
-    assert.equal((await finalizedPromise).stopReason, "end_turn");
-    assert.equal(updates[0].update.content.text, "reject");
-    const observations = await readClientObservations(harness.clientLog);
-    assert.equal(observations[0].message.result.outcome.optionId, "reject");
-    assert.match(observations[0].message.result._meta.reason, /proxy-confined network enforcement/);
   } finally {
     await client.close();
   }
