@@ -87,6 +87,7 @@ export interface BrokerJobFinalized {
   stopReason: string;
   sessionId: string | null;
   errorMessage?: string;
+  sessionStateArchived?: boolean;
 }
 
 export interface BrokerJob {
@@ -106,6 +107,8 @@ export interface BrokerJob {
   model?: string | null;
   effort?: string | null;
   resumeSessionId: string | null;
+  resumeJobId: string | null;
+  sessionStateArchived: boolean;
   baseRef?: string;
   status: "running" | "finalized";
   payloadHash: string;
@@ -229,6 +232,8 @@ export function createBrokerJobRuntime({
         model: canonicalParams.model,
         effort: canonicalParams.effort,
         resumeSessionId: canonicalParams.resume ?? null,
+        resumeJobId: canonicalParams.resumeJobId ?? null,
+        sessionStateArchived: false,
         baseRef: canonicalParams.baseRef,
         status: "running",
         payloadHash: hashRunPayload(canonicalParams),
@@ -428,7 +433,10 @@ export function createBrokerJobRuntime({
     }
     try {
       await beforeTerminal(job);
-      return outcome;
+      return {
+        ...outcome,
+        ...(job.sessionStateArchived ? { sessionStateArchived: true } : {}),
+      };
     } catch (error) {
       const cleanupMessage = `PROFILE_CLEANUP_UNCONFIRMED: ${errorMessage(error)}`;
       return {
@@ -437,6 +445,7 @@ export function createBrokerJobRuntime({
         errorMessage: outcome.errorMessage
           ? `${outcome.errorMessage}; ${cleanupMessage}`
           : cleanupMessage,
+        ...(job.sessionStateArchived ? { sessionStateArchived: true } : {}),
       };
     }
   }

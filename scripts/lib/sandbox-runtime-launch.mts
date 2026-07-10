@@ -17,6 +17,10 @@ import type {
 } from "./job-authority-preflight.mts";
 import { DEFAULT_JOB_WALL_CLOCK_LIMIT_MS } from "./job-reliability.mts";
 import type { AgentLaunchOptions } from "./process-sandbox.mts";
+import {
+  archiveConfinedSessionState,
+  restoreConfinedSessionState,
+} from "./confined-session-state.mts";
 import { pidIsAlive as defaultPidIsAlive } from "./process.mts";
 import {
   SANDBOX_RUNTIME_VERSION,
@@ -136,6 +140,10 @@ interface SandboxRuntimeManagerLike {
 
 export interface ConfinedSandboxRuntimeLaunchInput extends AgentLaunchOptions {
   authority: JobAuthority;
+  stateWorkspaceRoot?: string;
+  jobId?: string;
+  resumeSourceJobId?: string | null;
+  resumeSessionId?: string | null;
 }
 
 export interface ConfinedSandboxRuntimeLaunchDeps {
@@ -261,6 +269,21 @@ export async function acquireConfinedSandboxRuntimeLaunch(
         `confined ${input.profileRegistryId} Profile has no staged credential or supported credential environment variable`,
       );
     }
+    if (input.resumeSourceJobId || input.resumeSessionId) {
+      if (!input.resumeSourceJobId || !input.resumeSessionId) {
+        throw new Error(
+          "SESSION_STATE_ARCHIVE_FAILED: confined resume requires both a source Job and Session id",
+        );
+      }
+      await restoreConfinedSessionState({
+        workspaceRoot: input.stateWorkspaceRoot ?? input.workspaceRoot ?? input.cwd,
+        jobId: input.resumeSourceJobId,
+        profileRegistryId: input.profileRegistryId ?? "",
+        sessionId: input.resumeSessionId,
+        cwd,
+        privateHome: home,
+      });
+    }
 
     const resolvedBinary = resolveExecutable(input.binary, hostEnv);
     const runtimeExecutables = new Map<string, string>();
@@ -357,6 +380,21 @@ export async function acquireConfinedSandboxRuntimeLaunch(
         cwd,
         env: childEnv,
       },
+      archiveSessionState: async ({ sessionId, cwd: sessionCwd }) =>
+        await archiveConfinedSessionState({
+          workspaceRoot: input.stateWorkspaceRoot ?? input.workspaceRoot ?? input.cwd,
+          jobId:
+            input.jobId ??
+            (() => {
+              throw new Error(
+                "SESSION_STATE_ARCHIVE_FAILED: confined Job id is unavailable",
+              );
+            })(),
+          profileRegistryId: input.profileRegistryId ?? "",
+          sessionId,
+          cwd: sessionCwd,
+          privateHome: home,
+        }),
       release,
     };
   } catch (error) {

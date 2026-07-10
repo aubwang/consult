@@ -119,7 +119,7 @@ export function createInlineClient({
       }
       handlers.get(method)?.(params);
     },
-    beforeTerminal: async () => await disposeAgent(),
+    beforeTerminal: async (terminalJob) => await disposeAgent(terminalJob),
     maxWallClockMs,
     maxPersistedLogBytes,
     scheduleWallClock,
@@ -155,6 +155,9 @@ export function createInlineClient({
         const resumeAgent = await ensureAgent(
           canonicalParams.authority,
           canonicalParams.jobId,
+          canonicalParams.resumeJobId,
+          canonicalParams.resume,
+          canonicalParams.parentJobId,
         );
         if (!supportsResume(resumeAgent.capabilities) && !supportsLoad(resumeAgent.capabilities)) {
           const error = new Error(
@@ -220,6 +223,9 @@ export function createInlineClient({
   async function ensureAgent(
     authority: JobAuthority,
     jobId: string | null = null,
+    resumeSourceJobId: string | null = null,
+    resumeSessionId: string | null = null,
+    _parentJobId: string | null = null,
   ): Promise<StartedAgent> {
     // One inline client runs exactly one job in exactly one mode, so unlike
     // the Broker there is never a mode change requiring an agent restart.
@@ -234,6 +240,8 @@ export function createInlineClient({
         sandbox,
         profileRegistryId: entry.registryId ?? profile,
         jobId,
+        resumeSourceJobId,
+        resumeSessionId,
         runtime,
       });
     }
@@ -254,11 +262,19 @@ export function createInlineClient({
     }
   }
 
-  function disposeAgent(): Promise<void> {
+  function disposeAgent(terminalJob: BrokerJob | null = null): Promise<void> {
     if (agent && !disposeStarted) {
       disposeStarted = true;
       const current = agent;
-      disposeDone = current.dispose();
+      const archiveSessionState =
+        terminalJob?.authority.confinement === "confined" && terminalJob.sessionId
+          ? { sessionId: terminalJob.sessionId, cwd: executionRoot }
+          : undefined;
+      disposeDone = current.dispose({ archiveSessionState }).then(() => {
+        if (archiveSessionState && terminalJob) {
+          terminalJob.sessionStateArchived = true;
+        }
+      });
     }
     return disposeDone;
   }

@@ -67,6 +67,21 @@ test("hashRunPayload includes canonical confinement and fetch authority", () => 
   assert.notEqual(inheritedHash, confinedHash);
 });
 
+test("hashRunPayload binds resume to its source Job archive", () => {
+  const first = hashRunPayload({
+    ...BASE_RUN,
+    resume: "session-shared",
+    resumeJobId: "job-first",
+  });
+  const second = hashRunPayload({
+    ...BASE_RUN,
+    resume: "session-shared",
+    resumeJobId: "job-second",
+  });
+
+  assert.notEqual(first, second);
+});
+
 test("hashRunPayload canonicalizes authority while ignoring future fields", () => {
   const runAuthority = authority();
   const canonicalHash = hashRunPayload({

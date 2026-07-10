@@ -481,6 +481,7 @@ test("delegate resume uses the latest finalized session for the selected profile
   await resultPromise;
 
   assert.equal(request.params.resume, "session-new");
+  assert.equal(request.params.resumeJobId, "job-new");
 });
 
 test("delegate resume ignores newer jobs from other Host sessions", async (t) => {
@@ -577,6 +578,7 @@ test("delegate resume-job resumes an explicit job across Host sessions", async (
   await resultPromise;
 
   assert.equal(request.params.resume, "session-other-chat");
+  assert.equal(request.params.resumeJobId, "job-other-chat");
 });
 
 test("delegate resume-job rejects jobs from another profile", async (t) => {
@@ -1491,6 +1493,7 @@ function quietDeps(deps: Record<string, unknown>): DelegateDeps {
       ok: true as const,
       authority: input.authority,
     }),
+    validateSessionStateArchive: async () => {},
     ...deps,
     stdoutWrite: () => {},
     stderrWrite: () => {},

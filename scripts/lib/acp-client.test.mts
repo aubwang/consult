@@ -140,6 +140,35 @@ test("startAgent terminates the process group before releasing its launch lease"
   assert.deepEqual(events, ["terminate", "release"]);
 });
 
+test("startAgent archives Session state after termination and before releasing its launch lease", async () => {
+  const events: string[] = [];
+  const agent = await startAgent({
+    binary: process.execPath,
+    args: [fixturePath, "happy"],
+    cwd: path.dirname(fixturePath),
+    clientHandlers: {},
+  }, {
+    acquireLaunch: async (options) => ({
+      ...leaseFor(options, async () => {
+        events.push("release");
+      }),
+      archiveSessionState: async (input) => {
+        events.push(`archive:${input.sessionId}`);
+      },
+    }),
+    terminateProcessGroup: async (pid, options) => {
+      events.push("terminate");
+      await terminateProcessGroup(pid, options);
+    },
+  });
+
+  await agent.dispose({
+    archiveSessionState: { sessionId: "session-archive", cwd: "/workspace" },
+  });
+
+  assert.deepEqual(events, ["terminate", "archive:session-archive", "release"]);
+});
+
 test("failed process-group termination retains the launch lease", async () => {
   const events: string[] = [];
   const agent = await startAgent({

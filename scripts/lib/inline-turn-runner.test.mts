@@ -331,7 +331,10 @@ test("inline runner resumes an existing session via session/resume", async (t) =
   const { workspaceRoot, dataDir, dir } = await makeWorkspace();
   withDataDir(t, dataDir);
   const methodLog = path.join(dir, "methods.ndjson");
-  const jobRecord = queuedJobRecord("job-inline-resume", { resumeSessionId: "sess-resumed" });
+  const jobRecord = queuedJobRecord("job-inline-resume", {
+    resumeSessionId: "sess-resumed",
+    resumeJobId: "job-source",
+  });
 
   const result = await runDelegateOnce({
     workspaceRoot,
@@ -341,6 +344,7 @@ test("inline runner resumes an existing session via session/resume", async (t) =
     jobRecord,
     prompt: "continue",
     resumeSessionId: "sess-resumed",
+    resumeJobId: "job-source",
     inline: true,
     output: collectOutput(),
   });

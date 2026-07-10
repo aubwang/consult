@@ -55,6 +55,10 @@ export function logsDir(workspaceRoot: string): string {
   return path.join(workspaceDir(workspaceRoot), "logs");
 }
 
+export function jobArtifactsDir(workspaceRoot: string, jobId: string): string {
+  return path.join(workspaceDir(workspaceRoot), "artifacts", safeSegment(jobId));
+}
+
 export function brokersDir(workspaceRoot: string): string {
   return path.join(workspaceDir(workspaceRoot), "brokers");
 }
