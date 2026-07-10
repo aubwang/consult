@@ -23,6 +23,7 @@ the older spike is necessary evidence but not a substitute for that final run.
 Run the product-level harness from an unrestricted macOS terminal:
 
 ```sh
+CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check
 bun run conformance:job-authority -- --agent codex --expect ready
 bun run conformance:job-authority -- --agent claude --expect ready
 bun run conformance:job-authority -- --agent codex --expect ready \

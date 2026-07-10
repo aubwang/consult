@@ -52,6 +52,9 @@ try {
   const binary = path.join(prefix, process.platform === "win32" ? "consult.cmd" : "bin/consult");
   await assertConsultHelp(binary);
   await assertInstalledBackgroundJob(binary, temporaryRoot);
+  if (process.env.CONSULT_PACKAGE_SMOKE_CONFINED === "1") {
+    await assertInstalledConfinedDoctor(binary, temporaryRoot, "npm");
+  }
   const npmGlobalModules = path.join(
     prefix,
     ...(process.platform === "win32" ? ["node_modules"] : ["lib", "node_modules"]),
@@ -76,6 +79,9 @@ try {
     process.platform === "win32" ? "consult.exe" : "consult",
   );
   await assertConsultHelp(bunBinary);
+  if (process.env.CONSULT_PACKAGE_SMOKE_CONFINED === "1") {
+    await assertInstalledConfinedDoctor(bunBinary, temporaryRoot, "bun");
+  }
   process.stdout.write(
     `package smoke passed (${manifest.filename}, ${manifest.files.length} files)\n`,
   );
@@ -161,6 +167,73 @@ async function assertInstalledBackgroundJob(binary, temporaryRoot) {
     /consult-(?:companion|broker)\.mts|MODULE_NOT_FOUND/,
     "installed background Job tried to launch a source-only .mts entrypoint",
   );
+}
+
+async function assertInstalledConfinedDoctor(binary, temporaryRoot, installer) {
+  if (process.platform !== "linux" && process.platform !== "darwin") {
+    throw new Error("packed confined smoke is supported only on native Linux or macOS");
+  }
+  const root = path.join(temporaryRoot, `confined-${installer}`);
+  const workspace = path.join(root, "workspace");
+  const data = path.join(root, "data");
+  const home = path.join(root, "home");
+  const codexHome = path.join(home, ".codex");
+  const fakeBin = path.join(root, "bin");
+  await Promise.all([
+    fs.mkdir(workspace, { recursive: true }),
+    fs.mkdir(data, { recursive: true }),
+    fs.mkdir(codexHome, { recursive: true }),
+    fs.mkdir(fakeBin, { recursive: true }),
+  ]);
+  await run("git", ["init"], { cwd: workspace });
+  const fakeAgent = path.join(workspace, "packed-fake-acp.mjs");
+  await fs.writeFile(
+    fakeAgent,
+    [
+      'import readline from "node:readline";',
+      "const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of lines) {",
+      "  const message = JSON.parse(line);",
+      '  if (message.method === "initialize") {',
+      "    process.stdout.write(`${JSON.stringify({ jsonrpc: \"2.0\", id: message.id, result: { protocolVersion: 1, agentCapabilities: {} } })}\\n`);",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  await fs.writeFile(path.join(codexHome, "auth.json"), "{}\n", { mode: 0o600 });
+  await fs.writeFile(path.join(fakeBin, "codex"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await fs.writeFile(
+    path.join(data, "profiles.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      default: "packed-codex",
+      profiles: {
+        "packed-codex": {
+          registryId: "codex",
+          binary: process.execPath,
+          args: [fakeAgent],
+          env: { CODEX_HOME: codexHome },
+          installedAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    })}\n`,
+  );
+  const result = await run(binary, ["doctor", "--agent", "packed-codex", "--json"], {
+    cwd: workspace,
+    env: {
+      ...process.env,
+      HOME: home,
+      CODEX_HOME: codexHome,
+      CONSULT_DATA_DIR: data,
+      PATH: [fakeBin, path.dirname(process.execPath), process.env.PATH]
+        .filter(Boolean)
+        .join(path.delimiter),
+    },
+  });
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.authority?.confined?.ok, true);
+  assert.equal(report.authority?.profileRegistryId, "codex");
 }
 
 function delay(ms) {
