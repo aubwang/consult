@@ -121,12 +121,11 @@ test("delegate isolated write runs in the detached root and exposes finalized ar
   const resultPromise = runDelegate({
     args: {
       positional: ["make", "a", "transactional", "change"],
-      flags: { write: true, isolated: true, "allow-exec": true, json: true },
+      flags: { write: true, isolated: true, json: true },
     },
     env: {
       CONSULT_HOST: "terminal",
       CONSULT_HOST_SESSION_ID: "terminal-1",
-      CONSULT_AGENT_SANDBOX: "bwrap",
     },
     deps: quietDeps({
       resolveWorkspaceRoot: async () => workspaceRoot,
@@ -163,14 +162,14 @@ test("delegate isolated write runs in the detached root and exposes finalized ar
   assert.equal(result.exitCode, 0);
   assert.equal(ensureInput?.workspaceRoot, workspaceRoot);
   assert.equal(ensureInput?.executionRoot, prepared.executionRoot);
-  assert.equal(request.params.allowExecute, true);
+  assert.equal(request.params.allowExecute, undefined);
   assert.equal(record.isolated, true);
-  assert.equal(record.allowExecute, true);
+  assert.equal(record.allowExecute, false);
   assert.equal(record.patchPath, `${prepared.artifactsDir}/changes.patch`);
   assert.deepEqual(record.touchedFiles, ["src/changed.mts"]);
   assert.equal(cleanupCalls, 1);
   assert.equal(envelope.job.isolated, true);
-  assert.equal(envelope.job.allowExecute, true);
+  assert.equal(envelope.job.allowExecute, false);
   assert.equal(envelope.artifacts.patchPath, `${prepared.artifactsDir}/changes.patch`);
   assert.deepEqual(envelope.artifacts.touchedFiles, ["src/changed.mts"]);
 });
@@ -188,12 +187,11 @@ test("delegate validates isolated and execute opt-ins before workspace discovery
     env: { CONSULT_AGENT_SANDBOX: "bwrap" },
     deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
   });
-  const executeWithoutSandbox = await runDelegate({
+  const executeUnavailable = await runDelegate({
     args: {
       positional: ["fix"],
       flags: { write: true, isolated: true, "allow-exec": true },
     },
-    env: {},
     deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
   });
 
@@ -201,10 +199,10 @@ test("delegate validates isolated and execute opt-ins before workspace discovery
   assert.equal(isolatedWithoutWrite.stderr, "--isolated requires --write\n");
   assert.equal(executeWithoutIsolation.exitCode, 2);
   assert.equal(executeWithoutIsolation.stderr, "--allow-exec requires --write --isolated\n");
-  assert.equal(executeWithoutSandbox.exitCode, 2);
+  assert.equal(executeUnavailable.exitCode, 2);
   assert.equal(
-    executeWithoutSandbox.stderr,
-    "--allow-exec requires CONSULT_AGENT_SANDBOX=bwrap\n",
+    executeUnavailable.stderr,
+    "--allow-exec is unavailable until Consult enforces proxy-confined networking\n",
   );
 });
 

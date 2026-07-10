@@ -17,8 +17,8 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
   native review path remains an internal optimization.
 - Transactional isolated write Jobs that return a patch and touched-files
   manifest without changing the invoking checkout.
-- Execute permission only through explicit `--allow-exec` on an isolated write
-  Job under an active bubblewrap filesystem sandbox.
+- Execute permission is fail-closed while the existing bubblewrap backend lacks
+  direct-network isolation and enforced proxy transport.
 - One-command GitHub installation now; scoped npm publication packaging is
   ready for a future registry release.
 

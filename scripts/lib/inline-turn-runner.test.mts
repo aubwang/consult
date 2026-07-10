@@ -86,7 +86,7 @@ test("inline runner finalizes a read-only policy violation as failed and exits 6
   );
 });
 
-test("inline runner denies opted-in execute permission without the bwrap sandbox", async (t) => {
+test("inline runner denies opted-in execute until proxy-confined networking exists", async (t) => {
   const { workspaceRoot, dataDir, dir } = await makeWorkspace();
   withDataDir(t, dataDir);
   withEnv(t, "CONSULT_AGENT_SANDBOX", "off");
@@ -117,11 +117,11 @@ test("inline runner denies opted-in execute permission without the bwrap sandbox
   assert.equal(updates[0].update.content.text, "reject");
   const observations = await readNdjson(clientLog) as any[];
   assert.equal(observations[0].message.result.outcome.optionId, "reject");
-  assert.match(observations[0].message.result._meta.reason, /bwrap sandbox required/);
+  assert.match(observations[0].message.result._meta.reason, /proxy-confined network enforcement/);
 });
 
 test(
-  "inline runner allows opted-in confined execute permission in write mode under bwrap",
+  "inline runner denies opted-in execute under filesystem-only bwrap",
   { skip: !fsSync.existsSync("/usr/bin/bwrap") },
   async (t) => {
     const { dataDir } = await makeWorkspace();
@@ -150,7 +150,7 @@ test(
     });
 
     assert.equal((await finalized).stopReason, "end_turn");
-    assert.equal(updates[0].update.content.text, "allow");
+    assert.equal(updates[0].update.content.text, "reject");
   },
 );
 

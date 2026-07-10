@@ -106,10 +106,10 @@ export async function decidePermission(
     if (allowExecute !== true) {
       return { allowed: false, reason: "execute denied in write mode (explicit opt-in required)" };
     }
-    if (sandbox !== "bwrap") {
-      return { allowed: false, reason: "execute denied in write mode (bwrap sandbox required)" };
-    }
-    return { allowed: true };
+    return {
+      allowed: false,
+      reason: "execute denied: proxy-confined network enforcement is unavailable",
+    };
   }
 
   if (kind === "fetch") {

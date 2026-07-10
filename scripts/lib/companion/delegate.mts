@@ -25,7 +25,6 @@ import {
 } from "../isolated-workspace.mts";
 import type { PreparedIsolatedWorkspace } from "../isolated-workspace.mts";
 import { processStartTime } from "../process-identity.mts";
-import { normalizeAgentSandbox } from "../process-sandbox.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import { tryResolveInvocationContext } from "./invocation-context.mts";
@@ -94,7 +93,7 @@ export async function runDelegate({
   deps = {},
 }: RunDelegateOptions): Promise<DelegateResult> {
   const output = createOutput(deps);
-  const validated = validateArgs(args, env);
+  const validated = validateArgs(args);
   if (validated.error) {
     output.stderr(`${validated.error}\n`);
     return output.result(2);
@@ -322,10 +321,7 @@ export async function runDelegate({
   });
 }
 
-function validateArgs(
-  args: ParsedArgs,
-  env: Record<string, string | undefined> = process.env,
-): ValidatedDelegateArgs {
+function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const flags = args.flags ?? {};
   const missingValue = missingFlagValueError(flags, [
     "agent",
@@ -380,15 +376,10 @@ function validateArgs(
     return { error: "--allow-exec requires --write --isolated" };
   }
   if (allowExecute) {
-    let sandbox;
-    try {
-      sandbox = normalizeAgentSandbox(env.CONSULT_AGENT_SANDBOX);
-    } catch (error) {
-      return { error: (error as Error).message };
-    }
-    if (sandbox !== "bwrap") {
-      return { error: "--allow-exec requires CONSULT_AGENT_SANDBOX=bwrap" };
-    }
+    return {
+      error:
+        "--allow-exec is unavailable until Consult enforces proxy-confined networking",
+    };
   }
   const promptFromFlag = stringFlag(flags.prompt);
   const promptFromPositionals = (args.positional ?? []).join(" ").trim();
