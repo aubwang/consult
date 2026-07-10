@@ -287,6 +287,7 @@ export function finalizedBrokerJobRecord(
     ...brokerJobMetadata(job),
     status: statusFromStopReason(finalized.stopReason),
     stopReason: finalized.stopReason,
+    errorMessage: finalized.errorMessage,
     sessionId: finalized.sessionId,
     startedAt: job.startedAt,
     completedAt: job.completedAt,

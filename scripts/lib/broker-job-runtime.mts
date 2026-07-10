@@ -133,6 +133,7 @@ export interface CreateBrokerJobRuntimeOptions {
   ensureAgent(authority: JobAuthority): Promise<BrokerAgentHandle>;
   hashRunPayload(params: ConsultRunParams): string;
   writeNotification(socket: BrokerJobSocketLike, method: string, params: unknown): void;
+  beforeTerminal?(job: BrokerJob): Promise<void>;
   onActivity?(): void;
   onTerminal?(job: BrokerJob): void;
   maxFinalTextChars?: number;
@@ -174,6 +175,7 @@ export function createBrokerJobRuntime({
   ensureAgent,
   hashRunPayload,
   writeNotification,
+  beforeTerminal,
   onActivity = () => {},
   onTerminal = () => {},
   maxFinalTextChars = DEFAULT_MAX_FINAL_TEXT_CHARS,
@@ -189,6 +191,7 @@ export function createBrokerJobRuntime({
   const activeJobs = new Map<string, BrokerJob>();
   let busy = false;
   let tainted = false;
+  const preparesTerminalBoundary = beforeTerminal !== undefined;
 
   return {
     get tainted() {
@@ -334,10 +337,11 @@ export function createBrokerJobRuntime({
       }
     },
     async finalizeJob(job, finalized) {
+      job.status = "finalized";
+      const preparedFinalized = await prepareTerminalOutcome(job, finalized);
       clearCancelAckTimer(job);
       clearWallClockTimer(job);
-      job.status = "finalized";
-      job.finalized = boundedFinalized(job, finalized);
+      job.finalized = boundedFinalized(job, preparedFinalized);
       job.completedAt = new Date().toISOString();
       sessionJobs.delete(job.sessionId);
       // ACP sessions outlive prompt turns; keep sessionModes until broker shutdown.
@@ -357,12 +361,13 @@ export function createBrokerJobRuntime({
         return;
       }
       job.status = "finalized";
-      job.completedAt = new Date().toISOString();
-      job.finalized = boundedFinalized(job, {
+      const preparedFinalized = await prepareTerminalOutcome(job, {
         stopReason: "failed",
         sessionId: job.sessionId,
         errorMessage,
       });
+      job.completedAt = new Date().toISOString();
+      job.finalized = boundedFinalized(job, preparedFinalized);
       sessionJobs.delete(job.sessionId);
       busy = false;
       await writeFailedJobRecord(job);
@@ -414,6 +419,28 @@ export function createBrokerJobRuntime({
     },
   };
 
+  async function prepareTerminalOutcome(
+    job: BrokerJob,
+    outcome: BrokerJobFinalized,
+  ): Promise<BrokerJobFinalized> {
+    if (!beforeTerminal) {
+      return outcome;
+    }
+    try {
+      await beforeTerminal(job);
+      return outcome;
+    } catch (error) {
+      const cleanupMessage = `PROFILE_CLEANUP_UNCONFIRMED: ${errorMessage(error)}`;
+      return {
+        stopReason: "failed",
+        sessionId: outcome.sessionId,
+        errorMessage: outcome.errorMessage
+          ? `${outcome.errorMessage}; ${cleanupMessage}`
+          : cleanupMessage,
+      };
+    }
+  }
+
   function writeJobUpdate(job: BrokerJob, update: BrokerSessionUpdate) {
     const notification = { jobId: job.jobId, update };
     job.finalText = appendBoundedText(job.finalText, extractAgentMessageText(update), {
@@ -434,20 +461,30 @@ export function createBrokerJobRuntime({
     clearWallClockTimer(job);
     // Defense in depth: an auto-approved edit update can arrive after the edit already hit disk.
     job.status = "finalized";
-    job.completedAt = new Date().toISOString();
-    job.finalized = boundedFinalized(job, {
+    job.cancelRequested = true;
+    if (preparesTerminalBoundary && job.sessionId) {
+      await ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
+    const preparedFinalized = await prepareTerminalOutcome(job, {
       stopReason: "failed",
       sessionId: job.sessionId,
       errorMessage,
     });
+    job.completedAt = new Date().toISOString();
+    job.finalized = boundedFinalized(job, preparedFinalized);
     sessionJobs.delete(job.sessionId);
     // Busy stays set until the violated prompt turn settles (or the cancel-ack
     // timer fires), so a second consult/run cannot interleave prompt turns.
-    job.cancelRequested = true;
-    startCancelAckTimer(job);
-    ensureAgent(job.authority)
-      .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
-      .catch(() => {});
+    if (preparesTerminalBoundary) {
+      busy = false;
+    } else {
+      startCancelAckTimer(job);
+      ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
     await writeFailedJobRecord(job);
     notifyFinalized(job, job.finalized);
     onActivity();
@@ -461,19 +498,28 @@ export function createBrokerJobRuntime({
     clearCancelAckTimer(job);
     clearWallClockTimer(job);
     job.status = "finalized";
-    job.completedAt = new Date().toISOString();
-    job.finalized = boundedFinalized(job, {
+    job.cancelRequested = true;
+    if (preparesTerminalBoundary && job.sessionId) {
+      await ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
+    const preparedFinalized = await prepareTerminalOutcome(job, {
       stopReason: "failed",
       sessionId: null,
       errorMessage,
     });
+    job.completedAt = new Date().toISOString();
+    job.finalized = boundedFinalized(job, preparedFinalized);
     sessionJobs.delete(job.sessionId);
-    job.cancelRequested = true;
-    if (job.sessionId) {
+    if (job.sessionId && !preparesTerminalBoundary) {
       startCancelAckTimer(job);
       ensureAgent(job.authority)
         .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
         .catch(() => {});
+    }
+    if (preparesTerminalBoundary) {
+      busy = false;
     }
     // The subscriber persists the same terminal outcome after receiving the
     // notification. Do not suppress cleanup/finalization if this first write
@@ -490,27 +536,32 @@ export function createBrokerJobRuntime({
     }
     job.cancelAckTimer = setTimeout(() => {
       job.cancelAckTimer = null;
-      if (job.status === "running") {
-        clearWallClockTimer(job);
-        job.status = "finalized";
-        job.completedAt = new Date().toISOString();
-        job.finalized = boundedFinalized(job, {
-          stopReason: "failed",
-          sessionId: job.sessionId,
-          errorMessage: "agent did not acknowledge cancel",
-        });
-        sessionJobs.delete(job.sessionId);
-        writeFailedJobRecord(job).catch(() => {});
-        busy = false;
-        notifyFinalized(job, job.finalized);
-      }
-      // The job may already be finalized (policy violation) while its prompt
-      // turn is still unsettled; an unacknowledged cancel always taints.
-      busy = false;
-      tainted = true;
-      onActivity();
-      onTerminal(job);
+      void finalizeUnacknowledgedCancel(job);
     }, config.cancelAckTimeoutMs);
+  }
+
+  async function finalizeUnacknowledgedCancel(job: BrokerJob): Promise<void> {
+    if (job.status === "running") {
+      clearWallClockTimer(job);
+      job.status = "finalized";
+      const preparedFinalized = await prepareTerminalOutcome(job, {
+        stopReason: "failed",
+        sessionId: job.sessionId,
+        errorMessage: "agent did not acknowledge cancel",
+      });
+      job.completedAt = new Date().toISOString();
+      job.finalized = boundedFinalized(job, preparedFinalized);
+      sessionJobs.delete(job.sessionId);
+      await writeFailedJobRecord(job).catch(() => {});
+      busy = false;
+      notifyFinalized(job, job.finalized);
+    }
+    // The job may already be finalized (policy violation) while its prompt
+    // turn is still unsettled; an unacknowledged cancel always taints.
+    busy = false;
+    tainted = true;
+    onActivity();
+    onTerminal(job);
   }
 
   function clearCancelAckTimer(job: BrokerJob) {
@@ -596,6 +647,10 @@ function defaultScheduleWallClock(handler: () => void, milliseconds: number): No
 
 function defaultClearWallClock(timer: NodeJS.Timeout): void {
   clearTimeout(timer);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function assertPositiveLimit(name: string, value: number): void {

@@ -119,6 +119,7 @@ export function createInlineClient({
       }
       handlers.get(method)?.(params);
     },
+    beforeTerminal: async () => await disposeAgent(),
     maxWallClockMs,
     maxPersistedLogBytes,
     scheduleWallClock,
@@ -188,6 +189,17 @@ export function createInlineClient({
       noteTurnSettled: (turnJob) => runtime.noteTurnSettled(turnJob),
     }).catch(async (error) => {
       await runtime.failJob(acceptedJob, agentErrorMessage(error as CodedAgentError)).catch(() => {});
+      if (
+        !finalizedDispatched &&
+        acceptedJob.status === "finalized" &&
+        acceptedJob.finalized === null
+      ) {
+        // A reliability or policy boundary may be disposing the Profile before
+        // it persists and emits its terminal outcome. The resulting ACP close
+        // must not replace that in-flight, more specific diagnostic.
+        await finalized;
+        return;
+      }
       if (!finalizedDispatched) {
         // failJob early-returns on a job the runtime already marked finalized
         // whose record write then failed; never leave the turn unresolved or
@@ -246,7 +258,7 @@ export function createInlineClient({
     if (agent && !disposeStarted) {
       disposeStarted = true;
       const current = agent;
-      disposeDone = current.dispose().catch(() => {});
+      disposeDone = current.dispose();
     }
     return disposeDone;
   }
