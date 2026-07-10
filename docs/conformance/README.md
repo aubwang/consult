@@ -31,9 +31,9 @@ CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check
 bun run conformance:job-authority -- --agent codex --expect ready
 bun run conformance:job-authority -- --agent claude --expect ready
 bun run conformance:job-authority -- --agent codex --expect ready \
-  --turn --model <known-supported-codex-model>
+  --direct --turn --background --model <known-supported-codex-model>
 bun run conformance:job-authority -- --agent claude --expect ready \
-  --turn --model fable
+  --direct --turn --background --model <known-supported-claude-model>
 ```
 
 Then run the fail-closed control from the already-sandboxed macOS Codex Host:
@@ -44,19 +44,25 @@ bun run conformance:job-authority -- --agent claude --expect unsupported
 ```
 
 The harness emits one redacted JSON object. Doctor/preflight performs real ACP
-initialization but no model prompt. `--turn` runs a one-line model transport
-canary, verifies its selective Session archive, resumes it through a second
-fresh confined Profile process, and verifies the updated archive. An
-`--expect unsupported` run additionally attempts delegation, requires the
-stable nesting diagnostic, and proves no Job was created.
+initialization but no model prompt. `--direct` runs the exact configured ACP
+Profile without Consult confinement as an auth/transport control. `--turn`
+asks the Profile to remember a random private marker while acknowledging with a
+different fixed response, then resumes through a second fresh confined Profile
+process and requires the unrevealed marker. `--background` verifies the queued,
+status/result, model-transport, archive, and cleanup path. An `--expect
+unsupported` run additionally attempts delegation, requires the stable nesting
+diagnostic, and proves no Job was created.
 
 `CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check` installs the produced
-tarball through both npm and Bun, runs a successful inherited background ACP
-Job, and initializes a fake built-in Codex Profile through the real confined
-adapter. The fake Profile proves a host-only read canary is hidden, an
-outside-boundary write does not reach the Host filesystem (Linux may satisfy
-the syscall in an ephemeral tmpfs), and an unapproved host-loopback listener
-is unreachable.
+tarball through both npm and Bun. Its deterministic fake built-in matrix uses
+both Codex and Claude registry identities to prove the native packed adapter's
+filesystem, direct-egress/proxy, foreground/background, isolated-write,
+cancellation, resume, credential-minimization, and cleanup behavior. The real
+Profile harness above is the complementary proof of vendor auth, ACP/model
+transport, and transcript compatibility; neither layer is treated as a
+substitute for the other. The positive packed fetch probe requires outbound
+reachability to public TCP/443 (`1.1.1.1:443`); failure of that external
+prerequisite is a failed release gate until it is rerun in a suitable network.
 
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|

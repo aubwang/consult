@@ -372,6 +372,14 @@ and cross-Profile conformance are complete. Wall-clock duration and persisted
 NDJSON size are bounded now. Process count, CPU, memory, and disk quotas remain
 documented residual risks rather than implied sandbox guarantees.
 
+Conformance is deliberately two-layered. A deterministic fake ACP Profile is
+run through each built-in registry identity from the packed artifact to make
+filesystem, network, lifecycle, isolation, resume, and cleanup assertions
+mandatory. Separate real Codex and Claude controls prove vendor authentication,
+ACP/model transport, and selective transcript compatibility. Model prompts are
+not the sole proof of a security boundary because tool selection, fetch
+availability, and cancellation timing are nondeterministic.
+
 ## Delegation Chains
 
 Nested delegation uses `chainId`, `parentJobId`, and `delegationDepth`.
