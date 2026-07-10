@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import fsSync from "node:fs";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -91,78 +90,6 @@ test("inline runner finalizes a read-only policy violation as failed and exits 6
     /policy violation: auto-approved edit update in read-only mode/,
   );
 });
-
-test("inline runner denies opted-in execute until proxy-confined networking exists", async (t) => {
-  const { workspaceRoot, dataDir, dir } = await makeWorkspace();
-  withDataDir(t, dataDir);
-  withEnv(t, "CONSULT_AGENT_SANDBOX", "off");
-  const clientLog = path.join(dir, "client.ndjson");
-  const client = createInlineClient({
-    workspaceRoot,
-    host: "terminal",
-    hostSessionId: "default",
-    profile: "codex",
-    authority: authority({ mode: "write", allowExecute: true }),
-    profileEntry: profileEntryFixture("prompt-permission-execute", {
-      CONSULT_FAKE_AGENT_CLIENT_LOG: clientLog,
-      CONSULT_FAKE_AGENT_TARGET_PATH: workspaceRoot,
-    }),
-  });
-  const updates: any[] = [];
-  client.on("consult/update", (notification) => updates.push(notification));
-  const finalized = new Promise<any>((resolve) => client.on("consult/finalized", resolve));
-
-  await client.request("consult/run", {
-    jobId: "job-inline-execute-no-sandbox",
-    prompt: "run tests",
-    profile: "codex",
-    authority: authority({ mode: "write", allowExecute: true }),
-    mode: "write",
-    allowExecute: true,
-  });
-
-  assert.equal((await finalized).stopReason, "end_turn");
-  assert.equal(updates[0].update.content.text, "reject");
-  const observations = await readNdjson(clientLog) as any[];
-  assert.equal(observations[0].message.result.outcome.optionId, "reject");
-  assert.match(observations[0].message.result._meta.reason, /proxy-confined network enforcement/);
-});
-
-test(
-  "inline runner denies opted-in execute under filesystem-only bwrap",
-  { skip: !fsSync.existsSync("/usr/bin/bwrap") },
-  async (t) => {
-    const { dataDir } = await makeWorkspace();
-    withDataDir(t, dataDir);
-    withEnv(t, "CONSULT_AGENT_SANDBOX", "bwrap");
-    const repoRoot = path.resolve(path.dirname(fakeAgentPath), "../../..");
-    const client = createInlineClient({
-      workspaceRoot: repoRoot,
-      host: "terminal",
-      hostSessionId: "default",
-      profile: "codex",
-      authority: authority({ mode: "write", allowExecute: true }),
-      profileEntry: profileEntryFixture("prompt-permission-execute", {
-        CONSULT_FAKE_AGENT_TARGET_PATH: repoRoot,
-      }),
-    });
-    const updates: any[] = [];
-    client.on("consult/update", (notification) => updates.push(notification));
-    const finalized = new Promise<any>((resolve) => client.on("consult/finalized", resolve));
-
-    await client.request("consult/run", {
-      jobId: "job-inline-execute-bwrap",
-      prompt: "run tests",
-      profile: "codex",
-      authority: authority({ mode: "write", allowExecute: true }),
-      mode: "write",
-      allowExecute: true,
-    });
-
-    assert.equal((await finalized).stopReason, "end_turn");
-    assert.equal(updates[0].update.content.text, "reject");
-  },
-);
 
 test("inline runner rejects stale canonical authority before Profile launch", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
@@ -651,7 +578,15 @@ function spawnForegroundDelegate(
 ): ChildProcess {
   const child = spawn(
     process.execPath,
-    [companionPath, "delegate", ...extraArgs, "--", "delegated prompt"],
+    [
+      companionPath,
+      "delegate",
+      "--sandbox",
+      "inherit",
+      ...extraArgs,
+      "--",
+      "delegated prompt",
+    ],
     {
       cwd: workspaceRoot,
       env: { ...process.env, CONSULT_DATA_DIR: dataDir },

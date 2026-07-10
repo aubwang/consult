@@ -6,7 +6,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { newSession, promptTurn, startAgent } from "./acp-client.mts";
-import type { StartedAgent } from "./acp-client.mts";
+import type { AcquireAgentLaunch, StartedAgent } from "./acp-client.mts";
 import { createFsHandlers } from "./fs-handlers.mts";
 import type { FsHandlerMode } from "./fs-handlers.mts";
 import { jobAuthorityFromRecord } from "./job-authority.mts";
@@ -14,6 +14,7 @@ import type { JobAuthority, JobAuthorityDiagnostic } from "./job-authority.mts";
 import { decidePermission } from "./permissions.mts";
 import type { PermissionMode } from "./permissions.mts";
 import { normalizeAgentSandbox } from "./process-sandbox.mts";
+import { acquireConfinedSandboxRuntimeLaunch } from "./sandbox-runtime-launch.mts";
 import { applySessionControls, openResumedSession } from "./session-controls.mts";
 import type { BrokerJob, BrokerSessionUpdate } from "./broker-job-runtime.mts";
 
@@ -51,21 +52,40 @@ export interface StartJobAgentOptions {
   runtime: JobAgentRuntimeHooks;
 }
 
-export async function startJobAgent({
-  binary,
-  args = [],
-  env = {},
-  cwd,
-  stateWorkspaceRoot = cwd,
-  authority,
-  sandbox = "off",
-  profileRegistryId,
-  jobId = null,
-  runtime,
-}: StartJobAgentOptions): Promise<StartedAgent> {
+export interface StartJobAgentDeps {
+  startAgent?: typeof startAgent;
+  acquireConfinedLaunch?: typeof acquireConfinedSandboxRuntimeLaunch;
+}
+
+export async function startJobAgent(
+  {
+    binary,
+    args = [],
+    env = {},
+    cwd,
+    stateWorkspaceRoot = cwd,
+    authority,
+    sandbox = "off",
+    profileRegistryId,
+    jobId = null,
+    runtime,
+  }: StartJobAgentOptions,
+  deps: StartJobAgentDeps = {},
+): Promise<StartedAgent> {
   const canonicalAuthority = canonicalRunAuthority({ authority });
-  const sandboxMode = normalizeAgentSandbox(sandbox);
-  return await startAgent({
+  const sandboxMode =
+    canonicalAuthority.confinement === "inherit"
+      ? "off"
+      : normalizeAgentSandbox(sandbox);
+  const acquireLaunch: AcquireAgentLaunch | undefined =
+    canonicalAuthority.confinement === "confined"
+      ? async (launchOptions) =>
+          await (deps.acquireConfinedLaunch ?? acquireConfinedSandboxRuntimeLaunch)({
+            ...launchOptions,
+            authority: canonicalAuthority,
+          })
+      : undefined;
+  return await (deps.startAgent ?? startAgent)({
     binary,
     args,
     env: {
@@ -91,6 +111,7 @@ export async function startJobAgent({
           workspaceRoot: cwd,
           // Execute remains unavailable in decidePermission until the runtime
           // provides proxy-confined model transport.
+          allowFetch: sessionAuthority.allowFetch,
           allowExecute: sessionAuthority.allowExecute,
           sandbox: sandboxMode,
         });
@@ -116,7 +137,7 @@ export async function startJobAgent({
         return await handlers.writeTextFile(request);
       },
     },
-  });
+  }, acquireLaunch ? { acquireLaunch } : {});
 }
 
 export interface AgentTurnContext {

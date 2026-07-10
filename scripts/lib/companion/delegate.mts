@@ -24,6 +24,7 @@ import type {
   JobAuthorityPreflightInput,
   JobAuthorityPreflightResult,
 } from "../job-authority-preflight.mts";
+import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
 import { jobResultEnvelope } from "../job-result-contract.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import {
@@ -167,13 +168,23 @@ export async function runDelegate({
   };
   const preflight = await (
     deps.preflightAuthority ??
-    ((input: JobAuthorityPreflightInput) => defaultPreflightJobAuthority(input))
+    ((input: JobAuthorityPreflightInput) =>
+      defaultPreflightJobAuthority(input, {
+        probeConfined: probeConfinedSandboxRuntime,
+      }))
   )({
     authority,
     parentJob: chain.parent,
     workspaceRoot,
     profile: selected.profile as string,
     profileRegistryId: selected.profileEntry?.registryId,
+    profileLaunch: selected.profileEntry
+      ? {
+          binary: selected.profileEntry.binary,
+          args: selected.profileEntry.args,
+          env: selected.profileEntry.env,
+        }
+      : undefined,
   });
   if (!preflight.ok) {
     writeAuthorityDiagnostic(output, preflight.diagnostic, validated.json === true);

@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { hashRunPayload } from "./job-agent.mts";
+import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
+
+import { startAgent } from "./acp-client.mts";
+import type {
+  AgentLaunchLease,
+  StartAgentDeps,
+  StartAgentOptions,
+  StartedAgent,
+} from "./acp-client.mts";
+import type { JobAuthority } from "./job-authority.mts";
+import { hashRunPayload, startJobAgent } from "./job-agent.mts";
+import type { ConfinedSandboxRuntimeLaunchInput } from "./sandbox-runtime-launch.mts";
 
 const BASE_RUN = {
   jobId: "job-1",
@@ -11,17 +22,11 @@ const BASE_RUN = {
 };
 
 test("hashRunPayload includes canonical execute authority", () => {
-  const authority = {
-    schemaVersion: 1 as const,
-    mode: "write" as const,
-    confinement: "confined" as const,
-    allowFetch: false,
-    allowExecute: false,
-  };
-  const defaultHash = hashRunPayload({ ...BASE_RUN, authority });
+  const runAuthority = authority({ mode: "write" });
+  const defaultHash = hashRunPayload({ ...BASE_RUN, authority: runAuthority });
   const enabledHash = hashRunPayload({
     ...BASE_RUN,
-    authority: { ...authority, allowExecute: true },
+    authority: { ...runAuthority, allowExecute: true },
     allowExecute: true,
   });
 
@@ -47,22 +52,15 @@ test("hashRunPayload does not treat a string value as execute opt-in", () => {
 });
 
 test("hashRunPayload includes canonical confinement and fetch authority", () => {
-  const authority = {
-    schemaVersion: 1 as const,
-    mode: "write" as const,
-    confinement: "confined" as const,
-    allowFetch: false,
-    allowExecute: false,
-  };
-
-  const confinedHash = hashRunPayload({ ...BASE_RUN, authority });
+  const runAuthority = authority({ mode: "write" });
+  const confinedHash = hashRunPayload({ ...BASE_RUN, authority: runAuthority });
   const fetchHash = hashRunPayload({
     ...BASE_RUN,
-    authority: { ...authority, allowFetch: true },
+    authority: { ...runAuthority, allowFetch: true },
   });
   const inheritedHash = hashRunPayload({
     ...BASE_RUN,
-    authority: { ...authority, confinement: "inherit", allowFetch: false },
+    authority: { ...runAuthority, confinement: "inherit" },
   });
 
   assert.notEqual(fetchHash, confinedHash);
@@ -70,40 +68,26 @@ test("hashRunPayload includes canonical confinement and fetch authority", () => 
 });
 
 test("hashRunPayload canonicalizes authority while ignoring future fields", () => {
-  const authority = {
-    schemaVersion: 1 as const,
-    mode: "read-only" as const,
-    confinement: "confined" as const,
-    allowFetch: false,
-    allowExecute: false,
-  };
+  const runAuthority = authority();
   const canonicalHash = hashRunPayload({
     ...BASE_RUN,
     mode: "read-only",
     allowExecute: false,
-    authority,
+    authority: runAuthority,
   });
   const extraFieldHash = hashRunPayload({
     ...BASE_RUN,
     mode: "read-only",
     allowExecute: false,
-    authority: { ...authority, ignoredFutureField: "compatible" } as typeof authority,
+    authority: { ...runAuthority, ignoredFutureField: "compatible" } as typeof runAuthority,
   });
 
   assert.equal(canonicalHash, extraFieldHash);
 });
 
 test("hashRunPayload rejects stale flat compatibility fields", () => {
-  const authority = {
-    schemaVersion: 1 as const,
-    mode: "read-only" as const,
-    confinement: "confined" as const,
-    allowFetch: false,
-    allowExecute: false,
-  };
-
   assert.throws(
-    () => hashRunPayload({ ...BASE_RUN, authority }),
+    () => hashRunPayload({ ...BASE_RUN, authority: authority() }),
     (error: unknown) => {
       assert.equal((error as { code?: string }).code, "AUTHORITY_MISMATCH");
       return true;
@@ -120,3 +104,119 @@ test("hashRunPayload rejects malformed explicit authority", () => {
     },
   );
 });
+
+test("startJobAgent acquires the confined runtime lease only for confined authority", async () => {
+  let capturedOptions: StartAgentOptions | undefined;
+  let capturedDeps: StartAgentDeps | undefined;
+  let confinedInput: ConfinedSandboxRuntimeLaunchInput | undefined;
+  const fakeStartAgent: typeof startAgent = async (options, deps) => {
+    capturedOptions = options;
+    capturedDeps = deps;
+    return {} as StartedAgent;
+  };
+
+  await startJobAgent({
+    binary: "/profile-agent",
+    cwd: "/workspace",
+    authority: authority(),
+    profileRegistryId: "claude",
+    runtime: runtimeHooks(authority()),
+  }, {
+    startAgent: fakeStartAgent,
+    acquireConfinedLaunch: async (input) => {
+      confinedInput = input;
+      return lease(input);
+    },
+  });
+
+  assert.ok(capturedDeps?.acquireLaunch);
+  await capturedDeps.acquireLaunch({
+    binary: capturedOptions!.binary,
+    args: [],
+    cwd: capturedOptions!.cwd,
+    env: {},
+    workspaceRoot: capturedOptions!.workspaceRoot,
+    mode: capturedOptions!.mode,
+    sandbox: capturedOptions!.sandbox,
+    profileRegistryId: capturedOptions!.profileRegistryId,
+  });
+  assert.equal(confinedInput?.authority.confinement, "confined");
+  assert.equal(confinedInput?.profileRegistryId, "claude");
+
+  capturedDeps = undefined;
+  const inherited = authority({ confinement: "inherit" });
+  await startJobAgent({
+    binary: "/profile-agent",
+    cwd: "/workspace",
+    authority: inherited,
+    sandbox: "bwrap",
+    profileRegistryId: "opencode",
+    runtime: runtimeHooks(inherited),
+  }, { startAgent: fakeStartAgent });
+  assert.equal((capturedDeps as StartAgentDeps | undefined)?.acquireLaunch, undefined);
+  assert.equal(capturedOptions?.sandbox, "off");
+});
+
+test("startJobAgent exposes the fetch grant to ACP permission decisions", async () => {
+  let capturedOptions: StartAgentOptions | undefined;
+  const granted = authority({ allowFetch: true });
+  await startJobAgent({
+    binary: "/profile-agent",
+    cwd: "/workspace",
+    authority: granted,
+    profileRegistryId: "claude",
+    runtime: runtimeHooks(granted),
+  }, {
+    startAgent: async (options) => {
+      capturedOptions = options;
+      return {} as StartedAgent;
+    },
+    acquireConfinedLaunch: async (input) => lease(input),
+  });
+
+  const requestPermission = capturedOptions?.clientHandlers?.requestPermission;
+  assert.ok(requestPermission);
+  const request: RequestPermissionRequest = {
+    sessionId: "session-1",
+    options: [],
+    toolCall: {
+      toolCallId: "fetch-1",
+      kind: "fetch",
+      rawInput: { url: "https://example.com" },
+    },
+  };
+  assert.deepEqual(await requestPermission(request), {
+    outcome: { outcome: "selected", optionId: "allow" },
+  });
+});
+
+function authority(overrides: Partial<JobAuthority> = {}): JobAuthority {
+  return {
+    schemaVersion: 1,
+    mode: "read-only",
+    confinement: "confined",
+    allowFetch: false,
+    allowExecute: false,
+    ...overrides,
+  };
+}
+
+function runtimeHooks(sessionAuthority: JobAuthority) {
+  return {
+    async handleSessionUpdate() {},
+    getSessionAuthority: () => sessionAuthority,
+    notePermissionDecision() {},
+  };
+}
+
+function lease(input: ConfinedSandboxRuntimeLaunchInput): AgentLaunchLease {
+  return {
+    launch: {
+      binary: input.binary,
+      args: input.args ?? [],
+      cwd: input.cwd,
+      env: input.env,
+    },
+    release: async () => {},
+  };
+}
