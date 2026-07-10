@@ -14,26 +14,26 @@ Consult.
 Run opencode through Consult in read-only mode by default:
 
 ```sh
-consult delegate --agent opencode --read-only -- "<prompt for opencode>"
+consult delegate --agent opencode --read-only --sandbox inherit -- "<prompt for opencode>"
 ```
 
 Use background mode for longer reviews:
 
 ```sh
-consult delegate --agent opencode --read-only --background -- "<prompt for opencode>"
+consult delegate --agent opencode --read-only --sandbox inherit --background -- "<prompt for opencode>"
 consult status <job-id> --wait
 consult result <job-id>
 ```
 
 ## Model And Effort
 
-Default opencode model: leave `--model` unset so the configured opencode Profile
-uses its default.
+Default opencode model: leave `--model` unset so the inherited opencode Profile
+uses its ambient configured default.
 
 If the user asks for a specific provider/model or effort, preserve it:
 
 ```sh
-consult delegate --agent opencode --read-only --model openrouter/anthropic/claude-sonnet-4.5 --effort high -- "<prompt for opencode>"
+consult delegate --agent opencode --read-only --sandbox inherit --model openrouter/anthropic/claude-sonnet-4.5 --effort high -- "<prompt for opencode>"
 ```
 
 Use model names accepted by the installed opencode Profile. Do not invent model
@@ -56,6 +56,11 @@ reproduction ideas.
 ## Rules
 
 - Default to `--read-only`.
+- The `opencode` Profile is not yet supported by Consult-managed confinement;
+  `--sandbox inherit` is required and adds no Consult OS boundary. State that
+  limitation when it materially affects the request.
+- Add `--allow-fetch` only after opencode gains confined support; fetch cannot
+  be combined with inheritance.
 - Do not ask opencode to edit files unless the user explicitly asks for
   that.
 - Delegate to the `opencode` Profile only; do not substitute a different

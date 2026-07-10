@@ -2,13 +2,15 @@
 
 Date: 2026-07-10
 
-Status: **KILL for `Host=Codex` on macOS.** Do not integrate the pinned runtime
-into Consult's macOS Codex launch path. The same package remains a candidate
-for separately tested Host/platform combinations.
+Status: **KILL for nested confinement under `Host=Codex` on macOS.** Product
+preflight must reject that exact Host context without implicit fallback. The
+same package remains a candidate for unrestricted terminal and separately
+tested Host/platform combinations.
 
-This harness/report is spike evidence, not shipped product behavior. It does
-not change the current `off | bwrap` sandbox surface and does not establish or
-supersede an ADR.
+This harness/report remains spike evidence. ADR-0027 later adopted portable Job
+Authority and uses this report as the reason nested confinement under the
+macOS Codex Host must fail preflight rather than fall back implicitly. The
+unrestricted terminal control still requires a product-level adapter rerun.
 
 ## Candidate and environment
 

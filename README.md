@@ -50,11 +50,11 @@ install command.
 
 Consult ships three Profile definitions:
 
-| Profile | Agent executable | Authentication |
-| --- | --- | --- |
-| `claude` | `claude-agent-acp` | Uses Claude Code credentials or `ANTHROPIC_API_KEY`. |
-| `codex` | `codex-acp` | Uses the underlying Codex CLI authentication. |
-| `opencode` | `opencode acp` | Uses configured opencode provider credentials. |
+| Profile | Agent executable | Authentication | Job Authority |
+| --- | --- | --- | --- |
+| `claude` | `claude-agent-acp` | Uses Claude Code credentials or one supported token variable. | Confined after per-context preflight. |
+| `codex` | `codex-acp` | Uses the underlying Codex CLI authentication. | Confined after per-context preflight. |
+| `opencode` | `opencode acp` | Uses configured opencode provider credentials. | Explicit inheritance only. |
 
 The Claude Profile remains supported; Consult does not ship a Claude Code
 plugin or slash-command Host Adapter. Gemini and GitHub Copilot Profiles are
@@ -83,7 +83,8 @@ uncommitted work:
 consult delegate --agent claude --read-only --include-diff -- \
   "review the attached change for correctness"
 
-consult delegate --agent opencode --read-only --include-diff --base main -- \
+consult delegate --agent opencode --read-only --sandbox inherit \
+  --include-diff --base main -- \
   "identify compatibility risks relative to main"
 ```
 
@@ -93,8 +94,8 @@ Profile reviews that snapshot rather than a moving working tree.
 
 Use `--model` and `--effort` for optional Profile-specific tuning. Model family
 aliases currently include `sol`, `terra`, and `luna` for Codex, and `opus`,
-`sonnet`, `haiku`, and `fable` for Claude. Omitting `--model` preserves the
-Profile's configured default.
+`sonnet`, `haiku`, and `fable` for Claude. Omitting `--model` uses the confined
+Profile runtime's default; Host config files are not copied into confinement.
 
 ## Review
 
@@ -102,13 +103,46 @@ Profile's configured default.
 
 ```sh
 consult review --agent claude
-consult review --agent opencode --base main
+consult review --agent opencode --sandbox inherit --base main
 consult review --agent codex --base HEAD~1
 ```
 
 Consult resolves and pins the review diff itself. Codex can use its verified
 native review capability; other Profiles receive the same findings-first,
 read-only review Job through the portable delegation path.
+
+## Job Authority
+
+Every `delegate` and `review` defaults to read-only, Consult-managed
+confinement. On native Linux and macOS, built-in `codex` and `claude` Profiles
+run with only the Execution Workspace, a private per-Job home/temp directory,
+and one selected model credential exposed. Direct networking is blocked; model
+traffic goes through an authenticated allowlist proxy. Preflight initializes
+the exact configured Profile before creating a Job.
+
+Use `--allow-fetch` only when the Profile should perform task-specific web
+research itself. It permits arbitrary public HTTPS through the proxy. Because
+the Profile also holds its model credential, fetch increases the blast radius
+of prompt injection; Consult does not currently broker credentials.
+
+`--sandbox inherit` is the explicit escape hatch when the trusted Host accepts
+ambient authority. It adds no Consult OS boundary and is never selected as an
+automatic retry. Confined nested delegation is unsupported. Custom and
+`opencode` Profiles currently require inheritance. Native Windows is not
+supported, including inherited mode. Check the exact combination first:
+
+```sh
+consult doctor --agent codex
+```
+
+Doctor performs a real ACP initialization: it briefly stages the selected
+credential, opens the confined proxy, starts the Profile, and disposes it. It
+does not send a model prompt. Confined launch does not copy Codex
+`config.toml` or Claude `settings.json`; pass `--model` explicitly when Host
+config controls the desired model/provider behavior.
+
+`--allow-exec` remains unavailable while execute-specific resource limits and
+cross-Profile conformance are incomplete.
 
 ## Write Jobs and Artifacts
 
@@ -134,26 +168,19 @@ patch plus a touched-files manifest, then removes the temporary worktree. The
 original Workspace remains unchanged. The repository must have at least one
 commit so the detached worktree has a stable base.
 
-Isolated worktrees are a transactional boundary, not a complete process
-sandbox. A Profile that bypasses ACP permission requests can still use its own
-process privileges. On Linux, bubblewrap can add a hard filesystem boundary:
+Isolated worktrees are a transactional boundary distinct from native process
+confinement. Consult applies confined Job Authority by default:
 
 ```sh
-CONSULT_AGENT_SANDBOX=bwrap \
-  consult delegate --agent codex --write --isolated -- \
+consult delegate --agent codex --write --isolated -- \
   "make the change"
 ```
-
-`--allow-exec` currently fails preflight. The existing bubblewrap backend shares
-the host network namespace so it cannot safely grant arbitrary execution even
-when filesystem writes are confined. Execute remains denied until Consult can
-block direct networking and route Profile model transport through an enforced
-proxy. Network fetch permission requests also remain denied.
 
 ## Background Jobs, Results, and Resume
 
 ```sh
-consult delegate --agent opencode --read-only --background -- "trace the bug"
+consult delegate --agent opencode --read-only --sandbox inherit \
+  --background -- "trace the bug"
 consult status <job-id> --wait
 consult logs <job-id> --follow
 consult result <job-id>

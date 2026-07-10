@@ -12,7 +12,8 @@ The public entrypoint is `consult <subcommand> ...`.
 - `setup`: list, install, and select configured Profiles.
 - `agents`: list configured Profiles available in this Workspace.
 - `delegate`: create a Job and run one prompt turn inline or through a scoped Broker.
-- `doctor`: diagnose profile, Host Identity, Job, Broker, and sandbox readiness for the current Workspace.
+- `doctor`: diagnose Profile, Host Identity, Job, Broker, and default Job
+  Authority readiness for the current Workspace and Host context.
 - `status`: show queued, running, completed, cancelled, or failed Job state.
 - `result`: render a completed Job result and metadata.
 - `logs`: print or follow rendered logs for one Job.
@@ -42,6 +43,19 @@ Machine-readable Job output uses schema version 1 with `job`, `outcome`,
 `artifacts`, and `lineage` sections. Internal Job records are not a public API.
 
 `--write --isolated` runs the Profile in a detached Execution Workspace and
-returns an agent-only patch plus touched-files manifest. `--allow-exec`
-currently fails preflight; filesystem-only bubblewrap is not sufficient to
-grant arbitrary execution safely.
+returns an agent-only patch plus touched-files manifest.
+
+Job Authority schema v1 contains mode (`read-only | write`), confinement
+(`confined | inherit`), `allowFetch`, and `allowExecute`. The default is
+read-only confined with both grants false. Built-in `codex` and `claude`
+Profiles use Consult-managed native Linux/macOS confinement, a private Job
+home/temp directory, selected credentials only, direct-network denial, and an
+authenticated model-host proxy. `--allow-fetch` broadens that proxy to public
+HTTPS and therefore increases credential/data exfiltration risk.
+
+Preflight initializes the exact configured Profile before Job persistence and
+fails closed. Consult never changes a failed confined request to inheritance.
+`--sandbox inherit` is an explicit trusted-Host choice that adds no Consult OS
+boundary; custom and `opencode` Profiles require it. Confined nesting and
+native Windows are unsupported. `--allow-exec` remains unavailable pending
+execute resource containment and cross-Profile conformance.

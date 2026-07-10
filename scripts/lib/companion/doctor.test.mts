@@ -8,7 +8,7 @@ import { brokersDir, jobsDir, profilesPath } from "../broker-endpoint.mts";
 import { runDoctor } from "./doctor.mts";
 import type { DoctorReport } from "./doctor.mts";
 
-test("doctor json reports selected profile, job counts, broker counts, and sandbox readiness", async (t) => {
+test("doctor json reports selected profile, job counts, broker counts, and authority readiness", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeProfiles({
