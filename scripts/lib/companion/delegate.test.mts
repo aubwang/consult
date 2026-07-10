@@ -6,6 +6,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 
 import { jobsDir, logsDir } from "../broker-endpoint.mts";
+import type { JobAuthority } from "../job-authority.mts";
 import type {
   FinalizedIsolatedWorkspace,
   PreparedIsolatedWorkspace,
@@ -323,6 +324,7 @@ test("delegate reports pinned diff errors before creating a Job", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   let generated = false;
+  let recordWritten = false;
 
   const result = await runDelegate({
     args: {
@@ -340,12 +342,65 @@ test("delegate reports pinned diff errors before creating a Job", async (t) => {
         generated = true;
         return "should-not-exist";
       },
+      writeJobRecord: async () => {
+        recordWritten = true;
+      },
     }),
   });
 
   assert.equal(result.exitCode, 2);
   assert.match(result.stderr, /unable to capture pinned git diff/);
-  assert.equal(generated, false);
+  assert.equal(generated, true);
+  assert.equal(recordWritten, false);
+});
+
+test("delegate fails authority preflight before diff, isolation, or Job persistence", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  let diffCalled = false;
+  let isolationCalled = false;
+  let recordWritten = false;
+  const result = await runDelegate({
+    args: {
+      positional: ["inspect"],
+      flags: { write: true, isolated: true, "include-diff": true, json: true },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-preflight-failed",
+      preflightAuthority: async (input: { profile: string; profileRegistryId?: string }) => {
+        assert.equal(input.profile, "codex");
+        assert.equal(input.profileRegistryId, "codex");
+        return {
+          ok: false as const,
+          diagnostic: {
+            code: "AUTHORITY_PREFLIGHT_FAILED" as const,
+            message: "nested confinement unavailable",
+            remediation: "Retry with --sandbox inherit if ambient authority is acceptable.",
+          },
+        };
+      },
+      getDiff: async () => {
+        diffCalled = true;
+        return "diff";
+      },
+      prepareIsolatedWorkspace: async () => {
+        isolationCalled = true;
+        throw new Error("should not run");
+      },
+      writeJobRecord: async () => {
+        recordWritten = true;
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(JSON.parse(result.stderr).error.code, "AUTHORITY_PREFLIGHT_FAILED");
+  assert.equal(diffCalled, false);
+  assert.equal(isolationCalled, false);
+  assert.equal(recordWritten, false);
 });
 
 test("delegate rejects --base without --include-diff", async () => {
@@ -1432,6 +1487,10 @@ function withDataDir(t: TestContext, dataDir: string) {
 
 function quietDeps(deps: Record<string, unknown>): DelegateDeps {
   return {
+    preflightAuthority: async (input: { authority: JobAuthority }) => ({
+      ok: true as const,
+      authority: input.authority,
+    }),
     ...deps,
     stdoutWrite: () => {},
     stderrWrite: () => {},

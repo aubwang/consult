@@ -19,6 +19,11 @@ import {
 import type { JobRecord } from "../job-records.mts";
 import { resolveJobAuthority } from "../job-authority.mts";
 import type { JobAuthority, JobAuthorityDiagnostic } from "../job-authority.mts";
+import { preflightJobAuthority as defaultPreflightJobAuthority } from "../job-authority-preflight.mts";
+import type {
+  JobAuthorityPreflightInput,
+  JobAuthorityPreflightResult,
+} from "../job-authority-preflight.mts";
 import { jobResultEnvelope } from "../job-result-contract.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
 import {
@@ -54,6 +59,9 @@ export interface DelegateDeps
   spawn?: typeof defaultSpawn;
   prepareIsolatedWorkspace?: typeof defaultPrepareIsolatedWorkspace;
   cleanupIsolatedWorkspace?: typeof defaultCleanupIsolatedWorkspace;
+  preflightAuthority?: (
+    input: JobAuthorityPreflightInput,
+  ) => Promise<JobAuthorityPreflightResult>;
   [key: string]: unknown;
 }
 
@@ -124,6 +132,54 @@ export async function runDelegate({
     return output.result(2);
   }
 
+  const now = deps.now ?? (() => new Date().toISOString());
+  const generateJobId = deps.generateJobId ?? defaultGenerateJobId;
+  const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
+  const jobId = generateJobId();
+  // Delegation lineage: an explicit --parent-job flag wins; otherwise fall
+  // back to CONSULT_PARENT_JOB, which the Broker injects into delegated agent
+  // environments so nested delegations stay chained (ADR-0007/0008).
+  const parentJobId = validated.parentJobId ?? (env.CONSULT_PARENT_JOB || null);
+  let chain;
+  try {
+    chain = await resolveNewJobChain({
+      workspaceRoot,
+      jobId,
+      parentJobId,
+      requestedMode: validated.mode,
+      writeExplicit: validated.writeExplicit,
+    });
+  } catch (error) {
+    const malformedResult = jobRecordErrorResult(error);
+    if (malformedResult) {
+      output.stderr(malformedResult.stderr);
+      return output.result(malformedResult.exitCode);
+    }
+    throw error;
+  }
+  if (chain.error) {
+    output.stderr(`${chain.error}\n`);
+    return output.result(2);
+  }
+  const authority: JobAuthority = {
+    ...(validated.authority as JobAuthority),
+    mode: chain.mode as JobAuthority["mode"],
+  };
+  const preflight = await (
+    deps.preflightAuthority ??
+    ((input: JobAuthorityPreflightInput) => defaultPreflightJobAuthority(input))
+  )({
+    authority,
+    parentJob: chain.parent,
+    workspaceRoot,
+    profile: selected.profile as string,
+    profileRegistryId: selected.profileEntry?.registryId,
+  });
+  if (!preflight.ok) {
+    writeAuthorityDiagnostic(output, preflight.diagnostic, validated.json === true);
+    return output.result(2);
+  }
+
   let resumeSessionId: string | null | undefined = null;
   if (validated.resumeJobId) {
     try {
@@ -187,39 +243,6 @@ export async function runDelegate({
     }
   }
 
-  const now = deps.now ?? (() => new Date().toISOString());
-  const generateJobId = deps.generateJobId ?? defaultGenerateJobId;
-  const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
-  const jobId = generateJobId();
-  // Delegation lineage: an explicit --parent-job flag wins; otherwise fall
-  // back to CONSULT_PARENT_JOB, which the Broker injects into delegated agent
-  // environments so nested delegations stay chained (ADR-0007/0008).
-  const parentJobId = validated.parentJobId ?? (env.CONSULT_PARENT_JOB || null);
-  let chain;
-  try {
-    chain = await resolveNewJobChain({
-      workspaceRoot,
-      jobId,
-      parentJobId,
-      requestedMode: validated.mode,
-      writeExplicit: validated.writeExplicit,
-    });
-  } catch (error) {
-    const malformedResult = jobRecordErrorResult(error);
-    if (malformedResult) {
-      output.stderr(malformedResult.stderr);
-      return output.result(malformedResult.exitCode);
-    }
-    throw error;
-  }
-  if (chain.error) {
-    output.stderr(`${chain.error}\n`);
-    return output.result(2);
-  }
-  const authority: JobAuthority = {
-    ...(validated.authority as JobAuthority),
-    mode: chain.mode as JobAuthority["mode"],
-  };
   let isolatedWorkspace: PreparedIsolatedWorkspace | undefined;
   if (validated.isolated) {
     try {
