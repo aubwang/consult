@@ -14,6 +14,11 @@ import {
 import { defaultGenerateJobId } from "../job-ids.mts";
 import { processStartTime } from "../process-identity.mts";
 import { resolveJobAuthority } from "../job-authority.mts";
+import { preflightJobAuthority as defaultPreflightJobAuthority } from "../job-authority-preflight.mts";
+import type {
+  JobAuthorityPreflightInput,
+  JobAuthorityPreflightResult,
+} from "../job-authority-preflight.mts";
 import type { ProfileRecord, ProfilesData } from "../profiles.mts";
 import { findRegistryEntry, loadRegistry as defaultLoadRegistry } from "../registry.mts";
 import type { Registry } from "../registry.mts";
@@ -38,6 +43,9 @@ export interface ReviewDeps extends RunDelegateOnceDeps {
   generateJobId?: () => string;
   writeJobRecord?: typeof defaultWriteJobRecord;
   runCodexReview?: (args: Record<string, unknown>) => Promise<CommandResult>;
+  preflightAuthority?: (
+    input: JobAuthorityPreflightInput,
+  ) => Promise<JobAuthorityPreflightResult>;
   stdoutWrite?: (text: string) => void;
   stderrWrite?: (text: string) => void;
   [key: string]: unknown;
@@ -96,6 +104,20 @@ export async function runReview({
   const { workspaceRoot, hostIdentity, selected } = context!;
   if (selected.error) {
     output.stderr(`${selected.error}\n`);
+    return output.result(2);
+  }
+
+  const preflight = await (
+    deps.preflightAuthority ??
+    ((input: JobAuthorityPreflightInput) => defaultPreflightJobAuthority(input))
+  )({
+    authority,
+    workspaceRoot,
+    profile: selected.profile as string,
+    profileRegistryId: selected.profileEntry?.registryId,
+  });
+  if (!preflight.ok) {
+    writeAuthorityDiagnostic(output, preflight.diagnostic, json);
     return output.result(2);
   }
 
