@@ -12,7 +12,11 @@ const CONFINED: JobAuthority = {
   allowExecute: false,
 };
 const INHERIT: JobAuthority = { ...CONFINED, confinement: "inherit" };
-const BASE = { workspaceRoot: "/workspace", profile: "codex" };
+const BASE = {
+  workspaceRoot: "/workspace",
+  profile: "fable",
+  profileRegistryId: "claude",
+};
 
 test("preflight accepts explicit inheritance on supported platforms", async () => {
   assert.deepEqual(
