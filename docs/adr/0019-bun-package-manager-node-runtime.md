@@ -4,7 +4,7 @@ Status: Accepted
 
 Consult uses Bun as its package manager and script runner: `bun install`
 maintains the tracked `bun.lock`, and `bun link` exposes the local `consult`
-binary from a checkout. Node.js (>= 22, declared in `engines`) remains the
+binary from a checkout. Node.js (>= 24, declared in `engines`) remains the
 execution runtime and the test runner: `bin/consult`, Brokers, and the test
 suite all run under `node`, and the suite is `node --test`.
 
@@ -23,7 +23,10 @@ Consequences:
   `bun test`.
 - CI installs dependencies with Bun but executes the suite under the Node
   versions in the support matrix.
-- The test script's glob arguments require Node >= 21; `engines.node` is
-  `>= 22` to stay on supported release lines.
+- The package requires Node >= 24 so checkout execution can use stable native
+  erasable-TypeScript stripping.
+- Checkout execution loads `.mts` directly. Published packages contain
+  compiled `.mjs`, because Node refuses to strip TypeScript under
+  `node_modules`; `bun run pack:check` verifies both npm and Bun installs.
 - Reversing this means regenerating `package-lock.json` and updating install
   docs, with no source changes.

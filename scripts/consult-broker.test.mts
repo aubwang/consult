@@ -593,6 +593,68 @@ test("consult/run denies an edit permission request outside the workspace", asyn
   }
 });
 
+test("consult/run denies opted-in execute permission without the bwrap sandbox", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-permission-execute"],
+    captureClientCalls: true,
+    fakeTargetRelative: ".",
+    sandbox: "off",
+  });
+  const client = await connectBroker(harness.endpoint);
+  const updates = collectNotifications(client, "consult/update");
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-execute-no-sandbox",
+      prompt: "run tests",
+      profile: "codex",
+      mode: "write",
+      allowExecute: true,
+    });
+
+    assert.equal((await finalizedPromise).stopReason, "end_turn");
+    assert.equal(updates[0].update.content.text, "reject");
+    const observations = await readClientObservations(harness.clientLog);
+    assert.equal(observations[0].message.result.outcome.optionId, "reject");
+    assert.match(observations[0].message.result._meta.reason, /bwrap sandbox required/);
+  } finally {
+    await client.close();
+  }
+});
+
+test(
+  "consult/run allows opted-in confined execute permission in write mode under bwrap",
+  { skip: !fs.existsSync("/usr/bin/bwrap") },
+  async (t) => {
+    const repoRoot = path.resolve(path.dirname(fakeAgentPath), "../../..");
+    const harness = await startBroker(t, {
+      workspaceRoot: repoRoot,
+      agentArgs: ["sessions", "prompt-permission-execute"],
+      fakeTargetRelative: ".",
+      sandbox: "bwrap",
+    });
+    const client = await connectBroker(harness.endpoint);
+    const updates = collectNotifications(client, "consult/update");
+    const finalizedPromise = nextNotification(client, "consult/finalized");
+
+    try {
+      await client.request("consult/run", {
+        jobId: "job-execute-bwrap",
+        prompt: "run tests",
+        profile: "codex",
+        mode: "write",
+        allowExecute: true,
+      });
+
+      assert.equal((await finalizedPromise).stopReason, "end_turn");
+      assert.equal(updates[0].update.content.text, "allow");
+    } finally {
+      await client.close();
+    }
+  },
+);
+
 test("consult/run allows fs/read_text_file inside the workspace", async (t) => {
   const harness = await startBroker(t, {
     agentArgs: ["sessions", "prompt-fs-read"],

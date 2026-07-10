@@ -78,7 +78,7 @@ test("chain prints a human rollup for the requested job chain", async (t) => {
   assert.doesNotMatch(result.stdout, /job-other/);
 });
 
-test("chain json emits structured rollup and records", async (t) => {
+test("chain json emits a versioned result contract", async (t) => {
   const records: JobRecord[] = [
     {
     jobId: "job-root",
@@ -111,39 +111,46 @@ test("chain json emits structured rollup and records", async (t) => {
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.stdout.trim().split("\n").length, 1);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    rollup: {
+  const envelope = JSON.parse(result.stdout);
+  assert.equal(envelope.schemaVersion, 1);
+  assert.deepEqual(envelope.chain, {
       requestedJobId: "job-root",
       chainId: "job-root",
       rootJobId: "job-root",
       parentJobId: null,
       childJobIds: ["job-child"],
-    },
-    records: [
+  });
+  assert.deepEqual(
+    envelope.jobs.map((entry: any) => ({
+      id: entry.job.id,
+      relations: entry.relations,
+      status: entry.job.status,
+      profile: entry.job.profile,
+      parentJobId: entry.lineage.parentJobId,
+      childJobIds: entry.lineage.childJobIds,
+      finalText: entry.outcome.finalText,
+    })),
+    [
       {
-        jobId: "job-root",
+        id: "job-root",
         relations: ["root", "target"],
         status: "completed",
         profile: "codex",
         parentJobId: null,
         childJobIds: ["job-child"],
-        delegationDepth: 0,
-        prompt: "root prompt",
         finalText: "root final",
       },
       {
-        jobId: "job-child",
+        id: "job-child",
         relations: ["child"],
         status: "completed",
         profile: "claude",
         parentJobId: "job-root",
         childJobIds: [],
-        delegationDepth: 1,
-        prompt: "child prompt",
         finalText: "child final",
       },
     ],
-  });
+  );
 });
 
 test("chain exits 2 for a missing job", async (t) => {
@@ -187,7 +194,7 @@ test("chain exits 2 for a malformed requested job record", async (t) => {
 
 function testDeps(records: JobRecord[]) {
   return {
-    resolveWorkspaceRoot: async () => "/workspace",
+    resolveWorkspaceRoot: async () => process.cwd(),
     readJobRecord: async (_workspaceRoot: string, jobId: string) => {
       const record = records.find((candidate) => candidate.jobId === jobId);
       if (!record) {

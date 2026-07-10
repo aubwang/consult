@@ -1,302 +1,212 @@
 # Consult
 
-Call in support from another coding agent without leaving the tool you are
-already using.
-
-## In Action
+Delegate a self-contained coding task to another locally configured agent from
+the terminal, Codex, or opencode.
 
 ```text
-$ consult delegate --agent claude --read-only -- "review this diff for bugs"
-Host: codex
-Profile: claude
-Job: job-8tY...
+$ consult review --agent claude --base main
+consult review job-a1b2 completed
 
-Claude:
-- scripts/lib/host-identity.mts: the fallback path loses the Host session id
-  when only CODEX_THREAD_ID is present.
-- Add a resolver test before changing the CLI surface.
+$ consult delegate --agent codex --write --isolated --background -- \
+    "add regression coverage for cancellation"
+consult delegate job-c3d4 queued
+consult status job-c3d4
 
-$ consult delegate --agent opencode --write --background -- "add that test"
-queued job-R4x...
+$ consult status job-c3d4 --wait
+job-c3d4 completed
 
-$ consult status job-R4x --wait
-job-R4x completed
-
-$ consult logs job-R4x --follow
-Added the regression test and verified the focused suite.
-
-$ consult result job-R4x
-Added the regression test and verified the focused suite.
+$ consult result job-c3d4
+Added the regression tests and verified the focused suite.
 ```
 
-The same `consult` command works from a terminal, Codex, opencode, and Claude
-Code. It autodetects the calling **Host** and delegates to the **Profile** you
-choose with `--agent`.
-
-## Why Consult?
-
-Coding agents have different strengths. Consult lets your current agent ask
-another agent to review a change, debug a failure, inspect a design, or make a
-small patch.
-
-Each delegated prompt becomes a **Job**. Consult runs the Profile's agent
-in-process for foreground Jobs (a short-lived job-scoped **Broker** carries
-`--background` Jobs and `review`), streams the Profile's work, stores the
-final output, and gives you commands to check status, cancel, resume, and read
-results.
+Consult is aimed at agentic delegation: one **Host** sends one cold,
+self-contained prompt turn to a **Profile**. Every turn is a durable **Job**
+with status, logs, lineage, result text, and optional artifacts.
 
 ## Install
 
-This repo is currently a local package, not a published package:
+Node.js 24 or newer is required. Until the npm package is published, install
+the current GitHub version in one command:
 
 ```sh
-git clone https://github.com/aubwang/consult.git
-cd consult
-bun install
-bun link
+npm install --global github:aubwang/consult
 ```
 
-`bun link` registers this checkout and installs the `consult` binary into
-Bun's global bin directory (`~/.bun/bin`). Node.js >= 24 is still required at
-runtime; `npm install` and `npm link` also work if you prefer npm.
-
-## First Setup
-
-Check which Profiles are installed — `consult setup` with no flags only prints
-a status table:
+Then verify the CLI and configure a Profile:
 
 ```sh
+consult help
 consult setup
-```
-
-Install and verify a Profile with `--install <id>` (ids come from the status
-table: `codex`, `claude`, `opencode`, `gemini`, `copilot`):
-
-```sh
 consult setup --install claude
-```
-
-Then choose a default Profile if you want one:
-
-```sh
-consult setup --set-default claude
-# or equivalently:
-consult agents
 consult agents --set claude
 ```
 
-### Claude Code plugin
+Consult uses Bun for dependency management when developing the repository, but
+the installed CLI runs on Node and does not require Bun. See
+[docs/INSTALL.md](docs/INSTALL.md) for linking a checkout and the future npm
+install command.
 
-This checkout doubles as a Claude Code plugin: the tracked root symlinks
-(`.claude-plugin`, `commands`, `agents`, `hooks`) point into
-`hosts/claude-code/`, so the repo root is a valid plugin directory. The plugin
-is not published to any marketplace; load it from the local checkout, for
-example:
+## Profiles
 
-```sh
-claude --plugin-dir /path/to/consult
-```
+Consult ships three Profile definitions:
 
-Once loaded, use the plugin commands instead:
+| Profile | Agent executable | Authentication |
+| --- | --- | --- |
+| `claude` | `claude-agent-acp` | Uses Claude Code credentials or `ANTHROPIC_API_KEY`. |
+| `codex` | `codex-acp` | Uses the underlying Codex CLI authentication. |
+| `opencode` | `opencode acp` | Uses configured opencode provider credentials. |
 
-```text
-/consult:setup
-/consult:agents
-```
+The Claude Profile remains supported; Consult does not ship a Claude Code
+plugin or slash-command Host Adapter. Gemini and GitHub Copilot Profiles are
+not part of the supported product.
 
-## Everyday Use
+Run `consult setup` to see which Profile executables are available, or
+`consult setup --install <profile>` to install and verify one. Custom Profiles
+can still be configured through Consult's generic Profile configuration.
 
-Ask another agent to inspect without editing:
+## Delegate
 
-```sh
-consult delegate --agent claude --read-only -- "trace where cancellation is handled"
-```
-
-Let another agent edit inside the workspace:
+Read-only is the default:
 
 ```sh
-consult delegate --agent codex --write -- "add a regression test for broker cleanup"
+consult delegate --agent claude --read-only -- \
+  "inspect scripts/lib/process.mts for cancellation races; report findings only"
 ```
 
-Let Codex use its configured/default model by omitting `--model`, or select
-an advertised GPT-5.6 tier dynamically:
+The delegate does not receive your current conversation. Include the relevant
+paths, concrete question, constraints, and acceptance criteria in the prompt.
+
+Attach a deterministic snapshot of the current diff when the task depends on
+uncommitted work:
 
 ```sh
-consult delegate --agent codex --read-only --model sol --effort max -- "review this design"
-consult delegate --agent codex --read-only --model terra -- "trace this bug"
-consult delegate --agent codex --read-only --model luna -- "summarize these changes"
+consult delegate --agent claude --read-only --include-diff -- \
+  "review the attached change for correctness"
+
+consult delegate --agent opencode --read-only --include-diff --base main -- \
+  "identify compatibility risks relative to main"
 ```
 
-Exact model ids such as `gpt-5.6-sol` are also passed through. Tier aliases
-resolve only against models advertised by the configured Profile, so preview
-models remain subject to the OpenAI account's access.
+`--include-diff` captures the diff before delegation, bounds its size, marks it
+as untrusted data, and stores the resolved base metadata on the Job. The
+Profile reviews that snapshot rather than a moving working tree.
 
-Claude likewise keeps its configured/default model when `--model` is omitted.
-Its durable aliases select the latest model in a tier:
+Use `--model` and `--effort` for optional Profile-specific tuning. Model family
+aliases currently include `sol`, `terra`, and `luna` for Codex, and `opus`,
+`sonnet`, `haiku`, and `fable` for Claude. Omitting `--model` preserves the
+Profile's configured default.
+
+## Review
+
+`review` works with every configured Profile:
 
 ```sh
-consult delegate --agent claude --read-only --model opus -- "review this architecture"
+consult review --agent claude
+consult review --agent opencode --base main
+consult review --agent codex --base HEAD~1
 ```
 
-For OpenCode, omit `--model` to preserve its configured/current selection, or
-use an exact `provider/model` id:
+Consult resolves and pins the review diff itself. Codex can use its verified
+native review capability; other Profiles receive the same findings-first,
+read-only review Job through the portable delegation path.
+
+## Write Jobs and Artifacts
+
+In-place writes remain available for compatibility:
 
 ```sh
-consult delegate --agent opencode --read-only --model anthropic/claude-sonnet-5 -- "review this diff"
+consult delegate --agent codex --write -- "add a focused test"
 ```
 
-Run work in the background:
+For agentic delegation, prefer an isolated write Job:
 
 ```sh
-consult delegate --agent opencode --write --background -- "try a minimal fix"
+consult delegate --agent codex --write --isolated -- \
+  "implement the focused fix and run the relevant checks"
+```
+
+An isolated Job seeds a detached Git worktree from the current staged,
+unstaged, and safe nonignored untracked state. Gitignored files are neither
+seeded nor captured in the final patch, including ignored output created by the
+Profile. The Profile edits that worktree, not the
+checkout you are using. When the Job ends, Consult records an agent-only binary
+patch plus a touched-files manifest, then removes the temporary worktree. The
+original Workspace remains unchanged. The repository must have at least one
+commit so the detached worktree has a stable base.
+
+Isolated worktrees are a transactional boundary, not a complete process
+sandbox. A Profile that bypasses ACP permission requests can still use its own
+process privileges. On Linux, bubblewrap provides the hard filesystem boundary:
+
+```sh
+CONSULT_AGENT_SANDBOX=bwrap \
+  consult delegate --agent codex --write --isolated --allow-exec -- \
+  "make the change and run the focused test"
+```
+
+Raw execute permission is denied unless all three conditions hold:
+`--write`, `--isolated`, and explicit `--allow-exec` under an active `bwrap`
+sandbox. Network fetch permission requests remain denied. The agent process
+still needs network access for its model API, so bubblewrap's Consult policy is
+filesystem-focused rather than a network-isolation guarantee.
+
+## Background Jobs, Results, and Resume
+
+```sh
+consult delegate --agent opencode --read-only --background -- "trace the bug"
 consult status <job-id> --wait
 consult logs <job-id> --follow
 consult result <job-id>
-```
-
-Inspect, diagnose, cancel, or clean up:
-
-```sh
-consult doctor
 consult chain <job-id>
 consult cancel <job-id>
-consult brokers
-consult brokers --cleanup
 ```
 
-Claude Code plugin equivalents:
+Use `--resume` to continue the latest finalized Job for the selected Profile
+in the current Host Session, `--resume-job <id>` for an explicit prior Job, or
+`--fresh` to force a new ACP Session. Resume is useful for a follow-up turn;
+Consult intentionally does not attempt to transfer native conversation state
+between unrelated agent CLIs.
 
-```text
-/consult:delegate --agent codex --write "add a focused test"
-/consult:status <job-id>
-/consult:result <job-id>
-/consult:cancel <job-id>
+All machine-readable Job outputs use a versioned envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "job": {},
+  "outcome": {},
+  "artifacts": {},
+  "lineage": {}
+}
 ```
 
-## The Mental Model
-
-| Term | Meaning |
-| --- | --- |
-| Host | Where the request starts: terminal, Codex, opencode, or Claude Code. |
-| Profile | The agent Consult calls: `claude`, `codex`, `opencode`, `gemini`, or `copilot`. |
-| Job | One delegated prompt turn with status, logs, and stored result text. |
-| Broker | The short-lived Consult process that connects one background or review Job to one Profile; foreground Jobs run in-process without one. |
-
-Example:
-
-```sh
-consult delegate --agent claude --read-only -- "review this diff"
-```
-
-If you run that from Codex, Codex is the Host and Claude is the Profile. If you
-run the same command from opencode, opencode is the Host and Claude is still the
-Profile.
+Use `--json` with `delegate`, `review`, `status`, `result`, `logs`, `chain`,
+`doctor`, `agents`, `setup`, and `brokers` when another agent or script will
+parse the response. `outcome.finalText` contains agent message text rather
+than rendered tool-call markers.
 
 ## Host Detection
 
-Explicit flags and env vars win:
+Consult resolves Host Identity in this order:
 
-```sh
-consult delegate --host codex --host-session smoke-test --agent claude -- "hello"
-```
+1. `--host` and `--host-session` flags.
+2. `CONSULT_HOST` and `CONSULT_HOST_SESSION_ID`.
+3. `CODEX_THREAD_ID` for Codex, or `OPENCODE_SESSION_ID` /
+   `OPENCODE_RUN_ID` for opencode.
+4. `terminal/default`.
 
-Otherwise Consult detects common Host session variables:
+Host Identity scopes defaults, resume lookup, lineage, and lifecycle metadata.
+The same `consult` CLI is the product interface from every Host.
 
-| Signal | Host |
-| --- | --- |
-| `OPENCODE_SESSION_ID` or `OPENCODE_RUN_ID` | `opencode` |
-| `CODEX_THREAD_ID` | `codex` |
-| `CLAUDE_SESSION_ID` | `claude-code` |
-| none | `terminal/default` |
+## State and Troubleshooting
 
-## Safety
-
-Consult defaults delegated work to read-only unless you explicitly ask for
-write access.
-
-| Mode | Behavior |
-| --- | --- |
-| `--read-only` | The Profile may inspect files but must not edit. |
-| `--write` | The Profile may edit files inside the current workspace. |
-
-Consult confines ACP file handlers to the workspace and rejects symlink
-escapes. Raw execute and network fetch permission requests are denied in both
-modes as defense-in-depth — not a guarantee against exfiltration: some
-Profiles run tools without asking permission first, and the delegated agent
-process itself has network access to reach its own LLM API. Treat `--write`
-as trusting the delegated Profile.
-
-Some Profiles report edits after they happen. Consult still marks read-only or
-out-of-workspace edits as failed, but that is defense-in-depth, not a hard
-filesystem boundary. For a stronger filesystem boundary, use bubblewrap:
-
-```sh
-CONSULT_AGENT_SANDBOX=bwrap consult delegate --agent claude --read-only -- "inspect this module"
-```
-
-The bubblewrap sandbox confines the filesystem only. It deliberately does not
-isolate the network, because the delegated ACP agent needs network access to
-reach its own LLM API.
-
-## Supported Profiles
-
-| Profile | Notes |
-| --- | --- |
-| `claude` | Supported. Direct, Consult, and bubblewrap probes pass. |
-| `codex` | Supported. Direct, Consult, and bubblewrap probes pass. |
-| `opencode` | Supported with provider auth configured. |
-| `gemini` | Unit-verified via Gemini CLI's native ACP mode; live conformance pending local Gemini auth. |
-| `copilot` | Supported unsandboxed; bubblewrap verification is deferred. |
-
-See [docs/conformance/README.md](docs/conformance/README.md) for the live
-conformance matrix and Profile-specific notes.
-
-## Files and State
-
-Global Profile config:
+Global Profile configuration lives at `~/.consult/profiles.json`. Per-Workspace
+Jobs, logs, Brokers, and isolated-write artifacts live under:
 
 ```text
-~/.consult/profiles.json
+~/.consult/workspaces/<sha256-of-workspace-root>/
 ```
 
-Per-workspace Job state:
-
-```text
-~/.consult/workspaces/<sha256-of-repo-root>/
-```
-
-That workspace directory stores Job records, logs, Broker endpoint files,
-Broker pidfiles, and optional workspace default Profile overrides.
-
-## Skills
-
-Tracked skills live in [skills/](skills/):
-
-```text
-$consult
-$consult:ask-claude
-$consult:ask-codex
-$consult:ask-opencode
-$consult:ask-gemini
-$consult:ask-copilot
-```
-
-The tracked [.opencode/skills/consult](.opencode/skills/consult) symlink makes
-the generic Consult skill visible to opencode from this checkout.
-
-## Troubleshooting
-
-If `consult delegate` says no Profile is configured, run:
-
-```sh
-consult setup
-```
-
-If a Profile cannot authenticate, run that Profile's native login first, such
-as `codex login`, `claude /login`, `opencode auth login`, `gemini`, or
-`copilot login`. Then rerun `consult setup` so Consult verifies the Profile.
-
-If a background Job appears stuck:
+Useful diagnostics:
 
 ```sh
 consult doctor
@@ -306,42 +216,36 @@ consult brokers
 consult brokers --cleanup
 ```
 
-## Deeper Docs
+If authentication fails, sign in with the Profile's native CLI first, then
+rerun `consult setup` so Consult can verify it.
 
-- [CONTEXT.md](CONTEXT.md) defines the product vocabulary.
-- [docs/PLAN.md](docs/PLAN.md) explains the architecture.
-- [docs/ROADMAP.md](docs/ROADMAP.md) tracks pre-release direction.
-- [docs/adr/](docs/adr/) records accepted decisions.
-- [docs/host-adapters/codex.md](docs/host-adapters/codex.md) documents Codex Host detection.
-- [docs/host-adapters/opencode.md](docs/host-adapters/opencode.md) documents opencode Host detection.
+## Agent Skills
+
+The repository ships the generic `$consult` skill and convenience skills for
+asking Claude, Codex, and opencode under [skills/](skills/). The tracked
+[.opencode/skills/consult](.opencode/skills/consult) symlink exposes the generic
+skill to opencode from a checkout. Other Hosts can copy or symlink the desired
+skill directory into their own skill location.
 
 ## Development
 
 ```sh
+bun install --frozen-lockfile
 bun run typecheck
 bun run test
+bun run pack:check
 ```
 
-Use `bun run test` (the package script, which runs `node --test`), not
-`bun test` — `bun test` invokes Bun's own test runner and does not run this
-suite.
+Use `bun run test`, not `bun test`: the suite intentionally runs with Node's
+test runner. Source is erasable TypeScript run directly by Node from a checkout.
+Published packages contain compiled `.mjs` because Node does not type-strip
+TypeScript under `node_modules`. The package smoke also starts an installed
+background Job so source-only worker or Broker paths cannot pass on `help`
+alone.
 
-The source is TypeScript (`.mts`) executed directly by Node's native type
-stripping — there is no build step. `bun run typecheck` runs `tsc --noEmit`.
-
-Useful focused checks:
-
-```sh
-node --test scripts/consult-broker.test.mts
-node --test scripts/lib/process-sandbox.test.mts scripts/lib/acp-client.test.mts
-node --test scripts/lib/companion/delegate-core.test.mts
-```
-
-Run the safe companion-disconnect drill:
-
-```sh
-bun run drill:companion-disconnect
-```
+Architecture vocabulary is in [CONTEXT.md](CONTEXT.md), current implementation
+notes are in [docs/PLAN.md](docs/PLAN.md), and accepted decisions are in
+[docs/adr/](docs/adr/).
 
 ## License
 

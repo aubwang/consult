@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   brokerSessionFilePresent,
+  defaultBrokerScriptPath,
   ensureBrokerSession,
   teardownBrokerSession,
 } from "./broker-lifecycle.mts";
@@ -27,6 +28,21 @@ let socketListenBlocked = false;
 
 before(async () => {
   socketListenBlocked = await probeSocketListenBlocked();
+});
+
+test("default Broker entrypoint follows the executing module extension", () => {
+  assert.equal(
+    path.basename(
+      defaultBrokerScriptPath("file:///tmp/consult/scripts/lib/broker-lifecycle.mts"),
+    ),
+    "consult-broker.mts",
+  );
+  assert.equal(
+    path.basename(
+      defaultBrokerScriptPath("file:///tmp/consult/dist/scripts/lib/broker-lifecycle.mjs"),
+    ),
+    "consult-broker.mjs",
+  );
 });
 
 test("ensureBrokerSession spawns a fresh daemon and teardown shuts it down", async (t) => {

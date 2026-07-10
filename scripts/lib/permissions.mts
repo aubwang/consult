@@ -3,13 +3,13 @@ import path from "node:path";
 import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 
 import { isInsideWorkspace } from "./path-safety.mts";
+import type { AgentSandboxMode } from "./process-sandbox.mts";
 
 const PATH_BEARING_KINDS = new Set(["read", "search", "edit", "delete", "move"]);
 const READ_ONLY_DENIED_KINDS = new Set([
   "edit",
   "delete",
   "move",
-  "execute",
   "switch_mode",
   "other",
 ]);
@@ -26,7 +26,6 @@ const TOOL_KINDS = new Set([
   "other",
 ]);
 
-const DENIED_ALL_MODES = new Set(["execute"]);
 const PATH_FIELD_NAMES = new Set([
   "path",
   "paths",
@@ -63,10 +62,18 @@ export interface DecidePermissionOptions {
   request: Pick<RequestPermissionRequest, "toolCall">;
   mode: PermissionMode;
   workspaceRoot: string;
+  allowExecute?: boolean;
+  sandbox?: AgentSandboxMode;
 }
 
 export async function decidePermission(
-  { request, mode, workspaceRoot }: DecidePermissionOptions,
+  {
+    request,
+    mode,
+    workspaceRoot,
+    allowExecute = false,
+    sandbox = "off",
+  }: DecidePermissionOptions,
 ): Promise<PermissionDecision> {
   if (mode !== "write" && mode !== "read-only") {
     throw new Error(`unknown permission mode: ${mode}`);
@@ -93,6 +100,16 @@ export async function decidePermission(
     if (!(await isConfined(cwd, workspaceRoot))) {
       return { allowed: false, reason: `cwd outside workspace: ${cwd}` };
     }
+    if (mode !== "write") {
+      return { allowed: false, reason: "execute denied in read-only mode" };
+    }
+    if (allowExecute !== true) {
+      return { allowed: false, reason: "execute denied in write mode (explicit opt-in required)" };
+    }
+    if (sandbox !== "bwrap") {
+      return { allowed: false, reason: "execute denied in write mode (bwrap sandbox required)" };
+    }
+    return { allowed: true };
   }
 
   if (kind === "fetch") {
@@ -100,10 +117,6 @@ export async function decidePermission(
       allowed: false,
       reason: `fetch denied in ${mode} mode (exfil vector)`,
     };
-  }
-
-  if (DENIED_ALL_MODES.has(kind)) {
-    return { allowed: false, reason: `${kind} denied in ${mode} mode` };
   }
 
   if (mode === "write") {

@@ -105,6 +105,100 @@ test("broker job runtime caps accumulated final text", async (t: TestContext) =>
   assert.equal(job.finalText, `abcdefg${TEXT_TRUNCATED_MARKER}`);
 });
 
+test("broker job runtime keeps tool progress out of accumulated final text", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: unknown[] = [];
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => {
+      throw new Error("agent should not be needed");
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, _method, params) {
+      notifications.push(params);
+    },
+  });
+  const job = runtime.createJob(
+    {
+      jobId: "job-progress",
+      kind: "delegate",
+      profile: "codex",
+      mode: "write",
+      prompt: "fix",
+    },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-progress", job, "write");
+
+  await runtime.handleSessionUpdate({
+    sessionId: "session-progress",
+    update: { sessionUpdate: "tool_call", kind: "shell", title: "run tests" },
+  });
+  await runtime.handleSessionUpdate({
+    sessionId: "session-progress",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "done" },
+    },
+  });
+
+  assert.equal(job.finalText, "done");
+  assert.equal(notifications.length, 2);
+});
+
+test("broker job runtime carries only an explicit execute opt-in to the tracked session", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => {
+      throw new Error("agent should not be needed");
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+  });
+  const enabledJob = runtime.createJob(
+    {
+      jobId: "job-execute-enabled",
+      profile: "codex",
+      mode: "write",
+      prompt: "run tests",
+      allowExecute: true,
+    },
+    fakeSocket("enabled-originator"),
+  );
+  const defaultJob = runtime.createJob(
+    {
+      jobId: "job-execute-default",
+      profile: "codex",
+      mode: "write",
+      prompt: "run tests",
+    },
+    fakeSocket("default-originator"),
+  );
+
+  runtime.trackSession("session-enabled", enabledJob, "write");
+  runtime.trackSession("session-default", defaultJob, "write");
+
+  assert.equal(enabledJob.allowExecute, true);
+  assert.equal(defaultJob.allowExecute, false);
+  assert.equal(runtime.getSessionAllowExecute("session-enabled"), true);
+  assert.equal(runtime.getSessionAllowExecute("session-default"), false);
+  assert.equal(runtime.getSessionAllowExecute("session-unknown"), false);
+});
+
 test("cancelJob ensures the agent with the running job's own mode", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

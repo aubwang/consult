@@ -5,6 +5,10 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { jobsDir } from "../broker-endpoint.mts";
+import type {
+  FinalizedIsolatedWorkspace,
+  PreparedIsolatedWorkspace,
+} from "../isolated-workspace.mts";
 import { runTaskWorker } from "./task-worker.mts";
 
 test("task-worker runs a queued delegate job and finalizes its record", async (t) => {
@@ -49,6 +53,66 @@ test("task-worker runs a queued delegate job and finalizes its record", async (t
   assert.equal(record.status, "completed");
   assert.equal(record.sessionId, "session-worker");
   assert.equal(record.finalText, "done");
+});
+
+test("task-worker runs isolated background jobs inline and persists artifacts", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const prepared = isolatedFixture(workspaceRoot, "job-worker-isolated");
+  await writeJob(workspaceRoot, {
+    jobId: "job-worker-isolated",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "write",
+    host: "terminal",
+    profile: "codex",
+    prompt: "background isolated prompt",
+    hostSessionId: "terminal-1",
+    isolated: true,
+    allowExecute: true,
+    isolatedWorkspace: prepared,
+  });
+  const client = new FakeBrokerClient();
+  let ensureInput: Record<string, unknown> | undefined;
+  let cleanupCalls = 0;
+
+  const resultPromise = runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-worker-isolated" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async (input: Record<string, unknown>) => {
+        ensureInput = input;
+        return { client };
+      },
+      finalizeIsolatedWorkspace: async () => finalizedIsolation(prepared),
+      cleanupIsolatedWorkspace: async () => {
+        cleanupCalls += 1;
+        return {};
+      },
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-worker-isolated",
+    stopReason: "end_turn",
+    sessionId: "session-worker-isolated",
+  });
+  const result = await resultPromise;
+  const record = await readJob(workspaceRoot, "job-worker-isolated");
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(ensureInput?.workspaceRoot, workspaceRoot);
+  assert.equal(ensureInput?.executionRoot, prepared.executionRoot);
+  assert.equal(request.params.allowExecute, true);
+  assert.equal(record.runner, "inline");
+  assert.equal(record.runnerPid, process.pid);
+  assert.equal(typeof record.runnerStartTime, "string");
+  assert.equal(record.patchPath, `${prepared.artifactsDir}/changes.patch`);
+  assert.deepEqual(record.touchedFiles, ["src/changed.mts"]);
+  assert.equal(cleanupCalls, 1);
 });
 
 test("task-worker exits 2 with a clear message for missing or invalid job records", async (t) => {
@@ -192,10 +256,47 @@ function withDataDir(t: { after: (fn: () => void) => void }, dataDir: string) {
   });
 }
 
-async function writeJob(workspaceRoot: string, record: Record<string, string>) {
+async function writeJob(workspaceRoot: string, record: Record<string, unknown>) {
   const dir = jobsDir(workspaceRoot);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, `${record.jobId}.json`), JSON.stringify(record));
+}
+
+function isolatedFixture(workspaceRoot: string, jobId: string): PreparedIsolatedWorkspace {
+  const transactionRoot = path.join(path.dirname(workspaceRoot), "data", "isolated-jobs", jobId);
+  const artifactsDir = path.join(transactionRoot, "artifacts");
+  return {
+    schemaVersion: 1,
+    jobId,
+    workspaceRoot,
+    executionRoot: path.join(transactionRoot, "worktree"),
+    transactionRoot,
+    artifactsDir,
+    cleanupMetadataPath: path.join(artifactsDir, "cleanup.json"),
+    headCommit: "a".repeat(40),
+    baselineTree: "b".repeat(40),
+    preparedAt: "2026-07-09T10:00:00.000Z",
+    maxBufferBytes: 1024,
+    seeded: { stagedPatchBytes: 0, unstagedPatchBytes: 0, untrackedFiles: [] },
+  };
+}
+
+function finalizedIsolation(
+  prepared: PreparedIsolatedWorkspace,
+): FinalizedIsolatedWorkspace {
+  return {
+    schemaVersion: 1,
+    jobId: prepared.jobId,
+    workspaceRoot: prepared.workspaceRoot,
+    executionRoot: prepared.executionRoot,
+    baselineTree: prepared.baselineTree,
+    patchPath: `${prepared.artifactsDir}/changes.patch`,
+    patchBytes: 123,
+    touchedFilesPath: `${prepared.artifactsDir}/touched-files.json`,
+    touchedFiles: ["src/changed.mts"],
+    cleanupMetadataPath: prepared.cleanupMetadataPath,
+    finalizedAt: "2026-07-09T10:01:00.000Z",
+  };
 }
 
 async function writeMalformedJob(workspaceRoot: string, jobId: string) {

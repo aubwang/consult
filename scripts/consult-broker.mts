@@ -69,6 +69,7 @@ export interface ConsultRunParams {
   prompt: string;
   profile: string;
   mode?: string;
+  allowExecute?: boolean;
   resume?: string | null;
   model?: string | null;
   effort?: string | null;

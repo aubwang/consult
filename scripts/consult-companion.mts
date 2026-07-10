@@ -6,9 +6,9 @@ import type { CliResult } from "./lib/companion/job-record-errors.mts";
 import * as agents from "./lib/companion/agents.mts";
 import * as brokers from "./lib/companion/brokers.mts";
 import * as cancel from "./lib/companion/cancel.mts";
+import * as chain from "./lib/companion/chain.mts";
 import * as delegate from "./lib/companion/delegate.mts";
 import * as doctor from "./lib/companion/doctor.mts";
-import * as chain from "./lib/companion/chain.mts";
 import * as logs from "./lib/companion/logs.mts";
 import * as result from "./lib/companion/result.mts";
 import * as review from "./lib/companion/review.mts";
@@ -41,14 +41,16 @@ const summaryUsage = `Usage:
   consult help
   consult <command> [options]
 
-Consult lets the current Host delegate work to another configured Profile.
+Consult lets the current Host delegate one self-contained prompt turn to a
+configured ACP Profile.
 
 Common workflow:
   consult setup
   consult agents
-  consult delegate --agent claude --read-only -- "review this diff for bugs"
-  consult delegate --agent codex --write --background -- "add a regression test"
-  consult delegate --agent gemini --read-only -- "look for missed edge cases"
+  consult delegate --agent claude --read-only -- "review this design"
+  consult review --agent claude --base main
+  consult delegate --agent codex --read-only --include-diff -- "find edge cases"
+  consult delegate --agent opencode --write --isolated --background -- "add the test"
   consult status <job-id> --wait
   consult result <job-id>
   consult logs <job-id> --follow
@@ -58,157 +60,130 @@ Commands:
              Options: --install <profile>, --set-default <profile>, --json
   agents     List configured Profiles or update defaults.
              Options: --set <profile>, --host <host>, --json
-  delegate   Send a prompt turn to a Profile.
-             Options: --agent <profile>, --read-only, --write, --background,
-                      --resume, --resume-job <job-id>, --fresh, --model <name>,
-                      --effort <level>, --json
-             --model accepts an exact model id or a family/tier alias (for
-             Codex: sol, terra, luna; for Claude: sonnet, opus, haiku, fable).
-             An alias resolves to the newest matching model the Profile
-             advertises. Omit --model to keep the Profile's own default.
-  doctor     Diagnose whether Consult can delegate from this workspace.
+  delegate   Send one prompt turn to a Profile.
+             Options: --agent <profile>, --read-only, --write, --isolated,
+                      --allow-exec, --background, --include-diff,
+                      --base <ref>, --resume, --resume-job <job-id>, --fresh,
+                      --parent-job <job-id>, --model <name>, --effort <level>,
+                      --json
+             --model accepts an exact id or an advertised family alias:
+             Codex sol/terra/luna; Claude sonnet/opus/haiku/fable.
+  review     Run a pinned, read-only review through any configured Profile.
+             Options: --agent <profile>, --base <ref>, --json
+  doctor     Diagnose Profile, Host Identity, Job, Broker, and sandbox state.
              Options: --agent <profile>, --profile <profile>, --json
-  review     Run the built-in review flow through a supported Profile.
-             Options: --agent <profile>, --base <ref>
-  status     Show Jobs in this workspace, or inspect one Job.
+  status     Show all Workspace Jobs or inspect one Job.
              Options: --wait, --follow, --json
-  result     Print stored output for a finished Job.
+  result     Print stored final agent text for a finished Job.
              Options: --json
-  logs       Print or follow rendered logs for one Job.
-             Options: --follow, --json
+  logs       Print or follow rendered Job updates.
+             Options: --follow, --json (not together)
   chain      Show a Delegation Chain rollup for one Job.
              Options: --json
-  cancel     Cancel a running Job and active descendants.
+  cancel     Cancel a queued or running Job and active descendants.
   brokers    Inspect live Broker state.
              Options: --cleanup, --json
   help       Show this help.
 
 Terms:
-  Host       Where you run Consult, such as a terminal, Codex, opencode, or Claude Code.
-  Profile    The agent Consult calls, such as claude, codex, opencode, gemini, or copilot.
-  Job        One delegated prompt turn with status and stored output.
-  Broker     The short-lived process that connects one Job to one Profile.
+  Host       Where Consult is invoked: terminal, Codex, opencode, or explicit custom Host.
+  Profile    The delegated ACP agent: built-ins are claude, codex, and opencode.
+  Job        One prompt turn with durable request, outcome, artifacts, and lineage.
+  Broker     A short-lived process connecting one background Job to one Profile.
 
-Run delegated work in read-only mode unless you explicitly need edits. Use --write
-when the Profile should be allowed to change files in the current workspace.
+Read-only is the default. Prefer --write --isolated when delegated work should
+edit: Consult returns the Profile-only patch without changing this checkout.
 `;
 
 const operationalUsage = `Operational contract
 
-Consult delegates one prompt turn to another locally configured agent CLI (a
-Profile) and stores the output as a Job in the current Workspace.
+## Cold delegation
 
-## When to use
+The Profile does not receive the current Host conversation. Everything after
+-- is the prompt (or use --prompt <text>). Include relevant paths, the
+concrete question, constraints, and acceptance criteria.
 
-- Get an independent review or second opinion from a different agent or model.
-- Run a self-contained side task (review a diff, hunt edge cases, draft tests)
-  without spending your own context on it.
-- Continue a prior delegated session with follow-up questions (\`--resume\`).
+Optional --model and --effort values pass through to the selected Profile.
+Omit --model to preserve that Profile's configured default. Family aliases
+resolve only against models advertised at Session start. OpenCode exact model
+ids use provider/model.
 
-When not to use: work that needs your conversation context (the delegate never
-sees it), or interactive back-and-forth (a Job is exactly one prompt turn).
+## Modes and isolation
 
-## Core workflow
+- Default or --read-only: inspect only; edits and execute are denied.
+- --write: permit workspace-confined edits in the current checkout.
+- --write --isolated: seed a detached worktree from current staged,
+  unstaged, and safe nonignored untracked state. Gitignored files are not
+  seeded or captured. The original checkout stays unchanged;
+  Job artifacts contain the Profile-only binary patch and touched-files list.
+- --allow-exec: valid only with --write --isolated and an active
+  CONSULT_AGENT_SANDBOX=bwrap. Execute requests remain cwd-confined. The flag
+  alone never weakens an unsandboxed Job. Network fetch requests stay denied.
 
-    consult agents --json                  # discover configured Profiles
-    consult delegate --agent <profile> --read-only -- "<self-contained prompt>"
-    consult status <job-id> --wait         # block until the Job finalizes
-    consult result <job-id>                # print the stored final text
-    consult logs <job-id> --follow         # stream rendered Job updates
+--write and --read-only are mutually exclusive. --isolated requires --write;
+--allow-exec requires --write --isolated plus bubblewrap.
 
-## Writing the prompt
+## Pinned diffs and review
 
-- Everything after \`--\` is the prompt (or use \`--prompt <text>\`).
-- The delegate starts cold with no access to your conversation. Include file
-  paths, the concrete question, and acceptance criteria in the prompt itself.
-- Optional pass-through tuning: \`--model <name>\`, \`--effort <level>\`.
-  Omit \`--model\` to preserve the Profile's configured/current default.
-  Codex accepts exact ids and advertised tier aliases such as \`sol\`,
-  \`terra\`, and \`luna\`; use \`--model sol --effort max\` for GPT-5.6 Sol
-  at maximum advertised reasoning effort. Claude accepts exact ids and the
-  latest-tier aliases \`sonnet\`, \`opus\`, \`haiku\`, and \`fable\`.
-  OpenCode exact ids use \`provider/model\`; omitting \`--model\` preserves
-  OpenCode's configured or current selection. Aliases resolve only against
-  models the Profile advertises at session start.
+delegate --include-diff [--base <ref>] captures a bounded deterministic diff
+before Job creation and appends it inside untrusted-data delimiters. --base
+requires --include-diff for delegate.
 
-## Modes
+review [--base <ref>] always creates a read-only findings-first Job against
+a pinned diff. Codex may use its verified native review command; every other
+Profile uses the portable delegate path.
 
-- Default is read-only: the delegate cannot edit files. Pass \`--write\` only
-  when the task explicitly requires edits to this Workspace.
-- \`--write\` and \`--read-only\` are mutually exclusive.
+## Foreground and background
 
-## Foreground vs background
+- Foreground delegate (default) streams progress and final agent text, then
+  prints consult <kind> <job-id> <status>.
+- --background writes a queued Job, starts a detached worker, and returns
+  immediately. Poll with consult status <job-id> --wait, then use
+  consult result <job-id>.
+- Each normal background Job has a Job-scoped Broker. An isolated background
+  worker may host the same runtime inline so Workspace identity and execution
+  cwd remain separate.
 
-- Foreground (default): streams delegate activity, then prints a summary line
-  \`consult delegate <job-id> <status>\`. With \`--json\` the final stdout line
-  is one JSON object:
-  {"status","jobId","sessionId","stopReason","finalTextLength","logPath"}.
-- Background: \`--background\` returns immediately after printing
-  \`consult delegate <job-id> queued\` plus a \`consult status <job-id>\` hint
-  (with \`--json\`: one JSON object {"status","jobId"}). Poll
-  \`consult status <job-id> --wait\` (blocks until the Job finalizes,
-  30-minute cap), then read \`consult result <job-id>\`.
-- Each running Job has its own Broker; background Jobs run independently.
-- \`--background\` and \`--wait\` are mutually exclusive.
+## Sessions and lineage
 
-## Sessions and resume
+- --resume reopens the most recent completed or failed delegate Session for
+  this Host Session, Workspace, and Profile; cancelled Jobs are skipped.
+- --resume-job <job-id> selects an explicit compatible prior Job.
+- --fresh forces a new Session. The resume selectors are mutually exclusive.
+- Resume stays within one Profile; Consult does not convert native sessions
+  between agent CLIs.
+- Nested delegation passes --parent-job <job-id>, or inherits
+  CONSULT_PARENT_JOB. A child cannot exceed its parent's permission mode.
 
-- \`--resume\` continues the most recent completed or failed Job for that
-  Profile in this Host session (cancelled Jobs are skipped); exits 2 with
-  guidance if none exists.
-- \`--resume-job <job-id>\` continues a specific Job's session.
-- \`--fresh\` forces a new session. The three flags are mutually exclusive.
-- Host identity is autodetected (Codex, opencode, and Claude Code session
-  variables; override with \`--host\` or \`CONSULT_HOST\`). Resume scoping
-  follows the Host session.
+## JSON
 
-## Jobs
+Job-bearing JSON uses schema version 1. A single Job is:
 
-- Lifecycle: queued -> running -> completed | cancelled | failed.
-- \`consult status\` lists all Jobs in the Workspace (tab-separated table, or
-  a JSON array with \`--json\`).
-- \`consult status <job-id>\` prints the Job record plus the last 20 log lines
-  (with \`--json\`: {"record": ..., "logTail": [...]}).
-- \`consult status <job-id> --follow\` and \`consult logs <job-id> --follow\`
-  stream rendered Job updates until the Job finalizes.
-- \`consult result <job-id>\` prints the delegate's final text verbatim; with
-  \`--json\` it prints the full Job record instead.
-- \`consult chain <job-id>\` prints the explicit Delegation Chain rollup for
-  the Job.
-- \`consult doctor\` reports profile, Host Identity, Job, Broker, and sandbox
-  readiness for the current Workspace.
-- \`consult cancel <job-id>\` cancels a queued or running Job and its active
-  descendants.
+    {"schemaVersion":1,"job":{},"outcome":{},"artifacts":{},"lineage":{}}
 
-## Delegation lineage
+delegate --json, review --json, and result --json emit that envelope.
+status <id> --json adds logTail; status --json and chain --json
+return versioned collections of the same Job payload sections. Internal Job
+record fields are not a public API. outcome.finalText contains Profile
+agent-message text, while tool activity remains in logs. JSON is also available
+for setup, agents, logs, doctor, and brokers.
 
-- When delegating from inside a delegated Job, pass \`--parent-job <job-id>\`
-  so the new Job joins the Delegation Chain.
-- If the flag is absent, delegate falls back to the \`CONSULT_PARENT_JOB\`
-  environment variable (injected into delegated agent environments), so
-  nested delegations stay chained by default. An explicit flag wins.
+## Host Identity
+
+Resolution order is explicit Host flags, explicit Consult environment values,
+known OPENCODE_SESSION_ID / OPENCODE_RUN_ID or CODEX_THREAD_ID, then
+terminal/default.
 
 ## Exit codes
 
 - 0 success
-- 1 internal or Broker error; \`doctor\` also exits 1 when the workspace is
-  not delegate-ready (canDelegate false)
-- 2 usage error, unknown subcommand, unknown Job id, or not inside a git
-  repository (no Workspace)
-- 3 Broker busy or Job conflict (inspect with \`consult brokers\`, retry)
-- 4 \`status --wait\` or \`--follow\` timed out before the Job finalized
-- 5 \`result\` called on an unfinished Job (poll status first)
-- 6 the delegated turn finalized as failed (inspect with
-  \`consult result <job-id>\`)
-- 7 \`review\` is not supported by the selected Profile (codex-only in v1)
-- 8 the Profile did not advertise the review command (codex-acp version may
-  not support it)
-
-## Parsing guidance
-
-- Prefer \`--json\` wherever you parse output: agents, setup, delegate,
-  status, result, logs, chain, doctor, brokers.
-- Capture the Job id from delegate stdout in both modes.
+- 1 internal, agent, or Broker error; doctor also uses 1 when not ready
+- 2 usage/configuration error, unknown Job, diff error, or no Git Workspace
+- 3 Broker busy, tainted, or Job payload conflict
+- 4 status/log follow timeout
+- 5 result requested before Job finalization
+- 6 delegated turn finalized as failed
+- 8 Codex native review command was not advertised by the installed shim
 `;
 
 const usage = `${summaryUsage}\n${operationalUsage}`;

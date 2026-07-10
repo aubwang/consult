@@ -1,488 +1,300 @@
-# Consult Plan
+# Consult Architecture Plan
 
-Consult has evolved from a Claude Code plugin into a host-neutral delegation layer: a user starts work from one **Host** and delegates it to a configured ACP **Profile**. The current implementation has extracted that broker/profile/job model into **Consult Core** so multiple Host Adapters and direct CLI use can invoke the same delegation machinery.
+Consult is a CLI-first, host-neutral delegation layer. A Host invokes the
+single `consult` command, which creates a durable Job and delegates exactly one
+prompt turn to a configured ACP Profile.
 
-See [`../CONTEXT.md`](../CONTEXT.md) for the domain vocabulary used throughout this document and the codebase.
+See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
+[`adr/`](adr/) for accepted decisions.
+
+## Product Boundaries
+
+- Consult Core owns Profile setup, Host Identity, Jobs, Broker/inline ACP
+  transport, permissions, artifacts, resume, cancellation, and lineage.
+- The public surface is the `consult` CLI plus optional agent skills that call
+  that CLI.
+- Shipped Host autodetection covers terminal, Codex, and opencode. Explicit
+  `CONSULT_HOST` values support custom Hosts without a Host-specific adapter.
+- The built-in Profile registry contains `claude`, `codex`, and `opencode`.
+- Claude is a delegated Profile, not a shipped Host plugin. Gemini and Copilot
+  are not supported Profiles.
+- Cruise owns Cruise workflow policy and session state; Consult supplies only
+  delegation mechanisms.
 
 ## Goals
 
-- Provide a portable **Consult Core** for profiles, brokers, jobs, state, permissions, setup, and result tracking.
-- Support thin **Host Adapters** for environments such as Claude Code, Codex, and direct terminal use.
-- Let any supported Host delegate to any configured ACP Profile.
-- Multi-profile support — user can install several Profiles and pick per command or set defaults.
-- Keep the proven broker daemon, IPC, and session-lifecycle shape while making
-  it host-neutral and profile-aware.
+- Give agents a small, durable interface for cold, self-contained delegation.
+- Keep every Job observable and cancellable regardless of Profile.
+- Preserve one stable Job result contract across foreground, background,
+  review, in-place, and isolated execution.
+- Prefer portable ACP and Git behavior; use Profile-native capabilities only as
+  internal optimizations with a portable fallback.
+- Make read-only the default and require explicit authority for writes and
+  execution.
+- Avoid modifying the user's active checkout for delegated implementation work
+  when `--isolated` is requested.
 
-## Non-goals (v1)
+## Non-Goals
 
-- Native structured review like Codex's `review/start`. ACP has no equivalent. Review proxy is **codex-only** in v1 (see [Review proxy](#review-proxy)); other backends return "not supported".
-- The Codex stop-time review-gate hook. Add later if needed.
-- Inline `session/request_permission` user prompts ("supervised" mode). Yolo or read-only, no middle ground.
-- Forwarding Claude Code's MCP servers into delegated sessions. Each backend uses its own MCP config.
-- Multiple profiles per backend type (e.g. two codex profiles with different defaults). One profile per backend for v1.
+- Cross-Profile native conversation transfer.
+- A permanent agent app server or a dependency on Codex app-server APIs.
+- Forwarding one Host's private MCP configuration to a Profile.
+- Interactive permission prompting during a Job.
+- Hard process isolation on platforms without the configured sandbox.
+- Multiple separately named installations of one built-in Profile type.
 
-## Host-neutral direction
+## Repository Layout
 
-Architectural decisions for this direction are recorded in `docs/adr/0003` through `docs/adr/0021`. The short version:
-
-- **Consult Core** owns Profiles, Brokers, Jobs, state, permissions, setup, and the host-neutral CLI.
-- A **Host Adapter** only maps a Host's native UX and lifecycle into Consult Core.
-- **Host Identity** is `(host, hostSessionId)`. The `consult` CLI resolves it
-  from explicit flags/env, known Host session environment variables, or
-  `terminal/default`.
-- Hosts without a real session id use a synthetic `default` Host Session, e.g. `terminal/default` or `codex/default`, unless overridden.
-- Profiles are global to Consult, not scoped to a Host.
-- Default Profile precedence is: explicit `--agent` / `--profile`, Workspace override, Host default, global default.
-- Foreground `delegate` runs the ACP agent in-process in the companion
-  (ADR-0021); Brokers serve `--background` Jobs and `review`.
-- Broker scope is one live Broker per active Job. Brokers self-terminate after
-  their Job finalizes and remove their live state.
-- Host Session identity scopes default resume lookup and best-effort lifecycle
-  cleanup; it is not required for normal Broker cleanup.
-- `consult brokers` lists live Broker locators and can clean stale/malformed
-  Broker state.
-- The default data root is `~/.consult`, with `CONSULT_DATA_DIR` still supported as an override.
-- The host-neutral refactor is a clean break. It does not need to preserve old Claude-shaped state files or job records.
-- Claude names belong only in the Claude Host Adapter; Consult Core state and env contracts use Host terminology.
-- `review` remains a host-neutral CLI command, but support is
-  Profile-capability-specific; in v1 it is codex-only.
-
-## Implemented Components
-
-- Claude Code uses plugin slash commands and a lifecycle hook. `SessionStart`
-  writes `CONSULT_HOST=claude-code` and the current Host Session id into the
-  Claude env file; `SessionEnd` performs best-effort cleanup for still-running
-  Brokers for that Host Session.
-- The single `consult` CLI resolves Host Identity from explicit Host flags,
-  explicit `CONSULT_HOST` / `CONSULT_HOST_SESSION_ID` environment variables,
-  known Host session variables (`OPENCODE_SESSION_ID`, `OPENCODE_RUN_ID`,
-  `CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`), or `terminal/default`.
-- Consult does not ship Host-specific wrapper binaries. Host-specific command
-  surfaces should call the same `consult` CLI or the same companion subcommands
-  while keeping Host Adapters thin.
-- Delegation Chains are implemented with `chainId`, `parentJobId`, and
-  `delegationDepth` fields on Jobs.
-
-Delegation Chain rules:
-
-- A child Job records `chainId`, `parentJobId`, and `delegationDepth`.
-- `chainId` is the root Job id.
-- Default max depth is 2 (`DEFAULT_MAX_DELEGATION_DEPTH` in
-  `scripts/lib/delegation-chain.mts`).
-- Child Jobs inherit Workspace, lineage, and permission ceiling.
-- Child Jobs do not inherit Profile-specific model, effort, or resume settings.
-- A child Job cannot be more permissive than its parent Job.
-- Same-Profile child Jobs and self-delegation are allowed.
-- Child Jobs are first-class Jobs visible in normal status.
-- Cancelling a parent Job cancels active descendants.
-- Child failure does not automatically fail the parent Job.
-- `result <job-id>` returns the exact Job's output; chain rollups are explicit via `consult chain <job-id>`.
-
-## Directory Layout
-
-Current layout:
-
-```
+```text
 consult/
-├── CONTEXT.md                           # domain glossary
-├── docs/
-│   ├── PLAN.md                          # this file
-│   ├── ROADMAP.md
-│   ├── adr/                             # decision records 0001–0020
-│   ├── conformance/                     # per-Profile live conformance reports
-│   └── host-adapters/                   # Codex and opencode Host notes
-├── package.json                         # @agentclientprotocol/sdk dep
-├── bin/consult                          # CLI entrypoint (plain JS; imports .mts modules)
-├── .claude-plugin -> hosts/claude-code/.claude-plugin
-├── commands -> hosts/claude-code/commands
-├── agents -> hosts/claude-code/agents
-├── hooks -> hosts/claude-code/hooks
-├── hosts/
-│   └── claude-code/
-│       ├── .claude-plugin/plugin.json   # Claude Code plugin manifest
-│       ├── commands/                    # /consult:* slash commands
-│       ├── agents/delegate.md           # consult:delegate subagent
-│       ├── hooks/hooks.json             # Claude Code lifecycle hooks
-│       └── scripts/
-│           └── session-lifecycle-hook.mts
-├── scripts/
-│   ├── consult-companion.mts            # companion CLI dispatcher; every slash command shells here
-│   ├── consult-broker.mts               # broker daemon entrypoint (`serve` subcommand)
-│   ├── live-companion-disconnect-drill.mts
-│   ├── registry.json                    # known backends catalog
-│   ├── adapters/
-│   │   └── codex-review.mts             # codex review proxy adapter
-│   └── lib/
-│       ├── acp-client.mts               # @agentclientprotocol/sdk wrapper
-│       ├── args.mts                     # CLI parser
-│       ├── broker-client.mts            # companion-side socket client to the daemon
-│       ├── broker-endpoint.mts          # Unix socket / TCP endpoint resolver
-│       ├── broker-job-runtime.mts       # live Broker Job state
-│       ├── broker-lifecycle.mts         # spawn/discover/teardown/shutdown-rpc
-│       ├── delegation-chain.mts         # parent/child Job lineage
-│       ├── fs-handlers.mts              # workspace-confined fs/read_text_file, fs/write_text_file
-│       ├── git.mts                      # base ref, working tree helpers
-│       ├── host-identity.mts            # shared Host identity resolver
-│       ├── inline-turn-runner.mts       # in-process foreground delegate runner
-│       ├── job-agent.mts                # shared agent wiring + prompt turn (Broker + inline)
-│       ├── job-records.mts              # persisted Job records and logs
-│       ├── path-safety.mts              # realpath-confine helpers for fs handlers
-│       ├── permissions.mts              # session/request_permission policy
-│       ├── process.mts                  # spawn/terminate process trees
-│       ├── process-sandbox.mts          # opt-in bubblewrap agent launch
-│       ├── profiles.mts                 # global profiles file + per-workspace override
-│       ├── prompt-turn-runner.mts       # one prompt turn against a session
-│       ├── registry.mts                 # registry.json loader
-│       ├── session-controls.mts         # model/effort session config controls
-│       ├── session-update-renderer.mts  # output formatting for session updates
-│       ├── setup-install.mts            # install-verify-persist flow
-│       ├── setup-probe.mts              # PATH/profile probe for setup
-│       ├── state.mts                    # atomic writes and data-root paths
-│       ├── workspace.mts                # resolve git root
-│       └── companion/                   # one module per companion subcommand
-│           ├── delegate.mts / delegate-core.mts / review.mts
-│           ├── setup.mts / agents.mts / doctor.mts
-│           ├── status.mts / result.mts / logs.mts / chain.mts
-│           ├── cancel.mts / brokers.mts
-│           └── task-worker.mts / task-resume-candidate.mts / shared helpers
-└── skills/
-    ├── consult/SKILL.md                 # host-neutral Consult CLI skill
-    ├── consult-runtime/SKILL.md         # internal forwarding contract
-    └── ask-claude/ ask-codex/ ask-copilot/ ask-gemini/ ask-opencode/
+├── bin/consult                         # stable JS executable
+├── scripts/consult-companion.mts       # CLI dispatch and public help
+├── scripts/consult-broker.mts          # background Job ACP process
+├── scripts/registry.json               # built-in Profile catalog
+├── scripts/lib/
+│   ├── companion/                      # command implementations
+│   ├── inline-turn-runner.mts          # foreground/isolated inline transport
+│   ├── broker-job-runtime.mts           # shared Job/session runtime
+│   ├── job-agent.mts                    # shared ACP agent wiring
+│   ├── job-records.mts                  # mutable internal records
+│   ├── job-result-contract.mts          # stable public JSON envelope
+│   ├── isolated-workspace.mts           # transactional Git worktrees
+│   ├── permissions.mts                  # ACP permission decisions
+│   └── process-sandbox.mts              # optional bubblewrap launch
+├── skills/                              # CLI-calling agent skills
+├── docs/conformance/                    # Profile probe records
+└── docs/adr/                            # accepted decisions
 ```
 
-## Command surface
+When run from a checkout, `bin/consult` loads erasable `.mts` source through
+Node 24 native type stripping. Installed packages load compiled `.mjs` from
+`dist/`; Node intentionally refuses to strip TypeScript in `node_modules`.
+Bun remains the repository package manager and lockfile owner.
 
-Claude Code slash commands live under `hosts/claude-code/commands/`, with the root `commands/` symlink preserved as the Claude Code plugin entrypoint. Each command shells into `node scripts/consult-companion.mts <subcommand>` with raw `$ARGUMENTS`. Markdown handles user-facing UX (Ask prompts, recommendations); the companion handles execution.
+## Host Identity and Profile Selection
 
-| Slash command | Companion subcommand | Notes |
-|---|---|---|
-| `/consult:setup` | `setup --json` | Two-phase: probe registry → menu with install / set-default actions. |
-| `/consult:agents` | `agents [--set <name>]` | Lists profiles + status; can set default. |
-| `/consult:delegate [args]` | `delegate ...` | Foreground/background, `--agent <name>`, `--write`, `--read-only` (default), `--resume`/`--resume-job <id>`/`--fresh`, `--parent-job <id>`, `--model`, `--effort`. |
-| `/consult:doctor [args]` | `doctor ...` | Read-only diagnostics for profile, Host Identity, Job, Broker, and sandbox readiness. |
-| `/consult:review [args]` | `review ...` | Proxies to backend's `review` slash if advertised. |
-| `/consult:status [id]` | `status ...` | Table of jobs; `--wait` blocks on one job; `--follow` streams rendered Job logs until finalization. |
-| `/consult:result [id]` | `result ...` | Final stored output for a job. |
-| `/consult:logs [id]` | `logs ...` | Render stored Job logs, or `--follow` live updates until finalization. |
-| `/consult:chain [id]` | `chain ...` | Explicit Delegation Chain rollup for one Job. |
-| `/consult:cancel [id]` | `cancel ...` | `session/cancel` + SIGTERM on background worker. |
-| `/consult:brokers [args]` | `brokers ...` | Inspect Broker locators; `--cleanup` removes stale/malformed locators, `--cleanup <job-id>` tears down one Broker. |
+Host Identity resolution order:
 
-Internal subcommands (not user-facing): `task-worker` (background entrypoint), `task-resume-candidate` (resume-prompt helper).
+1. `--host` / `--host-session` CLI flags.
+2. `CONSULT_HOST` / `CONSULT_HOST_SESSION_ID`.
+3. `CODEX_THREAD_ID`, or `OPENCODE_SESSION_ID` / `OPENCODE_RUN_ID`.
+4. `terminal/default`.
 
-## Setup / install flow
+Profile selection order:
 
-`/consult:setup` follows a strict install-verify-then-persist pattern. We never write a profile entry that we haven't proven works:
+1. Explicit `--agent` / `--profile`.
+2. Workspace override.
+3. Host default.
+4. Global default.
 
-1. **Probe.** For each registry entry, check whether `<binary>` is on `PATH` (or already pinned in `profiles.json`). Build a status table.
-2. **Menu.** `AskUserQuestion` with options: set-default (for installed-not-default profiles), install (for missing), done.
-3. **Install (if chosen).** Run the registry's install command via `Bash` with `description: "Install <label>"`. Capture stdout, stderr, and exit code. **If exit code is non-zero, surface the captured output and abort without writing a profile entry.**
-4. **Discover.** Re-probe `PATH` for the expected binary. If still not found (e.g. `npm install` succeeded but the binary landed somewhere the user's `PATH` doesn't include), surface the discovered install location and abort.
-5. **Smoke probe.** Spawn the binary, run `initialize` with our minimal client capabilities, wait up to 5 s for the response. Abort and surface error if it fails (missing auth, version mismatch, crash on start).
-6. **Persist.** Only now write the profile entry to `profiles.json`, including `lastVerifiedAt = now()`.
-7. **Loop back to menu** so the user can install/configure more or exit.
+Profile configuration is global to Consult, not tied to the Host. A Job may
+target a Profile associated with the same product as its Host.
 
-The smoke probe step is the load-bearing check: it catches binaries that install successfully but can't actually run (uncommon but real, e.g. missing OS lib, expired auth).
+## Jobs and Public Results
 
-## Registry
+A Job is the durable record for one prompt turn. Lifecycle:
 
-`scripts/registry.json` ships with five entries:
+```text
+queued -> running -> completed | cancelled | failed
+```
+
+Mutable records may gain internal fields as implementation needs change.
+Machine-readable commands expose an allow-listed versioned contract instead:
 
 ```jsonc
 {
   "schemaVersion": 1,
-  "agents": [
-    { "id": "codex", "label": "OpenAI Codex (ACP shim: codex-acp)",
-      "notes": "Wraps the codex CLI. Run `codex login` first to authenticate with OpenAI (or set OPENAI_API_KEY).",
-      "binary": "codex-acp", "args": [],
-      "install": {
-        "type": "github-release",
-        "repo": "zed-industries/codex-acp",
-        "version": "v0.16.0",
-        "assetTemplate": "codex-acp-{versionNoV}-{target}.{ext}",
-        "binaryInArchive": "codex-acp"
-      },
-      "advertisesReview": true,
-      "supports": { "resume": true, "load": true } },
-    { "id": "claude", "label": "Claude Agent (ACP shim: claude-agent-acp)",
-      "notes": "Uses the Claude Code CLI's auth under the hood. Run `claude /login` first, or set ANTHROPIC_API_KEY.",
-      "binary": "claude-agent-acp", "args": [],
-      "install": { "type": "npm", "cmd": "npm install -g @zed-industries/claude-agent-acp" },
-      "supports": { "resume": true, "load": true } },
-    { "id": "opencode", "label": "OpenCode",
-      "notes": "Needs an LLM provider configured. Run `opencode auth login` to pick a provider (OpenRouter, OpenAI, etc.), or set the provider's API key env var.",
-      "binary": "opencode", "args": ["acp"],
-      "install": { "type": "npm", "cmd": "npm install -g opencode-ai" },
-      "supports": { "resume": false, "load": true } },
-    { "id": "gemini", "label": "Google Gemini CLI",
-      "notes": "Uses Gemini CLI's native ACP mode. Run `gemini` first to sign in with Google, or set GEMINI_API_KEY/Vertex AI environment variables.",
-      "binary": "gemini", "args": ["--acp"],
-      "install": { "type": "npm", "cmd": "npm install -g @google/gemini-cli" },
-      "supports": { "resume": false, "load": true } },
-    { "id": "copilot", "label": "GitHub Copilot CLI",
-      "notes": "Requires an active GitHub Copilot subscription. Run `copilot login`, use a supported GitHub CLI OAuth token, or set COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN to a supported token.",
-      "binary": "copilot", "args": ["--acp"],
-      "install": { "type": "npm", "cmd": "npm install -g @github/copilot" },
-      "supports": { "resume": false, "load": true } }
-  ]
-}
-```
-
-The `notes` field is surfaced by `consult setup` and the `/consult:setup` menu.
-
-The `supports` block is documentation only — the actual capabilities come from each agent's `initialize` response at runtime. The `advertisesReview` flag is what `/consult:review` consults to decide whether to attempt a review proxy (see [Review proxy](#review-proxy)).
-
-### Install types
-
-`install.type` selects the installer in `setup-install.mts`:
-
-- **`cargo`** / **`npm`** — `install.cmd` is shelled out via `sh -lc`, then the registry's `binary` is located on `PATH`. Failure modes: install-stage non-zero exit, discover-stage binary not on PATH.
-- **`github-release`** — downloads a prebuilt asset from GitHub releases, extracts it to `<dataDir>/bin/<registryId>/`, and uses the absolute path of `binaryInArchive` (or `binary` if omitted) for the profile entry. Required fields: `repo`, `version`, `assetTemplate`. The template supports `{version}`, `{versionNoV}`, `{target}` (rust-style triple, e.g. `x86_64-unknown-linux-gnu`), and `{ext}` (`tar.gz` on unix, `zip` on windows). Bundled companion files in the archive (e.g. codex-acp's `codex-resources/bwrap`) travel with the binary because we extract the whole archive into the per-registry-id install root. **SHA-256 digest is required** — the installer fetches release metadata from `api.github.com/repos/{repo}/releases/tags/{version}`, reads the matching asset's `digest` field, and verifies the downloaded tarball before extraction. An asset without a digest aborts the install with an explicit "refusing to install unverified binary" error rather than degrading to TLS-only trust.
-
-Backends explicitly **deferred to a later release**:
-- Antigravity CLI — currently lacks ACP support, so Consult cannot use it as a
-  Profile despite it being Gemini CLI's announced replacement.
-- All other ACP-speaking agents (Cursor, Goose, Kimi, Qwen, Augment, Aider wrappers, etc.) — can be added once we have a conformance test harness.
-
-## State layout
-
-Broker state is scoped per live **Job**. Host, Host Session, Profile, and Workspace stay on the Job and Broker metadata for ownership, resume lookup, and best-effort lifecycle cleanup.
-
-```
-~/.consult/
-├── profiles.json                                                # global config — see "Profiles schema" below
-└── workspaces/
-    └── <sha256-of-repo-root>/
-        ├── jobs/<job-id>.json                                   # full job record (status, host, hostSessionId, sessionId, profile, finalText, ...)
-        ├── logs/<job-id>.log                                    # NDJSON of all session/update notifications
-        ├── brokers/<job-id>.json                                # live daemon endpoint + pidfile; removed on normal finalization
-        └── override.json                                        # per-workspace default profile override (optional)
-```
-
-### Profiles schema
-
-`profiles.json` is the single global config file for the plugin. Version-tagged so we can migrate later.
-
-```jsonc
-{
-  "schemaVersion": 1,
-  "default": "codex",                              // null if no profile is set
-  "hostDefaults": { "codex": "claude" },           // optional Host-specific defaults
-  "profiles": {
-    "codex": {
-      "registryId": "codex",                       // matches an entry in registry.json
-      "binary": "/absolute/path/to/codex-acp",     // resolved at install time
-      "args": [],                                  // extra argv to pass on spawn
-      "env": {},                                   // extra env vars
-      "installedAt": "2026-05-14T17:30:00Z",
-      "installedVia": "registry",                  // "registry" | "manual"
-      "lastVerifiedAt": "2026-05-14T17:30:05Z"     // when we last ran initialize() against it
-    }
+  "job": {
+    "id": "job-...",
+    "kind": "delegate",
+    "status": "completed",
+    "profile": "claude",
+    "mode": "read-only"
+  },
+  "outcome": {
+    "stopReason": "end_turn",
+    "sessionId": "...",
+    "errorMessage": null,
+    "finalText": "agent-authored message text"
+  },
+  "artifacts": {
+    "touchedFiles": [],
+    "logPath": "...",
+    "patchPath": null,
+    "touchedFilesPath": null
+  },
+  "lineage": {
+    "chainId": null,
+    "parentJobId": null,
+    "childJobIds": [],
+    "delegationDepth": 0
   }
 }
 ```
 
-Required keys per profile: `registryId`, `binary`, `args`, `env`, `installedAt`. `lastVerifiedAt` is updated whenever a broker successfully completes its initialize handshake against this profile. `profiles.mts` validates the schema on load and rejects malformed files with a clear error rather than silently using a partial structure.
+Tool-call renderings remain in logs and live progress. `finalText` accumulates
+only Profile agent-message text so scripts do not mistake tool markers for the
+answer.
 
-`override.json` per workspace is one line: `{ "profile": "claude" }`. Validated against the global profile list — pinning to a non-existent profile errors out.
+## State Layout
 
-The Claude Host Adapter's `SessionStart` hook injects `CONSULT_HOST=claude-code` and `CONSULT_HOST_SESSION_ID=<session>` into the env file; every companion invocation reads Host Identity through the shared resolver. `SessionEnd` enumerates broker state files, reads their Host Identity, and tears down only brokers for `claude-code/<this-session-id>`. Brokers for other Host sessions in the same repo are untouched.
+```text
+~/.consult/
+├── profiles.json
+└── workspaces/<sha256-of-canonical-git-root>/
+    ├── jobs/<job-id>.json
+    ├── logs/<job-id>.log
+    ├── brokers/<job-id>.json
+    ├── isolated-jobs/<job-id>/
+    │   ├── worktree/                    # temporary; removed at cleanup
+    │   └── artifacts/
+    │       ├── changes.patch
+    │       ├── touched-files.json
+    │       └── cleanup.json
+    └── override.json
+```
 
-**Atomic writes.** Every JSON write under `workspaces/<hash>/` goes through `state.mts#atomicWriteJson`, which:
+The canonical Git root is always the Workspace identity. An isolated detached
+worktree is only the Profile's Execution Workspace; records, logs, lineage,
+Profile selection, and resume lookup stay under the original Workspace.
 
-1. Creates the temp file **in the same directory** as the destination (so the rename target is on the same filesystem).
-2. Writes the bytes, `fsync`s the file.
-3. `fs.rename`s into place.
-4. `fsync`s the parent directory (where supported on the platform) to durably commit the rename.
-5. Throws on `EXDEV` rather than falling back to copy+unlink — cross-device rename is a configuration bug, not something to paper over.
+JSON state updates use same-directory temp files, file and directory fsync,
+and atomic rename. There is no shared `jobs.json` index: listing scans
+individual records to avoid a multi-writer index race.
 
-A unit test fakes a cross-device rename by symlinking the data dir onto `/tmp`; `atomicWriteJson` must throw, not silently degrade.
+## Foreground and Background Execution
 
-**No `jobs.json` index file.** The codex plugin keeps an index; we don't. Listing jobs reads the `jobs/` directory and sorts by mtime. Removes the multi-writer race on a single index file; trades it for slightly slower `status --all` listings (acceptable — typical N is &lt; 50).
+Foreground `delegate` runs the ACP agent inline in the companion process. The
+inline path uses the same Job runtime, agent wiring, permission handler,
+session controls, logs, and finalization contract as the Broker path.
 
-**No separate `sessions/<profile>.json` pointer.** Resume candidates are derived from finalized job records, not from a separately-mutable pointer. `--resume` does: scan `jobs/`, filter to the current `{host, hostSessionId, profile, status: "completed" | "failed"}`, sort by `completedAt`, pick the most recent's `sessionId`. `--resume-job <job-id>` is the explicit cross-Host-Session selector, but the selected Profile must match the target Job's Profile. The pointer-update race goes away.
+Normal background Jobs use one detached Broker per active Job:
 
-## Connection lifecycle (per command)
+1. The companion writes a queued record and starts a detached worker.
+2. The worker obtains or starts the Job-scoped Broker.
+3. The Broker starts the Profile's ACP executable and performs `initialize`.
+4. The worker submits `consult/run`; the Broker opens/resumes a Session and
+   starts one prompt turn.
+5. Updates stream into the log and Job record.
+6. The Job finalizes, the Profile process is disposed, and Broker live state is
+   removed.
 
-Foreground `delegate` (including `--resume`) does not use a Broker (ADR-0021): the companion spawns the ACP agent in-process via `inline-turn-runner.mts`, which reuses the Broker's job runtime and shared agent wiring (`job-agent.mts`) and feeds the same `consult/update` / `consult/finalized` notifications into the same prompt-turn runner. Records, logs, permission policy, session controls, and exit codes are identical to the Broker path; foreground records carry `runner: "inline"` and `runnerPid` so `consult cancel` signals the companion pid instead of dialing an endpoint.
+Isolated background Jobs may run the shared runtime inline inside their already
+detached worker. This keeps original Workspace state separate from the
+Execution Workspace without creating a second daemon contract. The worker pid
+is recorded as the inline runner so `consult cancel` can signal it safely.
 
-For `--background` Jobs and `review`, the broker is a separate daemon process per active Job, reachable via a Unix-domain socket keyed by `jobId`. The companion CLI is short-lived; it connects to the daemon for the Job command and sends RPC over the socket.
+The external Job behavior is identical across transports. `jobId` is the
+idempotency key for Broker requests; replay with a different payload is a
+conflict. Payload identity includes permission-relevant execution opt-ins.
 
-1. Resolve workspace root, selected profile, and Host Identity (CLI flags,
-   explicit Consult env vars, known Host session env vars, or
-   `terminal/default`).
-2. **Get-or-spawn broker** (`broker-lifecycle.mts#ensureBrokerSession`): read the Job-scoped broker state file; ping endpoint for 150 ms; if alive, reuse for that same Job; if absent or unreachable, clean up stale files, then spawn `node consult-broker.mts serve --endpoint <socket> --cwd <ws> --profile <id> --job-id <job-id> --registry-id <registry-id> --host <host> --host-session-id <id> --pid-file <path>` detached. Wait up to 2 s for the endpoint to listen.
-3. The daemon (`consult-broker.mts`) is what actually owns the ACP agent child and the `ClientSideConnection` from `@agentclientprotocol/sdk`. It sends `initialize` once on startup and caches capabilities. It listens on the Unix socket and routes each client's RPC into the agent.
-4. Companion connects to the socket; sends a `consult/run` RPC envelope (see [Companion ↔ daemon RPC envelope](#companion--daemon-rpc-envelope) below).
-5. The daemon either calls `session/new` (with workspace `cwd`, empty `mcpServers`) or `session/resume` / `session/load` for resume, then `session/prompt`. It pipes `session/update` notifications back to the companion over the socket as JSON-RPC notifications.
-6. Companion writes notifications to the job's NDJSON log file and updates the structured job record in real time. On stop reason, it finalizes the job and exits.
-7. After the final job record is persisted and subscribers are notified, the daemon disposes the backend process, removes its broker state/socket/pid files, and exits. Host lifecycle hooks remain best-effort cleanup for still-running Jobs.
+## Sessions and Resume
 
-For `--resume`:
-- If the fresh daemon's agent has `sessionCapabilities.resume` AND we have a candidate sessionId → `session/resume` (fast, no replay).
-- Else if agent has `loadSession` → `session/load` (history replay).
-- Else fail with: *"Backend `<name>` cannot resume. Rerun with `--fresh` or pick a backend that supports resume."*
+`--resume` searches finalized delegate Jobs for the current Workspace, Host
+Session, and Profile. `--resume-job <id>` selects an explicit compatible Job.
+The new transport then uses:
 
-### Companion ↔ daemon RPC envelope
+1. ACP `session/resume` when advertised.
+2. ACP `session/load` when resume is absent but load is advertised.
+3. A clear `RESUME_UNSUPPORTED` failure otherwise.
 
-The protocol on the Unix socket is line-delimited JSON-RPC with a small `consult/*` method namespace on top of forwarded ACP calls.
+Resume stays within one Profile. A different Profile receives a self-contained
+new prompt rather than an attempted native session conversion.
 
-Control plane (always allowed, even when a prompt is mid-flight):
-- `consult/ping` — health check.
-- `consult/cancel { jobId }` — daemon sends `session/cancel` for that job's session, then forwards completion.
-- `broker/shutdown` — graceful daemon termination.
+## Pinned Diff and Review
 
-Work plane (one in-flight at a time per daemon — the `BROKER_BUSY` mutex inherited from codex):
-- `consult/run { jobId, kind: "delegate"|"review", mode: "write"|"read-only", profile, resume: sessionId|null, prompt, baseRef? }` — daemon picks the right ACP method sequence, returns `{accepted: true}` immediately, then streams `session/update` notifications and finally a `consult/finalized { jobId, stopReason, sessionId, touchedFiles }` notification.
-- `consult/attach { jobId }` — reattaches to an active job (see idempotency below).
+`delegate --include-diff [--base <ref>]` resolves the review material before
+the Job is created:
 
-The control-plane methods bypass the `BROKER_BUSY` mutex. This is the codex pattern — codex broker special-cases `turn/interrupt` while a stream is active (`allowInterruptDuringActiveStream` in `app-server-broker.mjs` lines 170–184). We do the same for `consult/cancel` and `broker/shutdown`. Without this, `/consult:cancel` would queue behind the prompt it's trying to interrupt.
+- Base references are resolved safely to commits.
+- Working-tree capture includes staged and unstaged tracked changes and lists
+  untracked paths.
+- Unborn repositories are handled.
+- Diff text is UTF-8-safe, bounded, and explicitly delimited as untrusted data.
+- Background Jobs persist the augmented prompt used by their worker.
 
-### `consult/run` idempotency and retry
+`review` is Profile-neutral. Consult always resolves a pinned diff and creates
+a read-only, findings-first review Job. The verified Codex native review
+command remains an adapter optimization; Claude and opencode use ordinary ACP
+delegation against the same deterministic input.
 
-`jobId` is the idempotency key. The daemon keeps an in-memory map `activeJobs: Map<jobId, JobState>`, while the live broker locator is stored under `brokers/<job-id>.json` and durable history stays in `jobs/<job-id>.json`.
+## Transactional Isolated Writes
 
-| Companion request | Daemon behavior |
-|---|---|
-| `consult/run` with new `jobId` | Accept, start work. |
-| `consult/run` with `jobId` already running, **same payload hash** | Treat as reattach: re-stream pending notifications buffered since acceptance; no duplicate prompt. |
-| `consult/run` with `jobId` already running, **different payload hash** | Reject with `JOB_CONFLICT` error; companion picks a new jobId. |
-| `consult/run` with `jobId` already finalized | Reject with `JOB_FINALIZED`; companion calls `result` instead. |
-| `consult/attach { jobId }` | Reattach without sending any new prompt (used by live recovery flows). |
+`delegate --write --isolated` implements this transaction:
 
-The daemon buffers a sliding window of recent `session/update` notifications (last 500 per job) so a reattaching companion can catch up. Older notifications stay in the NDJSON log on disk — reattach is for "I lost the socket two seconds ago," not for recovering hour-old state.
+1. Resolve the Workspace and allocate a Job id.
+2. Create a Consult-owned detached worktree at `HEAD`.
+3. Reconstruct staged and unstaged tracked changes with binary Git patches.
+4. Copy safe, nonignored, regular untracked files. Reject symlinks, traversal,
+   invalid path encodings, and special files.
+5. Snapshot that seeded tree as the baseline.
+6. Run the Profile with the worktree as cwd while Job state stays rooted at the
+   original Workspace.
+7. Snapshot the final tree and write an agent-only binary patch relative to the
+   seeded baseline plus a touched-files manifest.
+8. Persist artifact metadata and remove the worktree in a `finally` cleanup.
 
-### Companion disconnect during in-flight prompt
+The patch represents only the delegate's delta, not the user's pre-existing
+dirty state. Artifacts remain after worktree cleanup. Applying a patch to the
+active checkout is intentionally a separate, user-controlled operation.
+Gitignored files are neither seeded nor captured, including ignored files the
+Profile creates, and the repository must have at least one commit to supply the
+detached-worktree base.
 
-If the companion socket closes after the daemon accepted a `consult/run` but before `consult/finalized`:
+In-place `--write` remains for compatibility. `--isolated` requires
+`--write`; the flag is explicit while the behavior gains field experience.
 
-1. Daemon's `socket.on("close")` handler checks whether the socket owns the active job.
-2. If yes, daemon sends ACP `session/cancel` for that session and starts a **2-second timer** for the agent's acknowledgement.
-3. **If the agent acknowledges within 2 s:** clean shutdown — daemon writes a `cancelled` job record (gated on detecting companion didn't finalize), notifies subscribers, and exits.
-4. **If the timer expires:** daemon (a) writes a `failed` job record with `errorMessage: "agent did not acknowledge cancel"`, (b) marks the broker tainted, (c) notifies subscribers, and (d) exits through the terminal-job shutdown path.
+## Permission and Sandbox Policy
 
-This closes the "companion dies mid-prompt → stale running job + agent burning compute with no listener" gap that codex's broker has, and bounds the worst case at 2 s of `BROKER_BUSY` hold time.
+ACP file handlers and permission-bearing paths are realpath-confined to the
+Execution Workspace and reject symlink escapes.
 
-## Permission policy
+| Request kind | Read-only | In-place write | Isolated write | Isolated write + `--allow-exec` + bwrap |
+| --- | --- | --- | --- | --- |
+| read/search/think | allow, path-confined | allow, path-confined | allow, path-confined | allow, path-confined |
+| edit/delete/move | deny | allow, path-confined | allow, path-confined | allow, path-confined |
+| fetch | deny | deny | deny | deny |
+| execute | deny | deny | deny | allow only with cwd confined |
+| switch_mode/other | deny | allow | allow | allow |
 
-Two layers: ACP `session/request_permission` for agent-initiated tool calls, and direct `fs/*` handlers we implement client-side. Both layers are workspace-confined; that's a universal hygiene rule, not a mode-dependent one.
+Execute authority is carried explicitly in the `consult/run` payload and its
+idempotency hash. The shared permission handler grants it only when mode is
+write, the caller opted in, cwd is confined, and the normalized active sandbox
+is `bwrap`. Merely setting a flag does not weaken an unsandboxed Job.
 
-### `session/request_permission` (in `permissions.mts`)
+Bubblewrap binds the Execution Workspace according to mode and mounts only the
+runtime and proven Profile auth/config paths needed to launch the ACP agent.
+It is a filesystem sandbox; the agent needs network access to contact its model
+API. Some Profiles perform edits without first asking ACP permission, so
+non-bwrap confinement and isolated transactions are defense-in-depth rather
+than a hard process boundary.
 
-| `kind` | `--write` | `--read-only` (default) |
-|---|---|---|
-| `read`, `search`, `think` | ✅ allow (path-confined) | ✅ allow (path-confined) |
-| `fetch` | ❌ deny (exfil vector) | ❌ deny (exfil vector) |
-| `edit`, `delete`, `move` | ✅ allow (path-confined) | ❌ deny |
-| `execute` | ❌ deny | ❌ deny |
-| `switch_mode`, `other` | ✅ allow | ❌ deny |
+## Delegation Chains
 
-**Path/cwd confinement for backend-native tool calls.** Approval for `read`, `search`, `edit`, `delete`, `move`, `execute` is conditional on the request payload's paths/cwd resolving inside the workspace via `path-safety.mts`. If the agent asks to read `/etc/passwd` or to execute `bash` with `cwd: /tmp`, we deny it even in `--write` mode. The same realpath-confine logic that protects `fs/*` handlers applies to permission requests carrying paths or cwd — without it, the fs sandbox is illusory because the agent can route around it via `kind: read` permission grants.
+Nested delegation uses `chainId`, `parentJobId`, and `delegationDepth`.
+`CONSULT_PARENT_JOB` is injected into delegated environments, while an explicit
+`--parent-job` wins. A child inherits Workspace, lineage, and a permission
+ceiling but not model, effort, or resume choices. Default maximum depth is two.
+Cancelling a parent cancels active descendants; child failure does not
+automatically fail the parent.
 
-`fetch` is denied in both modes because combined with workspace reads it is a
-clean read-then-exfiltrate path. `execute` is also denied in both modes because
-ACP execute requests expose a raw command string that Consult cannot safely
-constrain by cwd inspection alone.
+## Packaging and Verification
 
-No mid-task user prompts. The decision is made at command start.
+Development uses Bun for package installation and scripts, while production
+execution uses Node 24 or newer:
 
-### `fs/read_text_file` and `fs/write_text_file` (in `fs-handlers.mts`)
+```sh
+bun run typecheck
+bun run test
+bun run pack:check
+```
 
-These are ACP client methods — the agent calls *us* to read/write files. We implement them with a hard workspace boundary (see `path-safety.mts`):
+`bun run test` intentionally executes `node --test`; `bun test` is not the
+project test command. `pack:check` builds the published `.mjs`, packs the npm
+tarball, installs it globally with npm and Bun in temporary prefixes, verifies
+the package file allow-list, runs `consult help` from both installs, and proves
+an npm-installed background worker and Broker launch their compiled `.mjs`
+entrypoints and finalize a Job.
 
-1. `fs.realpath` the requested path. If it doesn't exist yet (write case), realpath the *parent* directory and re-append the basename.
-2. Reject if the realpath does not start with `<workspaceRoot>/`. This blocks symlink escapes — even a symlink inside the workspace pointing at `/etc/passwd` is rejected because the realpath leaves the tree.
-3. For writes, additionally check the mode flag — `fs/write_text_file` returns an ACP error if `--read-only` was passed.
-
-Reads of well-known sensitive files inside the workspace (`.env`, `.git/`, `id_rsa`, etc.) are NOT blocked in v1 — the workspace is the user's own repo, and over-blocking trips legitimate uses (reading `.env.example` to write code). Users who care can run `--read-only` and inspect first.
-
-### Opt-in process sandbox
-
-Set `CONSULT_AGENT_SANDBOX=bwrap` to make the Broker launch the ACP agent
-through bubblewrap. In that mode, the agent gets a fresh filesystem namespace:
-
-1. `--read-only` jobs bind the Workspace read-only.
-2. `--write` jobs bind the Workspace read-write.
-3. Standard runtime paths needed to execute the agent are mounted read-only,
-   `$HOME` points at `/tmp` inside the namespace, and proven profile-specific
-   auth/config directories can be mounted read-only into that sandbox home
-   (`claude`: host `~/.claude` -> `/tmp/.claude`).
-4. If the next job needs a different sandbox write mode, the Broker restarts the
-   agent before opening the session.
-
-The default remains off while real-backend auth/config mounts are proven across
-profiles.
-
-## Background execution
-
-Background execution uses the same high-level worker pattern as the original
-single-backend plugin, with job-scoped Broker routing:
-
-1. `delegate --background` writes a "queued" job record, spawns a detached `node consult-companion.mts task-worker --job-id <id>` subprocess with `stdio: "ignore"`, returns to caller.
-2. The worker reads the job's request, calls into the same connection-lifecycle code, streams updates to the job's NDJSON log, finalizes the record on completion.
-3. `/consult:status <id>` reads the job file to report progress.
-4. `/consult:cancel <id>` connects to the Job's live Broker, sends ACP's `session/cancel` notification, and `SIGTERM`s the worker process tree (via `process.mts`). If the Broker is gone while the Job record still says running, cancel treats the Job as orphaned and marks it failed.
-
-## Review proxy
-
-`/consult:review` is **codex-only in v1**. Per-backend adapter approach: we only invoke a backend's review slash command when we have a tested adapter for it. Codex-acp has a well-defined `/review` slash with documented `--base` semantics that we've verified; that's the only one shipping in v1.
-
-For the codex adapter (`adapters/codex-review.mts`):
-
-1. Resolve the review target deterministically *on our side* (using `git.mts`): working-tree mode produces `git diff` + `git status` output; `--base ref` mode produces `git diff <ref>...HEAD`. We generate the diff text ourselves rather than trusting the backend to interpret `--base`.
-2. Connect to the codex broker, call `session/new`.
-3. Wait up to 2 s for `available_commands_update`. If `review` isn't listed (codex-acp doesn't advertise it for some reason), fail clearly.
-4. Send `session/prompt` with a message that includes the pre-resolved diff in a content block, plus the slash invocation. The backend reviews what we showed it, not whatever it would have resolved from `--base`.
-5. Stream `session/update`, finalize the job.
-
-For all other backends (`claude`, `opencode`, `copilot` in v1): `/consult:review` exits with:
-> *"`/consult:review` is codex-only in v1. Use `/consult:delegate --agent <name>` with a review-style prompt, or switch to `--agent codex`."*
-
-Future: add per-backend adapters in `adapters/` as we verify their review surfaces.
-
-## Subagent
-
-`hosts/claude-code/agents/delegate.md` defines a `consult:delegate` subagent,
-with the root `agents/` symlink preserved as the Claude Code plugin entrypoint.
-It is a thin forwarder used by the main Claude Code thread when it wants to hand
-a chunky task to another agent. Single Bash call into
-`node scripts/consult-companion.mts delegate ...`, returns stdout verbatim, no
-commentary.
-
-## Hooks
-
-`hosts/claude-code/hooks/hooks.json` registers a session-lifecycle hook that
-invokes `hosts/claude-code/scripts/session-lifecycle-hook.mts`:
-
-- On `SessionStart`: writes `CONSULT_HOST=claude-code` and `CONSULT_HOST_SESSION_ID=<session>` into `$CLAUDE_ENV_FILE`. Every subsequent companion invocation reads this through the shared Host identity resolver.
-- On `SessionEnd`: enumerates `workspaces/<hash>/brokers/*.json`, reads each broker's stored Host Identity, and tears down only still-running brokers for `claude-code/<this-session-id>`. Brokers belonging to other Host sessions in the same workspace are never touched.
-
-Host Session scoping is primarily a resume/grouping identity. Job-scoped
-Brokers do not rely on Host lifecycle hooks for normal cleanup. ADR-0016
-records the shipped job-scoped Broker design and supersedes the older warm
-Broker ADRs.
-
-Skipped for v1: the optional stop-time review-gate hook.
-
-## Removed single-backend assumptions
-
-- `review/start` proprietary endpoint and structured review schema (no ACP equivalent).
-- `gpt-5-4-prompting` skill — Codex-specific.
-- `spark` model alias, fixed Codex effort levels (passthrough generic `--model`/`--effort`).
-- Stop-review-gate hook and `stop-review-gate.md` prompt template.
-- `codex-result-handling` skill — replaced by simpler render logic.
-
-## Open risks
-
-- ACP's TypeScript SDK (`@agentclientprotocol/sdk`) version stability — protocol is young (~1 year), breaking changes possible. Pin to a specific version in `package.json` and treat upgrades as a tracked task.
-- `available_commands_update` is fire-and-forget; codex-acp may delay it past our 2-second wait, causing the codex review adapter to false-negative. Make the timeout overridable via env var; bump if we see false negatives in smoke tests.
-- Broker crash recovery — stale broker detection, teardown/respawn on next use,
-  cancel-time unreachable handling, tainting after unacknowledged disconnect
-  cancels, and foreground `BROKER_DISCONNECTED` failure after broker disconnect
-  are enough for v1. If the agent process crashes mid-job, the user may still
-  see a generic ACP transport error; polish that further only if it shows up as
-  a real usability problem.
-- `BROKER_BUSY` remains the expected same-Broker behavior, but Brokers are now
-  job-scoped. Two different Jobs in the same Host Session/Profile/Workspace can
-  run concurrently in separate Brokers.
+Behavior and architecture changes update this document and, when they make or
+supersede a durable decision, add an ADR.

@@ -66,7 +66,7 @@ test("dispatch prints help for the help subcommand", async () => {
   assert.equal(result.stdout.includes("brokers"), true);
   assert.equal(result.stdout.includes("Operational contract"), true);
   assert.equal(result.stdout.includes("## Exit codes"), true);
-  assert.equal(result.stdout.includes("Omit `--model`"), true);
+  assert.equal(result.stdout.includes("Omit --model"), true);
   assert.equal(result.stdout.includes("provider/model"), true);
   assert.equal(result.stdout.includes("adversarial-review"), false);
 });
@@ -85,14 +85,14 @@ test("help documents the extended exit codes, lineage env, and json coverage", a
   const result = await dispatch("help", { positional: [], flags: {} });
 
   assert.equal(result.exitCode, 0);
-  assert.match(result.stdout, /6 the delegated turn finalized as failed/);
-  assert.match(result.stdout, /7 `review` is not supported by the selected Profile/);
-  assert.match(result.stdout, /8 the Profile did not advertise the review command/);
+  assert.match(result.stdout, /6 delegated turn finalized as failed/);
+  assert.doesNotMatch(result.stdout, /7 .*review.*not supported/);
+  assert.match(result.stdout, /8 Codex native review command was not advertised/);
   assert.match(result.stdout, /CONSULT_PARENT_JOB/);
-  assert.match(result.stdout, /status, result, logs, chain, doctor, brokers/);
-  assert.match(result.stdout, /most recent completed or failed Job/);
+  assert.match(result.stdout, /setup, agents, logs, doctor, and brokers/);
+  assert.match(result.stdout, /most recent completed or failed delegate Session/);
   assert.match(result.stdout, /cancelled Jobs are skipped/);
-  assert.doesNotMatch(result.stdout, /most recent finalized Job/);
+  assert.doesNotMatch(result.stdout, /latest finalized delegate Session/);
 });
 
 test("dispatch maps NO_WORKSPACE to an actionable exit-2 error", async (t) => {

@@ -19,8 +19,10 @@ test("setup json mode prints registry status and profiles", async (t) => {
   assert.equal(result.exitCode, 0);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.schemaVersion, 1);
-  assert.equal(payload.registry.length, 5);
-  assert.equal(payload.registry.some((entry: { id: string }) => entry.id === "gemini"), true);
+  assert.deepEqual(
+    payload.registry.map((entry: { id: string }) => entry.id),
+    ["codex", "claude", "opencode"],
+  );
   assert.deepEqual(payload.profiles, {
     schemaVersion: 1,
     default: null,

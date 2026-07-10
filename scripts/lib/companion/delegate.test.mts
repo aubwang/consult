@@ -6,8 +6,27 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 
 import { jobsDir, logsDir } from "../broker-endpoint.mts";
-import { runDelegate } from "./delegate.mts";
+import type {
+  FinalizedIsolatedWorkspace,
+  PreparedIsolatedWorkspace,
+} from "../isolated-workspace.mts";
+import { companionCliPath, runDelegate } from "./delegate.mts";
 import type { DelegateDeps } from "./delegate.mts";
+
+test("background worker entrypoint follows the executing module extension", () => {
+  assert.equal(
+    path.basename(
+      companionCliPath("file:///tmp/consult/scripts/lib/companion/delegate.mts"),
+    ),
+    "consult-companion.mts",
+  );
+  assert.equal(
+    path.basename(
+      companionCliPath("file:///tmp/consult/dist/scripts/lib/companion/delegate.mjs"),
+    ),
+    "consult-companion.mjs",
+  );
+});
 
 test("delegate streams agent text and finalizes the job record", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
@@ -89,6 +108,231 @@ test("delegate honors explicit write mode", async (t) => {
   assert.equal(result.exitCode, 0);
   assert.equal(record.mode, "write");
   assert.equal(request.params.mode, "write");
+});
+
+test("delegate isolated write runs in the detached root and exposes finalized artifacts", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+  const prepared = isolatedFixture(workspaceRoot, "job-isolated");
+  let ensureInput: Record<string, unknown> | undefined;
+  let cleanupCalls = 0;
+
+  const resultPromise = runDelegate({
+    args: {
+      positional: ["make", "a", "transactional", "change"],
+      flags: { write: true, isolated: true, "allow-exec": true, json: true },
+    },
+    env: {
+      CONSULT_HOST: "terminal",
+      CONSULT_HOST_SESSION_ID: "terminal-1",
+      CONSULT_AGENT_SANDBOX: "bwrap",
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-isolated",
+      prepareIsolatedWorkspace: async () => prepared,
+      ensureBrokerSession: async (input: Record<string, unknown>) => {
+        ensureInput = input;
+        return { client };
+      },
+      finalizeIsolatedWorkspace: async () => finalizedIsolation(prepared),
+      cleanupIsolatedWorkspace: async () => {
+        cleanupCalls += 1;
+        return {};
+      },
+    }),
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/update", agentTextUpdate("changed"));
+  client.notify("consult/finalized", {
+    jobId: "job-isolated",
+    stopReason: "end_turn",
+    sessionId: "session-isolated",
+  });
+  const result = await resultPromise;
+  const request = await client.waitForRequest("consult/run");
+  const envelope = JSON.parse(result.stdout);
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-isolated.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(ensureInput?.workspaceRoot, workspaceRoot);
+  assert.equal(ensureInput?.executionRoot, prepared.executionRoot);
+  assert.equal(request.params.allowExecute, true);
+  assert.equal(record.isolated, true);
+  assert.equal(record.allowExecute, true);
+  assert.equal(record.patchPath, `${prepared.artifactsDir}/changes.patch`);
+  assert.deepEqual(record.touchedFiles, ["src/changed.mts"]);
+  assert.equal(cleanupCalls, 1);
+  assert.equal(envelope.job.isolated, true);
+  assert.equal(envelope.job.allowExecute, true);
+  assert.equal(envelope.artifacts.patchPath, `${prepared.artifactsDir}/changes.patch`);
+  assert.deepEqual(envelope.artifacts.touchedFiles, ["src/changed.mts"]);
+});
+
+test("delegate validates isolated and execute opt-ins before workspace discovery", async () => {
+  const neverResolveWorkspace = async () => {
+    throw new Error("workspace should not be resolved");
+  };
+  const isolatedWithoutWrite = await runDelegate({
+    args: { positional: ["fix"], flags: { isolated: true } },
+    deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
+  });
+  const executeWithoutIsolation = await runDelegate({
+    args: { positional: ["fix"], flags: { write: true, "allow-exec": true } },
+    env: { CONSULT_AGENT_SANDBOX: "bwrap" },
+    deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
+  });
+  const executeWithoutSandbox = await runDelegate({
+    args: {
+      positional: ["fix"],
+      flags: { write: true, isolated: true, "allow-exec": true },
+    },
+    env: {},
+    deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
+  });
+
+  assert.equal(isolatedWithoutWrite.exitCode, 2);
+  assert.equal(isolatedWithoutWrite.stderr, "--isolated requires --write\n");
+  assert.equal(executeWithoutIsolation.exitCode, 2);
+  assert.equal(executeWithoutIsolation.stderr, "--allow-exec requires --write --isolated\n");
+  assert.equal(executeWithoutSandbox.exitCode, 2);
+  assert.equal(
+    executeWithoutSandbox.stderr,
+    "--allow-exec requires CONSULT_AGENT_SANDBOX=bwrap\n",
+  );
+});
+
+test("delegate pins one bounded diff into the actual prompt while keeping the record concise", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+  let diffCalls = 0;
+  let diffArgs: unknown;
+
+  const resultPromise = runDelegate({
+    args: {
+      positional: ["review", "the", "change"],
+      flags: { "include-diff": true, base: "origin/main" },
+    },
+    env: { CONSULT_HOST: "codex", CONSULT_HOST_SESSION_ID: "codex-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      getDiff: async (args: unknown) => {
+        diffCalls += 1;
+        diffArgs = args;
+        return "diff --git a/a.ts b/a.ts\n+changed();\n";
+      },
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-pinned-diff",
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-pinned-diff",
+    stopReason: "end_turn",
+    sessionId: "session-pinned-diff",
+  });
+  const result = await resultPromise;
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-pinned-diff.json"), "utf8"),
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(diffCalls, 1);
+  assert.deepEqual(diffArgs, { baseRef: "origin/main", cwd: workspaceRoot });
+  assert.match(request.params.prompt as string, /^review the change\n\n--- BEGIN CONSULT/);
+  assert.match(request.params.prompt as string, /Snapshot: base "origin\/main"/);
+  assert.match(request.params.prompt as string, /\+changed\(\);/);
+  assert.match(request.params.prompt as string, /--- END CONSULT PINNED GIT DIFF ---$/);
+  assert.equal(record.prompt, "review the change");
+  assert.equal(record.includeDiff, true);
+  assert.equal(record.baseRef, "origin/main");
+});
+
+test("delegate include-diff captures the working tree when no base is supplied", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+  let diffArgs: unknown;
+
+  const resultPromise = runDelegate({
+    args: { positional: ["inspect"], flags: { "include-diff": true } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      getDiff: async (args: unknown) => {
+        diffArgs = args;
+        return "";
+      },
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-working-diff",
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-working-diff",
+    stopReason: "end_turn",
+    sessionId: "session-working-diff",
+  });
+  await resultPromise;
+
+  assert.deepEqual(diffArgs, { cwd: workspaceRoot });
+  assert.match(request.params.prompt as string, /Snapshot: working tree/);
+  assert.match(request.params.prompt as string, /\(no changes\)/);
+});
+
+test("delegate reports pinned diff errors before creating a Job", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  let generated = false;
+
+  const result = await runDelegate({
+    args: {
+      positional: ["inspect"],
+      flags: { "include-diff": true, base: "missing" },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      getDiff: async () => {
+        throw new Error("base ref 'missing' does not resolve to a commit");
+      },
+      generateJobId: () => {
+        generated = true;
+        return "should-not-exist";
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /unable to capture pinned git diff/);
+  assert.equal(generated, false);
+});
+
+test("delegate rejects --base without --include-diff", async () => {
+  const result = await runDelegate({
+    args: { positional: ["inspect"], flags: { base: "main" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--base requires --include-diff\n");
 });
 
 test("delegate resume uses the latest finalized session for the selected profile", async (t) => {
@@ -447,6 +691,107 @@ test("delegate background writes a queued record and spawns the task worker", as
   assert.equal(unrefCalled, true);
 });
 
+test("delegate background persists its prepared isolated workspace for the inline worker", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const prepared = isolatedFixture(workspaceRoot, "job-bg-isolated");
+  let spawned = false;
+
+  const result = await runDelegate({
+    args: {
+      positional: ["fix", "later"],
+      flags: { background: true, write: true, isolated: true },
+    },
+    env: { CONSULT_HOST: "terminal", CONSULT_HOST_SESSION_ID: "terminal-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-bg-isolated",
+      prepareIsolatedWorkspace: async () => prepared,
+      spawn: () => {
+        spawned = true;
+        return { unref() {} } as never;
+      },
+    }),
+  });
+
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-bg-isolated.json"), "utf8"),
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(spawned, true);
+  assert.equal(record.status, "queued");
+  assert.equal(record.isolated, true);
+  assert.equal(record.isolatedWorkspace.executionRoot, prepared.executionRoot);
+  assert.equal(record.cleanupMetadataPath, prepared.cleanupMetadataPath);
+});
+
+test("delegate cleans a prepared isolated workspace when the background worker cannot spawn", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const prepared = isolatedFixture(workspaceRoot, "job-bg-spawn-failure");
+  let cleanupCalls = 0;
+
+  const result = await runDelegate({
+    args: {
+      positional: ["fix", "later"],
+      flags: { background: true, write: true, isolated: true },
+    },
+    env: { CONSULT_HOST: "terminal", CONSULT_HOST_SESSION_ID: "terminal-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-bg-spawn-failure",
+      prepareIsolatedWorkspace: async () => prepared,
+      cleanupIsolatedWorkspace: async () => {
+        cleanupCalls += 1;
+        return {};
+      },
+      spawn: () => {
+        throw new Error("no process slots");
+      },
+    }),
+  });
+
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-bg-spawn-failure.json"), "utf8"),
+  );
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /task worker spawn failed: no process slots/);
+  assert.equal(cleanupCalls, 1);
+  assert.equal(record.status, "failed");
+});
+
+test("delegate background persists the augmented pinned prompt for the task worker", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+
+  const result = await runDelegate({
+    args: {
+      positional: ["review", "later"],
+      flags: { background: true, "include-diff": true },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      getDiff: async () => "diff --git a/a b/a\n+queued change\n",
+      generateJobId: () => "job-bg-pinned",
+      spawn: () => ({ unref() {} }),
+    }),
+  });
+
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-bg-pinned.json"), "utf8"),
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.includeDiff, true);
+  assert.match(record.prompt, /^review later\n\n--- BEGIN CONSULT/);
+  assert.match(record.prompt, /\+queued change/);
+});
+
 test("delegate background json mode emits one queued JSON object", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -467,7 +812,12 @@ test("delegate background json mode emits one queued JSON object", async (t) => 
   });
 
   assert.equal(result.exitCode, 0);
-  assert.deepEqual(JSON.parse(result.stdout), { status: "queued", jobId: "job-bg-json" });
+  const envelope = JSON.parse(result.stdout);
+  assert.equal(envelope.schemaVersion, 1);
+  assert.equal(envelope.job.id, "job-bg-json");
+  assert.equal(envelope.job.status, "queued");
+  assert.equal(envelope.outcome.sessionId, null);
+  assert.equal(envelope.artifacts.logPath, path.join(logsDir(workspaceRoot), "job-bg-json.log"));
 });
 
 test("delegate exits 2 when --agent is passed without a value", async () => {
@@ -843,6 +1193,11 @@ test("delegate surfaces broker busy as exit code 3", async (t) => {
   assert.equal(result.exitCode, 3);
   assert.match(result.stderr, /BROKER_BUSY/);
   assert.match(result.stderr, /in-flight prompt turn/);
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-busy.json"), "utf8"),
+  );
+  assert.equal(record.status, "failed");
+  assert.match(record.errorMessage, /BROKER_BUSY/);
 });
 
 test("delegate defaults direct CLI use to terminal/default host identity", async (t) => {
@@ -921,7 +1276,7 @@ test("delegate writes update and finalized notifications to the NDJSON log", asy
   assert.equal(lines[2].method, "consult/finalized");
 });
 
-test("delegate json mode emits one final job summary object", async (t) => {
+test("delegate json mode emits one versioned final job result object", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   const client = new FakeBrokerClient();
@@ -944,16 +1299,20 @@ test("delegate json mode emits one final job summary object", async (t) => {
     jobId: "job-json",
     stopReason: "end_turn",
     sessionId: "session-json",
+    touchedFiles: ["src/fixed.mts"],
   });
   const result = await resultPromise;
 
-  const summary = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
-  assert.equal(summary.status, "completed");
-  assert.equal(summary.jobId, "job-json");
-  assert.equal(summary.sessionId, "session-json");
-  assert.equal(summary.stopReason, "end_turn");
-  assert.equal(summary.finalTextLength, "json text".length);
-  assert.equal(summary.logPath, path.join(logsDir(workspaceRoot), "job-json.log"));
+  assert.equal(result.stdout.trim().split("\n").length, 1);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.schemaVersion, 1);
+  assert.equal(summary.job.status, "completed");
+  assert.equal(summary.job.id, "job-json");
+  assert.equal(summary.outcome.sessionId, "session-json");
+  assert.equal(summary.outcome.stopReason, "end_turn");
+  assert.equal(summary.outcome.finalText, "json text");
+  assert.deepEqual(summary.artifacts.touchedFiles, ["src/fixed.mts"]);
+  assert.equal(summary.artifacts.logPath, path.join(logsDir(workspaceRoot), "job-json.log"));
 });
 
 interface BrokerRequest {
@@ -1081,5 +1440,46 @@ function agentTextUpdate(text: string, jobId = "job-happy") {
       sessionUpdate: "agent_message_chunk",
       content: { type: "text", text },
     },
+  };
+}
+
+function isolatedFixture(workspaceRoot: string, jobId: string): PreparedIsolatedWorkspace {
+  const transactionRoot = path.join(path.dirname(workspaceRoot), "data", "isolated-jobs", jobId);
+  const artifactsDir = path.join(transactionRoot, "artifacts");
+  return {
+    schemaVersion: 1,
+    jobId,
+    workspaceRoot,
+    executionRoot: path.join(transactionRoot, "worktree"),
+    transactionRoot,
+    artifactsDir,
+    cleanupMetadataPath: path.join(artifactsDir, "cleanup.json"),
+    headCommit: "a".repeat(40),
+    baselineTree: "b".repeat(40),
+    preparedAt: "2026-07-09T10:00:00.000Z",
+    maxBufferBytes: 1024,
+    seeded: {
+      stagedPatchBytes: 0,
+      unstagedPatchBytes: 0,
+      untrackedFiles: [],
+    },
+  };
+}
+
+function finalizedIsolation(
+  prepared: PreparedIsolatedWorkspace,
+): FinalizedIsolatedWorkspace {
+  return {
+    schemaVersion: 1,
+    jobId: prepared.jobId,
+    workspaceRoot: prepared.workspaceRoot,
+    executionRoot: prepared.executionRoot,
+    baselineTree: prepared.baselineTree,
+    patchPath: `${prepared.artifactsDir}/changes.patch`,
+    patchBytes: 123,
+    touchedFilesPath: `${prepared.artifactsDir}/touched-files.json`,
+    touchedFiles: ["src/changed.mts"],
+    cleanupMetadataPath: prepared.cleanupMetadataPath,
+    finalizedAt: "2026-07-09T10:01:00.000Z",
   };
 }

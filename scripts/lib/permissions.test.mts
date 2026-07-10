@@ -100,6 +100,8 @@ test("write-mode denies fetch", async () => {
       request: request("fetch", { url: "https://example.invalid" }),
       mode: "write",
       workspaceRoot: makeRoot(),
+      allowExecute: true,
+      sandbox: "bwrap",
     }),
     {
       allowed: false,
@@ -162,7 +164,7 @@ test("path confinement covers alternate destination-style rawInput keys", async 
   }
 });
 
-test("write-mode denies execute even with cwd inside workspace", async () => {
+test("write-mode denies execute without explicit opt-in even under bwrap", async () => {
   const workspaceRoot = makeRoot();
 
   assert.deepEqual(
@@ -170,30 +172,103 @@ test("write-mode denies execute even with cwd inside workspace", async () => {
       request: request("execute", { cwd: workspaceRoot }),
       mode: "write",
       workspaceRoot,
+      sandbox: "bwrap",
     }),
-    { allowed: false, reason: "execute denied in write mode" },
+    {
+      allowed: false,
+      reason: "execute denied in write mode (explicit opt-in required)",
+    },
   );
 });
 
-test("write-mode denies execute with cwd outside workspace", async () => {
+test("write-mode does not treat an isolated worktree marker as execute opt-in", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("execute", { cwd: workspaceRoot, isolatedWorkspace: true }),
+      mode: "write",
+      workspaceRoot,
+      sandbox: "bwrap",
+    }),
+    {
+      allowed: false,
+      reason: "execute denied in write mode (explicit opt-in required)",
+    },
+  );
+});
+
+test("write-mode denies opted-in execute without bwrap", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("execute", { cwd: workspaceRoot }),
+      mode: "write",
+      workspaceRoot,
+      allowExecute: true,
+      sandbox: "off",
+    }),
+    {
+      allowed: false,
+      reason: "execute denied in write mode (bwrap sandbox required)",
+    },
+  );
+});
+
+test("read-only denies opted-in execute under bwrap", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("execute", { cwd: workspaceRoot }),
+      mode: "read-only",
+      workspaceRoot,
+      allowExecute: true,
+      sandbox: "bwrap",
+    }),
+    { allowed: false, reason: "execute denied in read-only mode" },
+  );
+});
+
+test("write-mode denies opted-in bwrap execute with cwd outside workspace", async () => {
   assert.deepEqual(
     await decidePermission({
       request: request("execute", { cwd: "/tmp" }),
       mode: "write",
       workspaceRoot: makeRoot(),
+      allowExecute: true,
+      sandbox: "bwrap",
     }),
     { allowed: false, reason: "cwd outside workspace: /tmp" },
   );
 });
 
-test("write-mode denies execute with no cwd", async () => {
+test("write-mode allows explicitly opted-in confined execute under bwrap", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("execute", { cwd: workspaceRoot }),
+      mode: "write",
+      workspaceRoot,
+      allowExecute: true,
+      sandbox: "bwrap",
+    }),
+    { allowed: true },
+  );
+});
+
+test("write-mode treats an omitted execute cwd as the confined workspace root", async () => {
   assert.deepEqual(
     await decidePermission({
       request: request("execute", { command: "pwd" }),
       mode: "write",
       workspaceRoot: makeRoot(),
+      allowExecute: true,
+      sandbox: "bwrap",
     }),
-    { allowed: false, reason: "execute denied in write mode" },
+    { allowed: true },
   );
 });
 

@@ -322,7 +322,7 @@ async function defaultFetchAssetDigest({
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "consult-plugin",
+      "User-Agent": "consult-cli",
     },
   });
   if (!response.ok) {

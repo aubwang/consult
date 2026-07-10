@@ -91,18 +91,12 @@ test("buildAgentLaunch mounts profile auth config into the sandbox home", () => 
   const hostHome = makeRoot();
   const claudeDir = path.join(hostHome, ".claude");
   const codexDir = path.join(hostHome, ".codex");
-  const geminiDir = path.join(hostHome, ".gemini");
   fs.mkdirSync(claudeDir);
   fs.mkdirSync(codexDir);
-  fs.mkdirSync(geminiDir);
   const codexAuth = path.join(codexDir, "auth.json");
   const codexConfig = path.join(codexDir, "config.toml");
-  const geminiSettings = path.join(geminiDir, "settings.json");
-  const geminiOAuth = path.join(geminiDir, "oauth_creds.json");
   fs.writeFileSync(codexAuth, "{}");
   fs.writeFileSync(codexConfig, "model = \"test\"\n");
-  fs.writeFileSync(geminiSettings, "{}");
-  fs.writeFileSync(geminiOAuth, "{}");
 
   const claudeLaunch = buildAgentLaunch({
     binary: process.execPath,
@@ -124,17 +118,6 @@ test("buildAgentLaunch mounts profile auth config into the sandbox home", () => 
     sandbox: "bwrap",
     profileRegistryId: "codex",
   });
-  const geminiLaunch = buildAgentLaunch({
-    binary: process.execPath,
-    args: ["--version"],
-    cwd: workspaceRoot,
-    env: { PATH: process.env.PATH, HOME: hostHome },
-    workspaceRoot,
-    mode: "read-only",
-    sandbox: "bwrap",
-    profileRegistryId: "gemini",
-  });
-
   assert.ok(hasTriple(claudeLaunch.args, "--ro-bind", fs.realpathSync(claudeDir), "/tmp/.claude"));
   assert.equal(claudeLaunch.env.HOME, "/tmp");
   assert.ok(
@@ -150,70 +133,6 @@ test("buildAgentLaunch mounts profile auth config into the sandbox home", () => 
   );
   assert.equal(hasTriple(codexLaunch.args, "--ro-bind", fs.realpathSync(codexDir), "/tmp/.codex"), false);
   assert.equal(codexLaunch.env.HOME, "/tmp");
-  assert.ok(
-    hasTriple(
-      geminiLaunch.args,
-      "--ro-bind",
-      fs.realpathSync(geminiSettings),
-      "/tmp/.gemini/settings.json",
-    ),
-  );
-  assert.ok(
-    hasTriple(
-      geminiLaunch.args,
-      "--ro-bind",
-      fs.realpathSync(geminiOAuth),
-      "/tmp/.gemini/oauth_creds.json",
-    ),
-  );
-  assert.equal(hasTriple(geminiLaunch.args, "--ro-bind", fs.realpathSync(geminiDir), "/tmp/.gemini"), false);
-  assert.equal(geminiLaunch.env.HOME, "/tmp");
-});
-
-test("buildAgentLaunch mounts Gemini ADC credentials from the environment", () => {
-  const workspaceRoot = makeRoot();
-  const credentialsDir = makeRoot();
-  const credentialsPath = path.join(credentialsDir, "adc.json");
-  fs.writeFileSync(credentialsPath, "{}");
-
-  const launch = buildAgentLaunch({
-    binary: process.execPath,
-    args: ["--version"],
-    cwd: workspaceRoot,
-    env: {
-      PATH: process.env.PATH,
-      GOOGLE_APPLICATION_CREDENTIALS: credentialsPath,
-    },
-    workspaceRoot,
-    mode: "read-only",
-    sandbox: "bwrap",
-    profileRegistryId: "gemini",
-  });
-
-  assert.ok(
-    hasTriple(launch.args, "--ro-bind", fs.realpathSync(credentialsPath), credentialsPath),
-  );
-});
-
-test("buildAgentLaunch skips missing Gemini ADC credentials", () => {
-  const workspaceRoot = makeRoot();
-  const missingPath = path.join(workspaceRoot, "missing-adc.json");
-
-  const launch = buildAgentLaunch({
-    binary: process.execPath,
-    args: ["--version"],
-    cwd: workspaceRoot,
-    env: {
-      PATH: process.env.PATH,
-      GOOGLE_APPLICATION_CREDENTIALS: missingPath,
-    },
-    workspaceRoot,
-    mode: "read-only",
-    sandbox: "bwrap",
-    profileRegistryId: "gemini",
-  });
-
-  assert.equal(hasTriple(launch.args, "--ro-bind", missingPath, missingPath), false);
 });
 
 test("buildAgentLaunch does not add profile-specific opencode runtime mounts", () => {
@@ -337,9 +256,6 @@ test(
     fs.mkdirSync(codexDir);
     fs.writeFileSync(path.join(claudeDir, "token"), "ok-auth");
     fs.writeFileSync(path.join(codexDir, "auth.json"), "ok-codex-auth");
-    const geminiDir = path.join(hostHome, ".gemini");
-    fs.mkdirSync(geminiDir);
-    fs.writeFileSync(path.join(geminiDir, "oauth_creds.json"), "ok-gemini-auth");
     const claudeLaunch = buildAgentLaunch({
       binary: process.execPath,
       args: [
@@ -366,20 +282,6 @@ test(
       sandbox: "bwrap",
       profileRegistryId: "codex",
     });
-    const geminiLaunch = buildAgentLaunch({
-      binary: process.execPath,
-      args: [
-        "-e",
-        "require('fs').writeFileSync(`${process.env.HOME}/.gemini/runtime`, 'ok-runtime'); process.stdout.write(require('fs').readFileSync(`${process.env.HOME}/.gemini/oauth_creds.json`, 'utf8'))",
-      ],
-      cwd: workspaceRoot,
-      env: { PATH: process.env.PATH, HOME: hostHome },
-      workspaceRoot,
-      mode: "read-only",
-      sandbox: "bwrap",
-      profileRegistryId: "gemini",
-    });
-
     const claudeResult = spawnSync(claudeLaunch.binary, claudeLaunch.args, {
       cwd: claudeLaunch.cwd,
       env: claudeLaunch.env,
@@ -390,18 +292,10 @@ test(
       env: codexLaunch.env,
       encoding: "utf8",
     });
-    const geminiResult = spawnSync(geminiLaunch.binary, geminiLaunch.args, {
-      cwd: geminiLaunch.cwd,
-      env: geminiLaunch.env,
-      encoding: "utf8",
-    });
-
     assert.equal(claudeResult.status, 0, claudeResult.stderr);
     assert.equal(claudeResult.stdout, "ok-auth");
     assert.equal(codexResult.status, 0, codexResult.stderr);
     assert.equal(codexResult.stdout, "ok-codex-auth");
-    assert.equal(geminiResult.status, 0, geminiResult.stderr);
-    assert.equal(geminiResult.stdout, "ok-gemini-auth");
   },
 );
 

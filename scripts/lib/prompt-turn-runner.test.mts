@@ -97,6 +97,65 @@ test("runPromptTurn streams updates, writes logs, and finalizes the job record",
   assert.equal(brokerInput!.jobId, "job-turn");
 });
 
+test("runPromptTurn streams and logs tool progress without adding it to finalText", async () => {
+  const client = new FakeBrokerClient();
+  const logs: unknown[] = [];
+  const records: Array<Record<string, unknown>> = [];
+  const output = createOutput();
+
+  const resultPromise = runPromptTurn({
+    workspaceRoot: "/workspace",
+    profileEntry: {},
+    jobRecord: {
+      jobId: "job-progress",
+      kind: "delegate",
+      status: "queued",
+      profile: "codex",
+    },
+    deps: {
+      ensureBrokerSession: async () => ({ client }),
+      appendLogLine: async (_workspaceRoot, _jobId, notification) => {
+        logs.push(notification);
+      },
+      writeJobRecord: async (_workspaceRoot, _jobId, record) => {
+        records.push(structuredClone(record));
+      },
+    },
+    output,
+    renderUpdate(notification) {
+      const update = (notification as any).update ?? notification;
+      if (update.sessionUpdate === "tool_call") {
+        return `[tool_call ${update.kind}]\n`;
+      }
+      return update.content?.text ?? "";
+    },
+  });
+
+  await client.waitForRequest("consult/run");
+  client.notify("consult/update", {
+    jobId: "job-progress",
+    update: { sessionUpdate: "tool_call", kind: "shell", title: "run tests" },
+  });
+  client.notify("consult/update", {
+    jobId: "job-progress",
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "tests pass" },
+    },
+  });
+  client.notify("consult/finalized", {
+    jobId: "job-progress",
+    stopReason: "end_turn",
+    sessionId: "session-progress",
+  });
+
+  const result = (await resultPromise) as any;
+  assert.equal(output.captured.stdout, "[tool_call shell]\ntests pass");
+  assert.equal(result.finalText, "tests pass");
+  assert.equal(records.at(-1)!.finalText, "tests pass");
+  assert.equal(logs.length, 3);
+});
+
 test("runPromptTurn lets a variant stop after broker acceptance", async () => {
   const client = new FakeBrokerClient();
   const output = createOutput();

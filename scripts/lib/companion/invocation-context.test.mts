@@ -104,6 +104,26 @@ test("resolveInvocationContext returns workspace, host identity, profiles, overr
   assert.deepEqual(context.selected.profileEntry, { registryId: "codex" });
 });
 
+test("resolveInvocationContext preserves delegated original Workspace identity from the environment", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-original-workspace-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const context = await resolveInvocationContext({
+    args: { positional: [], flags: {} },
+    env: { CONSULT_WORKSPACE: root, CONSULT_HOST: "terminal" },
+    deps: {
+      loadProfiles: async () => ({
+        schemaVersion: 1,
+        default: "codex",
+        profiles: { codex: {} as never },
+      }),
+      loadOverride: async () => null,
+    },
+  });
+
+  assert.equal(context.workspaceRoot, await fs.realpath(root));
+});
+
 test("loadWorkspaceOverride rejects malformed JSON with a named error", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-override-"));
   const originalDataDir = process.env.CONSULT_DATA_DIR;

@@ -1,8 +1,10 @@
 import {
   isFinalStatus,
+  jobLogPath,
   listWorkspaceJobRecords,
   readWorkspaceJobRecord,
 } from "../job-records.mts";
+import { jobResultEnvelope } from "../job-result-contract.mts";
 import { addJobRelationships } from "../delegation-chain.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
@@ -55,7 +57,12 @@ export async function runResult({ args, deps = {} }: RunResultOptions): Promise<
     }
     return {
       exitCode: 0,
-      stdout: `${JSON.stringify(addJobRelationships(record, records))}\n`,
+      stdout: `${JSON.stringify(
+        jobResultEnvelope(record, {
+          childJobIds: addJobRelationships(record, records).childJobIds,
+          logPath: jobLogPath(workspaceRoot, jobId),
+        }),
+      )}\n`,
       stderr: "",
     };
   }

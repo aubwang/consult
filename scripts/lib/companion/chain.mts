@@ -1,9 +1,14 @@
 import { addJobRelationships } from "../delegation-chain.mts";
 import {
+  jobLogPath,
   listWorkspaceJobRecords,
   readWorkspaceJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
+import {
+  JOB_RESULT_SCHEMA_VERSION,
+  jobResultPayload,
+} from "../job-result-contract.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import type { ParsedArgs } from "../args.mts";
 import { briefText } from "./brief-text.mts";
@@ -82,7 +87,20 @@ export async function runChain({ args, deps = {} }: RunChainOptions): Promise<Co
   if (args.flags?.json) {
     return {
       exitCode: 0,
-      stdout: `${JSON.stringify({ rollup, records: chainRecordRows })}\n`,
+      stdout: `${JSON.stringify({
+        schemaVersion: JOB_RESULT_SCHEMA_VERSION,
+        chain: rollup,
+        jobs: enrichedRecords.map((record) => ({
+          ...jobResultPayload(record, {
+            childJobIds: record.childJobIds,
+            logPath:
+              typeof record.jobId === "string"
+                ? jobLogPath(workspaceRoot, record.jobId)
+                : null,
+          }),
+          relations: recordRelations(record, rollup, jobId),
+        })),
+      })}\n`,
       stderr: "",
     };
   }

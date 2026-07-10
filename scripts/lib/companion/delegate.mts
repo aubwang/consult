@@ -5,12 +5,27 @@ import { boolFlag, missingFlagValueError, stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { resolveNewJobChain } from "../delegation-chain.mts";
 import {
+  appendPinnedDiff,
+  getDiff as defaultGetDiff,
+  pinnedDiffErrorMessage,
+} from "../git.mts";
+import type { GetDiffOptions } from "../git.mts";
+import {
   createQueuedJobRecord,
+  failJobRecord,
+  jobLogPath,
   writeJobRecord as defaultWriteJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
+import { jobResultEnvelope } from "../job-result-contract.mts";
 import { defaultGenerateJobId } from "../job-ids.mts";
+import {
+  cleanupIsolatedWorkspace as defaultCleanupIsolatedWorkspace,
+  prepareIsolatedWorkspace as defaultPrepareIsolatedWorkspace,
+} from "../isolated-workspace.mts";
+import type { PreparedIsolatedWorkspace } from "../isolated-workspace.mts";
 import { processStartTime } from "../process-identity.mts";
+import { normalizeAgentSandbox } from "../process-sandbox.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import { tryResolveInvocationContext } from "./invocation-context.mts";
@@ -33,7 +48,10 @@ export interface DelegateDeps
   now?: () => string;
   generateJobId?: () => string;
   writeJobRecord?: typeof defaultWriteJobRecord;
+  getDiff?: (options: GetDiffOptions) => Promise<string>;
   spawn?: typeof defaultSpawn;
+  prepareIsolatedWorkspace?: typeof defaultPrepareIsolatedWorkspace;
+  cleanupIsolatedWorkspace?: typeof defaultCleanupIsolatedWorkspace;
   [key: string]: unknown;
 }
 
@@ -55,6 +73,10 @@ export interface ValidatedDelegateArgs {
   resume?: boolean;
   resumeJobId?: string;
   background?: boolean;
+  includeDiff?: boolean;
+  baseRef?: string;
+  isolated?: boolean;
+  allowExecute?: boolean;
 }
 
 const PROMPT_TRUNCATE_BYTES = 4096;
@@ -72,7 +94,7 @@ export async function runDelegate({
   deps = {},
 }: RunDelegateOptions): Promise<DelegateResult> {
   const output = createOutput(deps);
-  const validated = validateArgs(args);
+  const validated = validateArgs(args, env);
   if (validated.error) {
     output.stderr(`${validated.error}\n`);
     return output.result(2);
@@ -138,6 +160,24 @@ export async function runDelegate({
     }
   }
 
+  let delegatedPrompt = validated.prompt as string;
+  if (validated.includeDiff) {
+    try {
+      const getDiff = deps.getDiff ?? defaultGetDiff;
+      const diff = await getDiff(
+        validated.baseRef
+          ? { baseRef: validated.baseRef, cwd: workspaceRoot }
+          : { cwd: workspaceRoot },
+      );
+      delegatedPrompt = appendPinnedDiff(delegatedPrompt, diff, {
+        baseRef: validated.baseRef ?? null,
+      });
+    } catch (error) {
+      output.stderr(`${pinnedDiffErrorMessage(error)}\n`);
+      return output.result(2);
+    }
+  }
+
   const now = deps.now ?? (() => new Date().toISOString());
   const generateJobId = deps.generateJobId ?? defaultGenerateJobId;
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
@@ -167,6 +207,17 @@ export async function runDelegate({
     output.stderr(`${chain.error}\n`);
     return output.result(2);
   }
+  let isolatedWorkspace: PreparedIsolatedWorkspace | undefined;
+  if (validated.isolated) {
+    try {
+      isolatedWorkspace = await (
+        deps.prepareIsolatedWorkspace ?? defaultPrepareIsolatedWorkspace
+      )({ workspaceRoot, jobId });
+    } catch (error) {
+      output.stderr(`isolated workspace preparation failed: ${(error as Error).message}\n`);
+      return output.result(1);
+    }
+  }
   const submittedAt = now();
   const jobRecord = createQueuedJobRecord({
     jobId,
@@ -177,9 +228,16 @@ export async function runDelegate({
     host: hostIdentity.host,
     hostSessionId: hostIdentity.hostSessionId,
     profile: selected.profile,
-    prompt: validated.background ? validated.prompt : truncatePrompt(validated.prompt as string),
+    prompt: validated.background ? delegatedPrompt : truncatePrompt(validated.prompt as string),
     model: validated.model,
     effort: validated.effort,
+    ...(validated.includeDiff
+      ? { includeDiff: true, baseRef: validated.baseRef }
+      : {}),
+    isolated: validated.isolated,
+    allowExecute: validated.allowExecute,
+    isolatedWorkspace,
+    cleanupMetadataPath: isolatedWorkspace?.cleanupMetadataPath,
     resumeSessionId: resumeSessionId as string | undefined,
     // Foreground jobs run in-process (ADR-0021); record the runner kind,
     // companion pid, and pid start time so `consult cancel` can signal it
@@ -193,23 +251,52 @@ export async function runDelegate({
         }),
   });
 
-  await writeJobRecord(workspaceRoot, jobId, jobRecord);
+  try {
+    await writeJobRecord(workspaceRoot, jobId, jobRecord);
+  } catch (error) {
+    if (isolatedWorkspace) {
+      await (deps.cleanupIsolatedWorkspace ?? defaultCleanupIsolatedWorkspace)(
+        isolatedWorkspace,
+      ).catch(() => {});
+    }
+    throw error;
+  }
 
   if (validated.background) {
     const spawn = deps.spawn ?? defaultSpawn;
-    const child = spawn(
-      process.execPath,
-      [companionCliPath(), "task-worker", "--job-id", jobId],
-      {
-        cwd: workspaceRoot,
-        detached: true,
-        stdio: "ignore",
-        env: { ...process.env, ...env },
-      },
-    );
+    let child;
+    try {
+      child = spawn(
+        process.execPath,
+        [companionCliPath(), "task-worker", "--job-id", jobId],
+        {
+          cwd: workspaceRoot,
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env, ...env },
+        },
+      );
+    } catch (error) {
+      if (isolatedWorkspace) {
+        await (deps.cleanupIsolatedWorkspace ?? defaultCleanupIsolatedWorkspace)(
+          isolatedWorkspace,
+        ).catch(() => {});
+      }
+      const message = `task worker spawn failed: ${(error as Error).message}`;
+      failJobRecord(jobRecord, { now, errorMessage: message });
+      await writeJobRecord(workspaceRoot, jobId, jobRecord);
+      output.stderr(`${message}\n`);
+      return output.result(1);
+    }
     child.unref();
     if (validated.json) {
-      output.stdout(`${JSON.stringify({ status: "queued", jobId })}\n`);
+      output.stdout(
+        `${JSON.stringify(
+          jobResultEnvelope(jobRecord, {
+            logPath: jobLogPath(workspaceRoot, jobId),
+          }),
+        )}\n`,
+      );
     } else {
       output.stdout(`consult delegate ${jobId} queued\nconsult status ${jobId}\n`);
     }
@@ -218,9 +305,10 @@ export async function runDelegate({
 
   return runDelegateOnce({
     workspaceRoot,
+    executionRoot: isolatedWorkspace?.executionRoot,
     profileEntry: selected.profileEntry!,
     jobRecord,
-    prompt: validated.prompt,
+    prompt: delegatedPrompt,
     model: validated.model,
     effort: validated.effort,
     resumeSessionId,
@@ -228,10 +316,16 @@ export async function runDelegate({
     output,
     json: validated.json,
     inline: true,
+    markFailedOnBrokerError: true,
+    allowExecute: validated.allowExecute,
+    isolatedWorkspace,
   });
 }
 
-function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
+function validateArgs(
+  args: ParsedArgs,
+  env: Record<string, string | undefined> = process.env,
+): ValidatedDelegateArgs {
   const flags = args.flags ?? {};
   const missingValue = missingFlagValueError(flags, [
     "agent",
@@ -245,6 +339,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     "parent-job-id",
     "resume-job",
     "prompt",
+    "base",
   ]);
   if (missingValue) {
     return { error: missingValue };
@@ -256,6 +351,10 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const background = boolFlag(flags.background);
   const wait = boolFlag(flags.wait);
   const resumeJobId = stringFlag(flags["resume-job"]);
+  const includeDiff = boolFlag(flags["include-diff"]);
+  const baseRef = stringFlag(flags.base);
+  const isolated = boolFlag(flags.isolated);
+  const allowExecute = boolFlag(flags["allow-exec"]);
   if (write && readOnly) {
     return { error: "--write and --read-only are mutually exclusive" };
   }
@@ -270,6 +369,26 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   }
   if (background && wait) {
     return { error: "--background and --wait are mutually exclusive" };
+  }
+  if (baseRef !== undefined && !includeDiff) {
+    return { error: "--base requires --include-diff" };
+  }
+  if (isolated && !write) {
+    return { error: "--isolated requires --write" };
+  }
+  if (allowExecute && (!write || !isolated)) {
+    return { error: "--allow-exec requires --write --isolated" };
+  }
+  if (allowExecute) {
+    let sandbox;
+    try {
+      sandbox = normalizeAgentSandbox(env.CONSULT_AGENT_SANDBOX);
+    } catch (error) {
+      return { error: (error as Error).message };
+    }
+    if (sandbox !== "bwrap") {
+      return { error: "--allow-exec requires CONSULT_AGENT_SANDBOX=bwrap" };
+    }
   }
   const promptFromFlag = stringFlag(flags.prompt);
   const promptFromPositionals = (args.positional ?? []).join(" ").trim();
@@ -289,6 +408,10 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     resume,
     resumeJobId,
     background,
+    includeDiff,
+    baseRef,
+    isolated,
+    allowExecute,
   };
 }
 
@@ -313,6 +436,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return result;
 }
 
-function companionCliPath(): string {
-  return fileURLToPath(new URL("../../consult-companion.mts", import.meta.url));
+export function companionCliPath(moduleUrl: string = import.meta.url): string {
+  const extension = moduleUrl.endsWith(".mts") ? ".mts" : ".mjs";
+  return fileURLToPath(new URL(`../../consult-companion${extension}`, moduleUrl));
 }

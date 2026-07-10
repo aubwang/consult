@@ -7,6 +7,11 @@ import {
   readWorkspaceJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
+import {
+  JOB_RESULT_SCHEMA_VERSION,
+  jobResultEnvelope,
+  jobResultPayload,
+} from "../job-result-contract.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { briefText } from "./brief-text.mts";
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
@@ -71,7 +76,10 @@ export async function runStatus({
       return {
         exitCode: 0,
         stdout: `${JSON.stringify({
-          record: enrichedRecord,
+          ...jobResultEnvelope(enrichedRecord, {
+            childJobIds: enrichedRecord.childJobIds,
+            logPath: jobLogPath(workspaceRoot, jobId),
+          }),
           logTail: await readLogTail(workspaceRoot, jobId),
         })}\n`,
         stderr: "",
@@ -104,7 +112,18 @@ export async function runStatus({
   return {
     exitCode: 0,
     stdout: args.flags?.json
-      ? `${JSON.stringify(enrichedRecords)}\n`
+      ? `${JSON.stringify({
+          schemaVersion: JOB_RESULT_SCHEMA_VERSION,
+          jobs: enrichedRecords.map((record) =>
+            jobResultPayload(record, {
+              childJobIds: record.childJobIds,
+              logPath:
+                typeof record.jobId === "string"
+                  ? jobLogPath(workspaceRoot, record.jobId)
+                  : null,
+            }),
+          ),
+        })}\n`
       : renderJobTable(enrichedRecords),
     stderr: "",
   };
