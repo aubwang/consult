@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -194,6 +195,8 @@ async function assertInstalledConfinedDoctor(binary, temporaryRoot, installer) {
   const home = path.join(root, "home");
   const codexHome = path.join(home, ".codex");
   const fakeBin = path.join(root, "bin");
+  const hostReadCanary = path.join(root, "host-read-canary.txt");
+  const hostWriteCanary = path.join(root, "host-write-canary.txt");
   await Promise.all([
     fs.mkdir(workspace, { recursive: true }),
     fs.mkdir(data, { recursive: true }),
@@ -201,11 +204,24 @@ async function assertInstalledConfinedDoctor(binary, temporaryRoot, installer) {
     fs.mkdir(fakeBin, { recursive: true }),
   ]);
   await run("git", ["init"], { cwd: workspace });
+  await fs.writeFile(hostReadCanary, "must remain unreadable\n", { mode: 0o600 });
+  const sentinel = await startLoopbackSentinel();
   const fakeAgent = path.join(workspace, "packed-fake-acp.mjs");
   await fs.writeFile(
     fakeAgent,
     [
       'import readline from "node:readline";',
+      'import fs from "node:fs/promises";',
+      'import net from "node:net";',
+      `try { await fs.readFile(${JSON.stringify(hostReadCanary)}); process.exit(41); } catch {}`,
+      `try { await fs.writeFile(${JSON.stringify(hostWriteCanary)}, "sandbox-local"); } catch {}`,
+      "const directLoopback = await new Promise((resolve) => {",
+      `  const socket = net.connect({ host: "127.0.0.1", port: ${sentinel.port} });`,
+      "  const timer = setTimeout(() => { socket.destroy(); resolve(false); }, 500);",
+      '  socket.once("connect", () => { clearTimeout(timer); socket.destroy(); resolve(true); });',
+      '  socket.once("error", () => { clearTimeout(timer); resolve(false); });',
+      "});",
+      "if (directLoopback) process.exit(43);",
       "const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });",
       "for await (const line of lines) {",
       "  const message = JSON.parse(line);",
@@ -234,21 +250,44 @@ async function assertInstalledConfinedDoctor(binary, temporaryRoot, installer) {
       },
     })}\n`,
   );
-  const result = await run(binary, ["doctor", "--agent", "packed-codex", "--json"], {
-    cwd: workspace,
-    env: {
-      ...process.env,
-      HOME: home,
-      CODEX_HOME: codexHome,
-      CONSULT_DATA_DIR: data,
-      PATH: [fakeBin, path.dirname(process.execPath), process.env.PATH]
-        .filter(Boolean)
-        .join(path.delimiter),
-    },
-  });
+  let result;
+  try {
+    result = await run(binary, ["doctor", "--agent", "packed-codex", "--json"], {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        HOME: home,
+        CODEX_HOME: codexHome,
+        CONSULT_DATA_DIR: data,
+        PATH: [fakeBin, path.dirname(process.execPath), process.env.PATH]
+          .filter(Boolean)
+          .join(path.delimiter),
+      },
+    });
+  } finally {
+    await sentinel.close();
+  }
   const report = JSON.parse(result.stdout);
   assert.equal(report.authority?.confined?.ok, true);
   assert.equal(report.authority?.profileRegistryId, "codex");
+  await assert.rejects(fs.access(hostWriteCanary));
+}
+
+async function startLoopbackSentinel() {
+  const server = net.createServer((socket) => socket.end());
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert(address && typeof address === "object");
+  return {
+    port: address.port,
+    close: async () =>
+      await new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
 }
 
 function delay(ms) {

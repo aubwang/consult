@@ -50,6 +50,14 @@ fresh confined Profile process, and verifies the updated archive. An
 `--expect unsupported` run additionally attempts delegation, requires the
 stable nesting diagnostic, and proves no Job was created.
 
+`CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check` installs the produced
+tarball through both npm and Bun, runs a successful inherited background ACP
+Job, and initializes a fake built-in Codex Profile through the real confined
+adapter. The fake Profile proves a host-only read canary is hidden, an
+outside-boundary write does not reach the Host filesystem (Linux may satisfy
+the syscall in an ephemeral tmpfs), and an unapproved host-loopback listener
+is unreachable.
+
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |
