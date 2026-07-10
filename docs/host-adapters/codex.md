@@ -16,10 +16,10 @@ Use `--host` / `--host-session` or `CONSULT_HOST` /
 
 ## Manual setup
 
-Install the current GitHub version:
+Install the supported npm package:
 
 ```text
-npm install --global github:aubwang/consult
+npm install --global @aubwang/consult
 ```
 
 Install and select at least one Profile separately. Profile setup is shared
@@ -28,7 +28,15 @@ across Hosts:
 ```text
 consult setup
 consult agents --set codex --host codex
+consult doctor --agent codex
 ```
+
+Consult-managed confinement is the default, but a second native sandbox may be
+rejected when Consult itself runs inside an already-confined Codex Host. Doctor
+reports that condition before a Job is created. Prefer delegation from an
+unrestricted sibling terminal when a hard child boundary is required; use
+`--sandbox inherit` only when the trusted Host deliberately accepts ambient
+authority. Consult never retries with inheritance automatically.
 
 ## Use
 

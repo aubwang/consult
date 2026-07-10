@@ -10,6 +10,7 @@ import {
 import { omitUndefined } from "./objects.mts";
 import { safeSegment } from "./path-segments.mts";
 import type { PreparedIsolatedWorkspace } from "./isolated-workspace.mts";
+import type { JobAuthority } from "./job-authority.mts";
 
 export const JOB_STATUS = Object.freeze({
   QUEUED: "queued",
@@ -33,6 +34,7 @@ export interface JobRecord extends Record<string, unknown> {
   host?: string;
   hostSessionId?: string;
   profile?: string;
+  authority?: JobAuthority;
   mode?: string;
   prompt?: string;
   status?: string;
@@ -50,6 +52,8 @@ export interface JobRecord extends Record<string, unknown> {
   model?: string;
   effort?: string;
   resumeSessionId?: string;
+  resumeJobId?: string;
+  sessionStateArchived?: boolean;
   baseRef?: string;
   includeDiff?: boolean;
   isolated?: boolean;
@@ -220,6 +224,7 @@ export interface BrokerJobMetadataFields {
   host?: string;
   hostSessionId?: string;
   profile?: string;
+  authority?: JobAuthority;
   mode?: string;
   prompt?: string;
   submittedAt?: string;
@@ -229,6 +234,8 @@ export interface BrokerJobMetadataFields {
   model?: string;
   effort?: string;
   resumeSessionId?: string;
+  resumeJobId?: string;
+  sessionStateArchived?: boolean;
   baseRef?: string;
   isolated?: boolean;
   allowExecute?: boolean;
@@ -238,6 +245,7 @@ export interface FinalizedJobOutcome {
   stopReason?: string;
   sessionId?: string;
   errorMessage?: string;
+  sessionStateArchived?: boolean;
 }
 
 export interface BrokerJobSnapshot extends BrokerJobMetadataFields {
@@ -256,6 +264,7 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["host", job.host],
       ["hostSessionId", job.hostSessionId],
       ["profile", job.profile],
+      ["authority", job.authority],
       ["mode", job.mode],
       ["prompt", job.prompt],
       ["submittedAt", job.submittedAt],
@@ -265,6 +274,8 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["model", job.model],
       ["effort", job.effort],
       ["resumeSessionId", job.resumeSessionId],
+      ["resumeJobId", job.resumeJobId],
+      ["sessionStateArchived", job.sessionStateArchived],
       ["baseRef", job.baseRef],
       ["isolated", job.isolated],
       ["allowExecute", job.allowExecute],
@@ -283,6 +294,7 @@ export function finalizedBrokerJobRecord(
     ...brokerJobMetadata(job),
     status: statusFromStopReason(finalized.stopReason),
     stopReason: finalized.stopReason,
+    errorMessage: finalized.errorMessage,
     sessionId: finalized.sessionId,
     startedAt: job.startedAt,
     completedAt: job.completedAt,

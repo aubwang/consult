@@ -29,8 +29,9 @@ consult result <job-id>
 
 ## Model And Effort
 
-Default Codex model: leave `--model` unset so the configured Codex Profile uses
-its default.
+Default Codex model: leave `--model` unset to use the confined Codex runtime's
+default. Host `config.toml` is not copied; pass an explicit model when that
+file controls the intended choice.
 
 If the user asks for a specific Codex model or reasoning effort, preserve it:
 
@@ -58,6 +59,11 @@ and focused checks.
 ## Rules
 
 - Default to `--read-only`.
+- Keep the default confined authority. If preflight fails in the current Host
+  context, report it; do not retry with `--sandbox inherit` silently.
+- Add `--allow-fetch` only when the delegated Codex itself needs task-specific
+  public TCP/443 research and the increased prompt-injection exfiltration risk is
+  acceptable.
 - Do not ask the delegated Codex to edit files unless the user explicitly asks for
   that.
 - Delegate to the `codex` Profile only; do not substitute a different

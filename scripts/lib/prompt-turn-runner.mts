@@ -12,6 +12,8 @@ import { createNullOutput } from "./null-output.mts";
 import type { NullOutput, NullOutputResult } from "./null-output.mts";
 import { omitUndefined } from "./objects.mts";
 import { extractAgentMessageText } from "./session-update-renderer.mts";
+import { canonicalRunAuthority } from "./job-agent.mts";
+import type { JobAuthority } from "./job-authority.mts";
 
 export interface PromptTurnBrokerClient {
   request(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -28,6 +30,7 @@ export interface EnsureBrokerSessionInput {
   host?: string;
   hostSessionId?: string;
   profile?: string;
+  authority: JobAuthority;
   profileEntry: unknown;
 }
 
@@ -40,6 +43,7 @@ export interface FinalizedNotification {
   sessionId?: string;
   touchedFiles?: string[];
   errorMessage?: string;
+  sessionStateArchived?: boolean;
 }
 
 export interface PromptTurnContext {
@@ -119,6 +123,12 @@ export async function runPromptTurn({
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
   const appendLogLine = deps.appendLogLine ?? defaultAppendLogLine;
   const maxFinalTextChars = deps.maxFinalTextChars ?? DEFAULT_MAX_FINAL_TEXT_CHARS;
+  const authority = canonicalRunAuthority(jobRecord);
+  Object.assign(jobRecord, {
+    authority,
+    mode: authority.mode,
+    allowExecute: authority.allowExecute,
+  });
 
   const { client } = await (deps.ensureBrokerSession ??
     (defaultEnsureBrokerSession as (
@@ -130,6 +140,7 @@ export async function runPromptTurn({
     host: jobRecord.host,
     hostSessionId: jobRecord.hostSessionId,
     profile: jobRecord.profile,
+    authority,
     profileEntry,
   });
 
@@ -204,6 +215,9 @@ export async function runPromptTurn({
         finalText,
         errorMessage: finalizedNotification.errorMessage,
       });
+      if (finalizedNotification.sessionStateArchived) {
+        jobRecord.sessionStateArchived = true;
+      }
       await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord).catch(reportWriteFailure);
       finalizedResolve(finalizedNotification);
     });
@@ -214,7 +228,6 @@ export async function runPromptTurn({
     accepted = await client.request("consult/run", omitUndefined({
       jobId: jobRecord.jobId,
       kind: jobRecord.kind,
-      mode: jobRecord.mode,
       host: jobRecord.host,
       hostSessionId: jobRecord.hostSessionId,
       profile: jobRecord.profile,
@@ -223,11 +236,14 @@ export async function runPromptTurn({
       parentJobId: jobRecord.parentJobId,
       delegationDepth: jobRecord.delegationDepth,
       resume: jobRecord.resumeSessionId ?? null,
+      resumeJobId: jobRecord.resumeJobId ?? null,
       prompt: prompt ?? jobRecord.prompt,
       model: jobRecord.model,
       effort: jobRecord.effort,
-      allowExecute: jobRecord.allowExecute === true ? true : undefined,
       ...payloadFields,
+      authority,
+      mode: authority.mode,
+      allowExecute: authority.allowExecute ? true : undefined,
     }));
   } catch (error) {
     const brokerError = error as BrokerErrorLike;

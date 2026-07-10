@@ -90,6 +90,33 @@ test("ensureBrokerSession reuses a live daemon recorded in the broker file", asy
   assert.equal(((await second.client.request("consult/ping", {}, { timeoutMs: 150 })) as { ok: boolean }).ok, true);
 });
 
+test("ensureBrokerSession replaces a live daemon pinned to different authority", async (t) => {
+  if (socketListenBlocked) {
+    return t.skip(socketBlockedMessage);
+  }
+  const harness = await createHarness(t);
+  const first = await ensureBrokerSession(harness.input);
+  const firstState = JSON.parse(await fsp.readFile(harness.brokerFile, "utf8"));
+  const nextInput = {
+    ...harness.input,
+    authority: {
+      ...harness.input.authority,
+      mode: "write" as const,
+    },
+  };
+  const second = await ensureBrokerSession(nextInput);
+  t.after(async () => {
+    await first.client.close().catch(() => {});
+    await second.client.close().catch(() => {});
+    await teardownBrokerSession(nextInput).catch(() => {});
+  });
+
+  const secondState = JSON.parse(await fsp.readFile(harness.brokerFile, "utf8"));
+  assert.equal(second.alreadyRunning, false);
+  assert.notEqual(secondState.pid, firstState.pid);
+  assert.deepEqual(secondState.authority, nextInput.authority);
+});
+
 test("ensureBrokerSession replaces a stale broker file with a new daemon", async (t) => {
   if (socketListenBlocked) {
     return t.skip(socketBlockedMessage);
@@ -284,6 +311,13 @@ async function createHarness(t: TestContext) {
     host: "claude-code",
     profile: "codex",
     hostSessionId: "claude-1",
+    authority: {
+      schemaVersion: 1 as const,
+      mode: "read-only" as const,
+      confinement: "inherit" as const,
+      allowFetch: false,
+      allowExecute: false,
+    },
     profileEntry: {
       binary: process.execPath,
       args: [fakeAgentPath, "sessions"],

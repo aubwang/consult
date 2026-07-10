@@ -3,15 +3,26 @@ import os from "node:os";
 import { cancelPrompt } from "./acp-client.mts";
 import type { StartedAgent } from "./acp-client.mts";
 import { createBrokerJobRuntime } from "./broker-job-runtime.mts";
-import type { BrokerJob, BrokerJobSocketLike } from "./broker-job-runtime.mts";
+import type {
+  BrokerJob,
+  BrokerJobSocketLike,
+  CreateBrokerJobRuntimeOptions,
+} from "./broker-job-runtime.mts";
 import type { BrokerProfileEntry } from "./broker-lifecycle.mts";
 import {
   agentErrorMessage,
+  canonicalizeRunParams,
   hashRunPayload,
   runAgentJobTurn,
   startJobAgent,
 } from "./job-agent.mts";
-import type { AgentSessionState, CodedAgentError } from "./job-agent.mts";
+import type {
+  AgentSessionState,
+  CanonicalConsultRunParams,
+  CodedAgentError,
+} from "./job-agent.mts";
+import { assertMatchingJobAuthority } from "./job-authority.mts";
+import type { JobAuthority } from "./job-authority.mts";
 import {
   finalizedBrokerJobRecord,
   finalizeJobRecord,
@@ -40,6 +51,14 @@ import type { ConsultRunParams } from "../consult-broker.mts";
 
 export const INLINE_CANCEL_ACK_TIMEOUT_MS = 2000;
 
+export type InlineJobReliabilityOptions = Pick<
+  CreateBrokerJobRuntimeOptions,
+  | "maxWallClockMs"
+  | "maxPersistedLogBytes"
+  | "scheduleWallClock"
+  | "clearWallClock"
+>;
+
 export async function ensureInlineSession(
   input: EnsureBrokerSessionInput,
 ): Promise<EnsureBrokerSessionResult> {
@@ -52,9 +71,16 @@ export function createInlineClient({
   host,
   hostSessionId,
   profile,
+  authority: expectedAuthority,
   profileEntry,
   cancelAckTimeoutMs = INLINE_CANCEL_ACK_TIMEOUT_MS,
-}: EnsureBrokerSessionInput & { cancelAckTimeoutMs?: number }): PromptTurnBrokerClient {
+  maxWallClockMs,
+  maxPersistedLogBytes,
+  scheduleWallClock,
+  clearWallClock,
+}: EnsureBrokerSessionInput &
+  { cancelAckTimeoutMs?: number } &
+  InlineJobReliabilityOptions): PromptTurnBrokerClient {
   const entry = profileEntry as BrokerProfileEntry;
   const sandbox = normalizeAgentSandbox(process.env.CONSULT_AGENT_SANDBOX);
   const handlers = new Map<string, (notification: unknown) => void>();
@@ -93,6 +119,11 @@ export function createInlineClient({
       }
       handlers.get(method)?.(params);
     },
+    beforeTerminal: async (terminalJob) => await disposeAgent(terminalJob),
+    maxWallClockMs,
+    maxPersistedLogBytes,
+    scheduleWallClock,
+    clearWallClock,
   });
 
   process.on("SIGINT", onSignal);
@@ -115,13 +146,22 @@ export function createInlineClient({
   };
 
   async function handleRun(params: ConsultRunParams): Promise<unknown> {
-    pendingJobId = params.jobId;
+    let canonicalParams: CanonicalConsultRunParams;
     try {
-      if (params.resume) {
-        const resumeAgent = await ensureAgent(params.mode ?? "read-only", params.jobId);
+      canonicalParams = canonicalizeRunParams(params);
+      assertMatchingJobAuthority(canonicalParams.authority, expectedAuthority);
+      pendingJobId = canonicalParams.jobId;
+      if (canonicalParams.resume) {
+        const resumeAgent = await ensureAgent(
+          canonicalParams.authority,
+          canonicalParams.jobId,
+          canonicalParams.resumeJobId,
+          canonicalParams.resume,
+          canonicalParams.parentJobId,
+        );
         if (!supportsResume(resumeAgent.capabilities) && !supportsLoad(resumeAgent.capabilities)) {
           const error = new Error(
-            `profile '${params.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
+            `profile '${canonicalParams.profile}' does not support delegate --resume: agent did not advertise session/resume or session/load`,
           ) as CodedAgentError;
           error.code = "RESUME_UNSUPPORTED";
           throw error;
@@ -133,10 +173,10 @@ export function createInlineClient({
       throw error;
     }
 
-    const acceptedJob = runtime.createJob(params, sink);
+    const acceptedJob = runtime.createJob(canonicalParams, sink);
     job = acceptedJob;
     runtime.attachJob(acceptedJob, sink);
-    runAgentJobTurn(params, acceptedJob, {
+    runAgentJobTurn(canonicalParams, acceptedJob, {
       config: { cwd: executionRoot },
       ensureAgent,
       getSession: () => sessionId,
@@ -147,11 +187,22 @@ export function createInlineClient({
           sessionState = nextSessionState;
         }
       },
-      trackSession: (id, trackedJob, mode) => runtime.trackSession(id, trackedJob, mode),
+      trackSession: (id, trackedJob) => runtime.trackSession(id, trackedJob),
       finalizeJob: (turnJob, outcome) => runtime.finalizeJob(turnJob, outcome),
       noteTurnSettled: (turnJob) => runtime.noteTurnSettled(turnJob),
     }).catch(async (error) => {
       await runtime.failJob(acceptedJob, agentErrorMessage(error as CodedAgentError)).catch(() => {});
+      if (
+        !finalizedDispatched &&
+        acceptedJob.status === "finalized" &&
+        acceptedJob.finalized === null
+      ) {
+        // A reliability or policy boundary may be disposing the Profile before
+        // it persists and emits its terminal outcome. The resulting ACP close
+        // must not replace that in-flight, more specific diagnostic.
+        await finalized;
+        return;
+      }
       if (!finalizedDispatched) {
         // failJob early-returns on a job the runtime already marked finalized
         // whose record write then failed; never leave the turn unresolved or
@@ -166,10 +217,16 @@ export function createInlineClient({
         });
       }
     });
-    return { accepted: true, jobId: params.jobId };
+    return { accepted: true, jobId: canonicalParams.jobId };
   }
 
-  async function ensureAgent(mode = "read-only", jobId: string | null = null): Promise<StartedAgent> {
+  async function ensureAgent(
+    authority: JobAuthority,
+    jobId: string | null = null,
+    resumeSourceJobId: string | null = null,
+    resumeSessionId: string | null = null,
+    parentJobId: string | null = null,
+  ): Promise<StartedAgent> {
     // One inline client runs exactly one job in exactly one mode, so unlike
     // the Broker there is never a mode change requiring an agent restart.
     if (!agent) {
@@ -179,10 +236,13 @@ export function createInlineClient({
         env: entry.env ?? {},
         cwd: executionRoot,
         stateWorkspaceRoot: workspaceRoot,
-        mode,
+        authority,
         sandbox,
         profileRegistryId: entry.registryId ?? profile,
         jobId,
+        resumeSourceJobId,
+        resumeSessionId,
+        parentJobId,
         runtime,
       });
     }
@@ -203,11 +263,19 @@ export function createInlineClient({
     }
   }
 
-  function disposeAgent(): Promise<void> {
+  function disposeAgent(terminalJob: BrokerJob | null = null): Promise<void> {
     if (agent && !disposeStarted) {
       disposeStarted = true;
       const current = agent;
-      disposeDone = current.dispose().catch(() => {});
+      const archiveSessionState =
+        terminalJob?.authority.confinement === "confined" && terminalJob.sessionId
+          ? { sessionId: terminalJob.sessionId, cwd: executionRoot }
+          : undefined;
+      disposeDone = current.dispose({ archiveSessionState }).then(() => {
+        if (archiveSessionState && terminalJob) {
+          terminalJob.sessionStateArchived = true;
+        }
+      });
     }
     return disposeDone;
   }

@@ -154,6 +154,44 @@ test("review reports diff capture errors before creating a Job", async () => {
   assert.equal(generated, false);
 });
 
+test("review fails authority preflight before diff capture or adapter work", async () => {
+  let diffCalled = false;
+  let adapterCalled = false;
+  const result = await runReview({
+    args: { positional: [], flags: { agent: "codex", json: true } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("codex"),
+      preflightAuthority: async (input) => {
+        assert.equal(input.profile, "codex");
+        assert.equal(input.profileRegistryId, "codex");
+        return {
+          ok: false,
+          diagnostic: {
+            code: "AUTHORITY_COMBINATION_UNSUPPORTED",
+            message: "confined review unavailable",
+            remediation: "Use --sandbox inherit only if ambient authority is acceptable.",
+          },
+        };
+      },
+      getDiff: async () => {
+        diffCalled = true;
+        return "diff";
+      },
+      runCodexReview: async () => {
+        adapterCalled = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(JSON.parse(result.stderr).error.code, "AUTHORITY_COMBINATION_UNSUPPORTED");
+  assert.equal(diffCalled, false);
+  assert.equal(adapterCalled, false);
+});
+
 test("review reads advertisesReview from the registry instead of hardcoding codex", async () => {
   let adapterRan = false;
   const result = await runReview({
@@ -256,6 +294,10 @@ test("review exits 2 when the workspace override is malformed", async () => {
 
 function quietDeps(deps: ReviewDeps): ReviewDeps {
   return {
+    preflightAuthority: async (input) => ({
+      ok: true,
+      authority: input.authority,
+    }),
     ...deps,
     stdoutWrite: () => {},
     stderrWrite: () => {},
@@ -333,3 +375,12 @@ function agentTextUpdate(text: string) {
     },
   };
 }
+test("review rejects unsupported authority flags instead of silently narrowing them", async () => {
+  const result = await runReview({
+    args: { positional: [], flags: { "allow-fetch": true } },
+    deps: { stdoutWrite: () => {}, stderrWrite: () => {} },
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /--allow-fetch is not supported by this command/u);
+});

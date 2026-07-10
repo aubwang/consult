@@ -14,6 +14,16 @@ import {
 import type { BrokerJobSnapshot, FinalizedJobOutcome } from "./job-records.mts";
 import { isInsideWorkspaceSync } from "./path-safety.mts";
 import { extractAgentMessageText } from "./session-update-renderer.mts";
+import type { JobAuthority } from "./job-authority.mts";
+import { canonicalizeRunParams } from "./job-agent.mts";
+import {
+  DEFAULT_JOB_LOG_LIMIT_BYTES,
+  DEFAULT_JOB_WALL_CLOCK_LIMIT_MS,
+  JOB_LOG_LIMIT_EXCEEDED,
+  JOB_WALL_CLOCK_LIMIT_EXCEEDED,
+  jobLimitErrorMessage,
+  jobLogLineBytes,
+} from "./job-reliability.mts";
 
 import type { ConsultRunParams } from "../consult-broker.mts";
 
@@ -77,6 +87,7 @@ export interface BrokerJobFinalized {
   stopReason: string;
   sessionId: string | null;
   errorMessage?: string;
+  sessionStateArchived?: boolean;
 }
 
 export interface BrokerJob {
@@ -85,6 +96,7 @@ export interface BrokerJob {
   host: string;
   hostSessionId: string;
   profile: string;
+  authority: JobAuthority;
   mode?: string;
   allowExecute: boolean;
   prompt: string;
@@ -95,6 +107,8 @@ export interface BrokerJob {
   model?: string | null;
   effort?: string | null;
   resumeSessionId: string | null;
+  resumeJobId: string | null;
+  sessionStateArchived: boolean;
   baseRef?: string;
   status: "running" | "finalized";
   payloadHash: string;
@@ -106,6 +120,9 @@ export interface BrokerJob {
   originatorSocket: BrokerJobSocketLike;
   cancelRequested: boolean;
   cancelAckTimer: NodeJS.Timeout | null;
+  wallClockTimer: NodeJS.Timeout | null;
+  persistedLogBytes: number;
+  terminalLogReserveBytes: number;
   deniedPermissionSeen: boolean;
   deniedPermissionToolCallIds: Set<string>;
   workspaceRoot: string;
@@ -116,12 +133,17 @@ export interface BrokerJob {
 
 export interface CreateBrokerJobRuntimeOptions {
   config: BrokerJobRuntimeConfig;
-  ensureAgent(mode?: string): Promise<BrokerAgentHandle>;
+  ensureAgent(authority: JobAuthority): Promise<BrokerAgentHandle>;
   hashRunPayload(params: ConsultRunParams): string;
   writeNotification(socket: BrokerJobSocketLike, method: string, params: unknown): void;
+  beforeTerminal?(job: BrokerJob): Promise<void>;
   onActivity?(): void;
   onTerminal?(job: BrokerJob): void;
   maxFinalTextChars?: number;
+  maxWallClockMs?: number;
+  maxPersistedLogBytes?: number;
+  scheduleWallClock?(handler: () => void, milliseconds: number): NodeJS.Timeout;
+  clearWallClock?(timer: NodeJS.Timeout): void;
 }
 
 export interface BrokerJobRuntime {
@@ -132,9 +154,8 @@ export interface BrokerJobRuntime {
   getJob(jobId: string): BrokerJob | undefined;
   createJob(params: ConsultRunParams, originatorSocket: BrokerJobSocketLike): BrokerJob;
   attachJob(job: BrokerJob, targetSocket: BrokerJobSocketLike): void;
-  trackSession(sessionId: string, job: BrokerJob, mode: string): void;
-  getSessionMode(sessionId: string): string | undefined;
-  getSessionAllowExecute(sessionId: string): boolean;
+  trackSession(sessionId: string, job: BrokerJob): void;
+  getSessionAuthority(sessionId: string): JobAuthority | undefined;
   clearSessions(): void;
   handleSessionUpdate(params: { sessionId: string; update: BrokerSessionUpdate }): Promise<void>;
   notePermissionDecision(params: {
@@ -157,16 +178,23 @@ export function createBrokerJobRuntime({
   ensureAgent,
   hashRunPayload,
   writeNotification,
+  beforeTerminal,
   onActivity = () => {},
   onTerminal = () => {},
   maxFinalTextChars = DEFAULT_MAX_FINAL_TEXT_CHARS,
+  maxWallClockMs = DEFAULT_JOB_WALL_CLOCK_LIMIT_MS,
+  maxPersistedLogBytes = DEFAULT_JOB_LOG_LIMIT_BYTES,
+  scheduleWallClock = defaultScheduleWallClock,
+  clearWallClock = defaultClearWallClock,
 }: CreateBrokerJobRuntimeOptions): BrokerJobRuntime {
+  assertPositiveLimit("maxWallClockMs", maxWallClockMs);
+  assertPositiveLimit("maxPersistedLogBytes", maxPersistedLogBytes);
   const stateWorkspaceRoot = config.stateWorkspaceRoot ?? config.cwd;
   const sessionJobs = new Map<string | null, BrokerJob>();
-  const sessionModes = new Map<string, string>();
   const activeJobs = new Map<string, BrokerJob>();
   let busy = false;
   let tainted = false;
+  const preparesTerminalBoundary = beforeTerminal !== undefined;
 
   return {
     get tainted() {
@@ -186,25 +214,29 @@ export function createBrokerJobRuntime({
       return activeJobs.get(jobId);
     },
     createJob(params, originatorSocket) {
+      const canonicalParams = canonicalizeRunParams(params);
       const job: BrokerJob = {
-        jobId: params.jobId,
-        kind: params.kind,
-        host: params.host ?? config.host,
-        hostSessionId: params.hostSessionId ?? config.hostSessionId,
-        profile: params.profile,
-        mode: params.mode,
-        allowExecute: params.allowExecute === true,
-        prompt: params.prompt,
-        submittedAt: params.submittedAt,
-        chainId: params.chainId,
-        parentJobId: params.parentJobId,
-        delegationDepth: params.delegationDepth,
-        model: params.model,
-        effort: params.effort,
-        resumeSessionId: params.resume ?? null,
-        baseRef: params.baseRef,
+        jobId: canonicalParams.jobId,
+        kind: canonicalParams.kind,
+        host: canonicalParams.host ?? config.host,
+        hostSessionId: canonicalParams.hostSessionId ?? config.hostSessionId,
+        profile: canonicalParams.profile,
+        authority: canonicalParams.authority,
+        mode: canonicalParams.authority.mode,
+        allowExecute: canonicalParams.authority.allowExecute,
+        prompt: canonicalParams.prompt,
+        submittedAt: canonicalParams.submittedAt,
+        chainId: canonicalParams.chainId,
+        parentJobId: canonicalParams.parentJobId,
+        delegationDepth: canonicalParams.delegationDepth,
+        model: canonicalParams.model,
+        effort: canonicalParams.effort,
+        resumeSessionId: canonicalParams.resume ?? null,
+        resumeJobId: canonicalParams.resumeJobId ?? null,
+        sessionStateArchived: false,
+        baseRef: canonicalParams.baseRef,
         status: "running",
-        payloadHash: hashRunPayload(params),
+        payloadHash: hashRunPayload(canonicalParams),
         sessionId: null,
           pendingUpdates: [],
           droppedUpdateCount: 0,
@@ -213,6 +245,9 @@ export function createBrokerJobRuntime({
         originatorSocket,
         cancelRequested: false,
         cancelAckTimer: null,
+        wallClockTimer: null,
+        persistedLogBytes: 0,
+        terminalLogReserveBytes: 0,
         deniedPermissionSeen: false,
         deniedPermissionToolCallIds: new Set(),
         workspaceRoot: config.cwd,
@@ -220,7 +255,23 @@ export function createBrokerJobRuntime({
         completedAt: null,
         finalText: "",
       };
-      activeJobs.set(params.jobId, job);
+      job.terminalLogReserveBytes = jobLogLineBytes(
+        "consult/finalized",
+        { jobId: job.jobId, ...logLimitFinalized() },
+      );
+      if (job.terminalLogReserveBytes > maxPersistedLogBytes) {
+        throw new Error(
+          `maxPersistedLogBytes is too small for the terminal Job limit diagnostic`,
+        );
+      }
+      activeJobs.set(canonicalParams.jobId, job);
+      job.wallClockTimer = scheduleWallClock(() => {
+        void failJobForReliabilityLimit(
+          job,
+          jobLimitErrorMessage(JOB_WALL_CLOCK_LIMIT_EXCEEDED, maxWallClockMs),
+        );
+      }, maxWallClockMs);
+      job.wallClockTimer.unref?.();
       onActivity();
       return job;
     },
@@ -248,20 +299,15 @@ export function createBrokerJobRuntime({
       job.subscribers.add(targetSocket);
       targetSocket.once("close", () => job.subscribers.delete(targetSocket));
     },
-    trackSession(sessionId, job, mode) {
+    trackSession(sessionId, job) {
       job.sessionId = sessionId;
       sessionJobs.set(sessionId, job);
-      sessionModes.set(sessionId, mode);
     },
-    getSessionMode(sessionId) {
-      return sessionModes.get(sessionId);
-    },
-    getSessionAllowExecute(sessionId) {
-      return sessionJobs.get(sessionId)?.allowExecute === true;
+    getSessionAuthority(sessionId) {
+      return sessionJobs.get(sessionId)?.authority;
     },
     clearSessions() {
       sessionJobs.clear();
-      sessionModes.clear();
     },
     async handleSessionUpdate({ sessionId, update }) {
       const job = sessionJobs.get(sessionId);
@@ -270,6 +316,19 @@ export function createBrokerJobRuntime({
         return;
       }
       if (job?.status === "running") {
+        const notification = { jobId: job.jobId, update };
+        const updateBytes = jobLogLineBytes("consult/update", notification);
+        if (
+          job.persistedLogBytes + updateBytes + job.terminalLogReserveBytes >
+          maxPersistedLogBytes
+        ) {
+          await failJobForReliabilityLimit(
+            job,
+            jobLimitErrorMessage(JOB_LOG_LIMIT_EXCEEDED, maxPersistedLogBytes),
+          );
+          return;
+        }
+        job.persistedLogBytes += updateBytes;
         writeJobUpdate(job, update);
       }
     },
@@ -283,33 +342,37 @@ export function createBrokerJobRuntime({
       }
     },
     async finalizeJob(job, finalized) {
-      clearCancelAckTimer(job);
       job.status = "finalized";
-      job.finalized = finalized;
+      const preparedFinalized = await prepareTerminalOutcome(job, finalized);
+      clearCancelAckTimer(job);
+      clearWallClockTimer(job);
+      job.finalized = boundedFinalized(job, preparedFinalized);
       job.completedAt = new Date().toISOString();
       sessionJobs.delete(job.sessionId);
       // ACP sessions outlive prompt turns; keep sessionModes until broker shutdown.
       // Persisted terminal state and finalized notifications are readiness
       // boundaries: observers may immediately submit the next Job.
       busy = false;
-      await writeJobRecord(job, finalized);
+      await writeJobRecord(job, job.finalized);
       // Keep finalized jobs for this daemon lifetime; eviction is deferred for v1.
-      notifyFinalized(job, finalized);
+      notifyFinalized(job, job.finalized);
       onActivity();
       onTerminal(job);
     },
     async failJob(job, errorMessage) {
       clearCancelAckTimer(job);
+      clearWallClockTimer(job);
       if (job.status === "finalized") {
         return;
       }
       job.status = "finalized";
-      job.completedAt = new Date().toISOString();
-      job.finalized = {
+      const preparedFinalized = await prepareTerminalOutcome(job, {
         stopReason: "failed",
         sessionId: job.sessionId,
         errorMessage,
-      };
+      });
+      job.completedAt = new Date().toISOString();
+      job.finalized = boundedFinalized(job, preparedFinalized);
       sessionJobs.delete(job.sessionId);
       busy = false;
       await writeFailedJobRecord(job);
@@ -325,7 +388,7 @@ export function createBrokerJobRuntime({
       startCancelAckTimer(job);
       // Reuse the agent that runs this job; a bare ensureAgent() would default to
       // read-only and restart a sandboxed write-mode agent mid-turn.
-      const currentAgent = await ensureAgent(job.mode ?? "read-only");
+      const currentAgent = await ensureAgent(job.authority);
       await cancelPrompt(currentAgent.connection, { sessionId: job.sessionId });
     },
     cancelJobCascade(job) {
@@ -337,6 +400,7 @@ export function createBrokerJobRuntime({
     },
     noteTurnSettled(job) {
       clearCancelAckTimer(job);
+      clearWallClockTimer(job);
     },
     handleSocketClosed(socket) {
       for (const job of activeJobs.values()) {
@@ -360,6 +424,35 @@ export function createBrokerJobRuntime({
     },
   };
 
+  async function prepareTerminalOutcome(
+    job: BrokerJob,
+    outcome: BrokerJobFinalized,
+  ): Promise<BrokerJobFinalized> {
+    if (!beforeTerminal) {
+      return outcome;
+    }
+    try {
+      await beforeTerminal(job);
+      return {
+        ...outcome,
+        ...(job.sessionStateArchived ? { sessionStateArchived: true } : {}),
+      };
+    } catch (error) {
+      const message = errorMessage(error);
+      const cleanupMessage = message.startsWith("SESSION_STATE_ARCHIVE_FAILED:")
+        ? message
+        : `PROFILE_CLEANUP_UNCONFIRMED: ${message}`;
+      return {
+        stopReason: "failed",
+        sessionId: outcome.sessionId,
+        errorMessage: outcome.errorMessage
+          ? `${outcome.errorMessage}; ${cleanupMessage}`
+          : cleanupMessage,
+        ...(job.sessionStateArchived ? { sessionStateArchived: true } : {}),
+      };
+    }
+  }
+
   function writeJobUpdate(job: BrokerJob, update: BrokerSessionUpdate) {
     const notification = { jobId: job.jobId, update };
     job.finalText = appendBoundedText(job.finalText, extractAgentMessageText(update), {
@@ -377,23 +470,73 @@ export function createBrokerJobRuntime({
 
   async function failJobForPolicyViolation(job: BrokerJob, errorMessage: string) {
     clearCancelAckTimer(job);
+    clearWallClockTimer(job);
     // Defense in depth: an auto-approved edit update can arrive after the edit already hit disk.
     job.status = "finalized";
-    job.completedAt = new Date().toISOString();
-    job.finalized = {
+    job.cancelRequested = true;
+    if (preparesTerminalBoundary && job.sessionId) {
+      await ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
+    const preparedFinalized = await prepareTerminalOutcome(job, {
       stopReason: "failed",
       sessionId: job.sessionId,
       errorMessage,
-    };
+    });
+    job.completedAt = new Date().toISOString();
+    job.finalized = boundedFinalized(job, preparedFinalized);
     sessionJobs.delete(job.sessionId);
     // Busy stays set until the violated prompt turn settles (or the cancel-ack
     // timer fires), so a second consult/run cannot interleave prompt turns.
-    job.cancelRequested = true;
-    startCancelAckTimer(job);
-    ensureAgent(job.mode ?? "read-only")
-      .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
-      .catch(() => {});
+    if (preparesTerminalBoundary) {
+      busy = false;
+    } else {
+      startCancelAckTimer(job);
+      ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
     await writeFailedJobRecord(job);
+    notifyFinalized(job, job.finalized);
+    onActivity();
+    onTerminal(job);
+  }
+
+  async function failJobForReliabilityLimit(job: BrokerJob, errorMessage: string) {
+    if (job.status !== "running") {
+      return;
+    }
+    clearCancelAckTimer(job);
+    clearWallClockTimer(job);
+    job.status = "finalized";
+    job.cancelRequested = true;
+    if (preparesTerminalBoundary && job.sessionId) {
+      await ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
+    const preparedFinalized = await prepareTerminalOutcome(job, {
+      stopReason: "failed",
+      sessionId: null,
+      errorMessage,
+    });
+    job.completedAt = new Date().toISOString();
+    job.finalized = boundedFinalized(job, preparedFinalized);
+    sessionJobs.delete(job.sessionId);
+    if (job.sessionId && !preparesTerminalBoundary) {
+      startCancelAckTimer(job);
+      ensureAgent(job.authority)
+        .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
+        .catch(() => {});
+    }
+    if (preparesTerminalBoundary) {
+      busy = false;
+    }
+    // The subscriber persists the same terminal outcome after receiving the
+    // notification. Do not suppress cleanup/finalization if this first write
+    // fails because a full disk is itself a likely log-limit symptom.
+    await writeFailedJobRecord(job).catch(() => {});
     notifyFinalized(job, job.finalized);
     onActivity();
     onTerminal(job);
@@ -405,26 +548,32 @@ export function createBrokerJobRuntime({
     }
     job.cancelAckTimer = setTimeout(() => {
       job.cancelAckTimer = null;
-      if (job.status === "running") {
-        job.status = "finalized";
-        job.completedAt = new Date().toISOString();
-        job.finalized = {
-          stopReason: "failed",
-          sessionId: job.sessionId,
-          errorMessage: "agent did not acknowledge cancel",
-        };
-        sessionJobs.delete(job.sessionId);
-        writeFailedJobRecord(job).catch(() => {});
-        busy = false;
-        notifyFinalized(job, job.finalized);
-      }
-      // The job may already be finalized (policy violation) while its prompt
-      // turn is still unsettled; an unacknowledged cancel always taints.
-      busy = false;
-      tainted = true;
-      onActivity();
-      onTerminal(job);
+      void finalizeUnacknowledgedCancel(job);
     }, config.cancelAckTimeoutMs);
+  }
+
+  async function finalizeUnacknowledgedCancel(job: BrokerJob): Promise<void> {
+    if (job.status === "running") {
+      clearWallClockTimer(job);
+      job.status = "finalized";
+      const preparedFinalized = await prepareTerminalOutcome(job, {
+        stopReason: "failed",
+        sessionId: job.sessionId,
+        errorMessage: "agent did not acknowledge cancel",
+      });
+      job.completedAt = new Date().toISOString();
+      job.finalized = boundedFinalized(job, preparedFinalized);
+      sessionJobs.delete(job.sessionId);
+      await writeFailedJobRecord(job).catch(() => {});
+      busy = false;
+      notifyFinalized(job, job.finalized);
+    }
+    // The job may already be finalized (policy violation) while its prompt
+    // turn is still unsettled; an unacknowledged cancel always taints.
+    busy = false;
+    tainted = true;
+    onActivity();
+    onTerminal(job);
   }
 
   function clearCancelAckTimer(job: BrokerJob) {
@@ -432,6 +581,44 @@ export function createBrokerJobRuntime({
       clearTimeout(job.cancelAckTimer);
       job.cancelAckTimer = null;
     }
+  }
+
+  function clearWallClockTimer(job: BrokerJob) {
+    if (job.wallClockTimer) {
+      clearWallClock(job.wallClockTimer);
+      job.wallClockTimer = null;
+    }
+  }
+
+  function boundedFinalized(
+    job: BrokerJob,
+    finalized: BrokerJobFinalized,
+  ): BrokerJobFinalized {
+    let selected = finalized;
+    let bytes = jobLogLineBytes("consult/finalized", {
+      jobId: job.jobId,
+      ...selected,
+    });
+    if (job.persistedLogBytes + bytes > maxPersistedLogBytes) {
+      selected = logLimitFinalized();
+      bytes = jobLogLineBytes("consult/finalized", {
+        jobId: job.jobId,
+        ...selected,
+      });
+    }
+    if (job.persistedLogBytes + bytes > maxPersistedLogBytes) {
+      throw new Error("terminal Job limit diagnostic exceeds maxPersistedLogBytes");
+    }
+    job.persistedLogBytes += bytes;
+    return selected;
+  }
+
+  function logLimitFinalized(): BrokerJobFinalized {
+    return {
+      stopReason: "failed",
+      sessionId: null,
+      errorMessage: jobLimitErrorMessage(JOB_LOG_LIMIT_EXCEEDED, maxPersistedLogBytes),
+    };
   }
 
   function notifyFinalized(job: BrokerJob, finalized: BrokerJobFinalized) {
@@ -466,6 +653,24 @@ export function createBrokerJobRuntime({
   }
 }
 
+function defaultScheduleWallClock(handler: () => void, milliseconds: number): NodeJS.Timeout {
+  return setTimeout(handler, milliseconds);
+}
+
+function defaultClearWallClock(timer: NodeJS.Timeout): void {
+  clearTimeout(timer);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function assertPositiveLimit(name: string, value: number): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be a positive finite number`);
+  }
+}
+
 function isAutoApprovedPolicyViolation(job: BrokerJob, update: BrokerSessionUpdate): boolean {
   return autoApprovedPolicyViolationMessage(job, update) !== null;
 }
@@ -475,7 +680,7 @@ function autoApprovedPolicyViolationMessage(job: BrokerJob, update: BrokerSessio
   const rawInput = toolCall?.rawInput ?? update?.rawInput;
   const kind = typeof toolCall?.kind === "string" ? toolCall.kind.toLowerCase() : null;
   const autoApproved = rawInput?.auto_approved === true || rawInput?.autoApproved === true;
-  const mode = job.mode ?? "read-only";
+  const mode = job.authority.mode;
 
   if (mode === "read-only") {
     if (autoApproved) {

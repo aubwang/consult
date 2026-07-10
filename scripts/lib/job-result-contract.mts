@@ -1,4 +1,6 @@
 import type { JobRecord } from "./job-records.mts";
+import { jobAuthorityFromRecord } from "./job-authority.mts";
+import type { JobAuthority } from "./job-authority.mts";
 
 export const JOB_RESULT_SCHEMA_VERSION = 1 as const;
 
@@ -7,6 +9,7 @@ export interface JobResultJob {
   kind: string | null;
   status: string | null;
   profile: string | null;
+  authority: JobAuthority;
   mode: string | null;
   host: string | null;
   hostSessionId: string | null;
@@ -70,12 +73,14 @@ export function jobResultPayload(
   record: JobRecord,
   { childJobIds = [], logPath = null }: JobResultPayloadOptions = {},
 ): JobResultPayload {
+  const authority = resultAuthority(record);
   return {
     job: {
       id: stringOrNull(record.jobId),
       kind: stringOrNull(record.kind),
       status: stringOrNull(record.status),
       profile: stringOrNull(record.profile),
+      authority,
       mode: stringOrNull(record.mode),
       host: stringOrNull(record.host),
       hostSessionId: stringOrNull(record.hostSessionId),
@@ -122,6 +127,20 @@ export function jobResultEnvelope(
     schemaVersion: JOB_RESULT_SCHEMA_VERSION,
     ...jobResultPayload(record, options),
   };
+}
+
+function resultAuthority(record: JobRecord): JobAuthority {
+  const result = jobAuthorityFromRecord(record);
+  if (result.ok) {
+    return result.authority;
+  }
+  const error = new Error(result.diagnostic.message) as Error & {
+    code?: string;
+    diagnostic?: unknown;
+  };
+  error.code = result.diagnostic.code;
+  error.diagnostic = result.diagnostic;
+  throw error;
 }
 
 function stringOrNull(value: unknown): string | null {

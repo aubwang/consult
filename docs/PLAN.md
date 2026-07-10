@@ -40,7 +40,8 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 - A permanent agent app server or a dependency on Codex app-server APIs.
 - Forwarding one Host's private MCP configuration to a Profile.
 - Interactive permission prompting during a Job.
-- Hard process isolation on platforms without the configured sandbox.
+- Native Windows confinement or an ambient-authority fallback presented as a
+  security boundary.
 - Multiple separately named installations of one built-in Profile type.
 
 ## Repository Layout
@@ -59,8 +60,12 @@ consult/
 │   ├── job-records.mts                  # mutable internal records
 │   ├── job-result-contract.mts          # stable public JSON envelope
 │   ├── isolated-workspace.mts           # transactional Git worktrees
+│   ├── job-authority.mts                # canonical portable authority model
+│   ├── job-authority-preflight.mts      # fail-closed combination gate
 │   ├── permissions.mts                  # ACP permission decisions
-│   └── process-sandbox.mts              # optional bubblewrap launch
+│   ├── egress-proxy.mts                 # authenticated pinned-address proxy
+│   ├── sandbox-runtime-launch.mts       # native confined Profile launch
+│   └── sandbox-runtime-policy.mts       # pinned generated-policy transform
 ├── skills/                              # CLI-calling agent skills
 ├── docs/conformance/                    # Profile probe records
 └── docs/adr/                            # accepted decisions
@@ -79,6 +84,11 @@ Host Identity resolution order:
 2. `CONSULT_HOST` / `CONSULT_HOST_SESSION_ID`.
 3. `CODEX_THREAD_ID`, or `OPENCODE_SESSION_ID` / `OPENCODE_RUN_ID`.
 4. `terminal/default`.
+
+Claude Code is deliberately not auto-detected after the CLI-only product-scope
+decision. A Claude spawning Host must supply explicit Host and Host Session
+identity (flags or `CONSULT_*` environment) when it needs isolated defaults and
+resume lookup; otherwise it shares `terminal/default`.
 
 Profile selection order:
 
@@ -179,6 +189,13 @@ Normal background Jobs use one detached Broker per active Job:
 6. The Job finalizes, the Profile process is disposed, and Broker live state is
    removed.
 
+On POSIX systems, each Profile launch owns a new process group. Disposal closes
+ACP stdin for a short graceful window, then signals the whole group with
+SIGTERM and escalates to SIGKILL. Group liveness is checked independently of
+the direct child pid so a descendant cannot survive merely because the group
+leader exited first. Initialization failure and timeout use the same cleanup
+path.
+
 Isolated background Jobs may run the shared runtime inline inside their already
 detached worker. This keeps original Workspace state separate from the
 Execution Workspace without creating a second daemon contract. The worker pid
@@ -200,6 +217,18 @@ The new transport then uses:
 
 Resume stays within one Profile. A different Profile receives a self-contained
 new prompt rather than an attempted native session conversion.
+
+Confined resume does not mount a shared Profile home. After confirmed Profile
+tree termination and before private-home deletion, a Profile-specific adapter
+selects exactly one Codex rollout or Claude project transcript, bounds and
+hashes it, and atomically commits it beneath the source Job's private artifact
+directory. The new Job carries both source Job id and native Session id;
+preflight verifies the archive before Job creation and launch restores the same
+relative transcript path into the fresh home. Missing, malformed, tampered,
+cross-Profile, or cwd-mismatched archives fail closed. Confined isolated resume
+remains unavailable because each detached Execution Workspace has a new cwd.
+Transcripts can contain sensitive conversation content and live as long as
+their Job artifacts; credentials and shared Profile indexes are never copied.
 
 ## Pinned Diff and Review
 
@@ -244,30 +273,112 @@ detached-worktree base.
 In-place `--write` remains for compatibility. `--isolated` requires
 `--write`; the flag is explicit while the behavior gains field experience.
 
-## Permission and Sandbox Policy
+## Job Authority and Native Confinement
 
-ACP file handlers and permission-bearing paths are realpath-confined to the
-Execution Workspace and reject symlink escapes.
+Job Authority schema v1 is the portable grant the trusted Host supplies before
+Job creation:
 
-| Request kind | Read-only | In-place write | Isolated write | Isolated write + `--allow-exec` + bwrap |
+```json
+{
+  "schemaVersion": 1,
+  "mode": "read-only",
+  "confinement": "confined",
+  "allowFetch": false,
+  "allowExecute": false
+}
+```
+
+That exact object is canonicalized, persisted, hashed into payload identity,
+and checked again at runtime boundaries. Defaults are read-only and confined.
+`--write`, `--allow-fetch`, and `--sandbox inherit` are independent explicit
+Host choices; Consult may narrow them but never broadens or retries implicitly.
+
+Before resume lookup, diff capture, isolated-worktree creation, or Job
+persistence, preflight initializes the exact configured Profile binary, args,
+and environment inside the requested boundary. Unsupported combinations return
+a structured authority diagnostic and create no Job. Native Windows is
+unsupported, including inheritance. Confined nesting is also unsupported;
+cooperative ambient chains must request inheritance explicitly, and linked
+child ceilings are not presented as an unforgeable OS boundary.
+
+Preflight is an early compatibility check, not an immutable launch guarantee:
+the Profile executable or Host credential state can change before the real
+launch. The launch path derives and validates the full policy again, so such a
+race can fail a created Job but cannot silently broaden its authority.
+
+The confined adapter targets native Linux and macOS for built-in `codex` and
+`claude` Profile identities. Custom and `opencode` Profiles remain
+inherit-only until they pass the same live conformance gates. A trusted Host
+may choose `--sandbox inherit`; that adds no Consult OS boundary and disables
+the legacy `CONSULT_AGENT_SANDBOX` launch layer. `consult doctor` reports the
+default confined readiness of the exact selected Profile in the current Host
+context. In particular, nested Seatbelt can fail under an already-confined
+macOS Codex Host even when an unrestricted terminal control passes.
+
+Confined launch uses pinned `@anthropic-ai/sandbox-runtime@0.0.64` output as a
+generated policy artifact, not as an unreviewed policy authority. Consult
+version-checks and shape-checks that artifact, canonically requotes it, removes
+shared default write grants, relocates Linux proxy socket binds after the
+`/tmp` mount, injects authenticated proxy URLs, and fails closed on drift.
+Linux uses bubblewrap network/PID/mount namespaces plus seccomp; macOS uses
+Seatbelt. The Profile owns a new process group, and confinement is released
+only after tree termination is confirmed.
+
+Each confined Job receives a private home, temp directory, XDG directories,
+and a sanitized environment. Only one credential source is exposed: the
+Profile's selected regular credential file is copied into Job state, otherwise
+the first configured supported credential environment variable is passed.
+Whole Host config
+trees, MCP configuration, secret-manager paths, and ambient proxy variables are
+not forwarded. Credentials are process-tree readable; the security property is
+egress-constrained, not credential invisibility.
+
+Consult does not broker macOS Keychain entries. A confined Claude Profile on
+macOS must therefore receive one supported token environment variable or a
+stageable `.claude/.credentials.json`; a Keychain-only Claude login cannot be
+copied into the private Job home.
+
+In particular, confined Codex does not copy Host `config.toml`, and confined
+Claude does not copy Host `settings.json`. Model/provider preferences that
+exist only in those files can therefore differ from inherited launches; the
+Host should pass an explicit `--model` when the configured default matters.
+Job roots are mode 0700 and carry an owner marker. A later preflight/launch
+sweeps roots older than the wall-clock limit plus a grace period when the owner
+pid is gone, covering SIGKILL/OOM orphans without deleting concurrent Jobs.
+
+Direct networking is denied. An authenticated loopback HTTP/SOCKS proxy allows
+only port 443, resolves all addresses in the Host, rejects private or mixed
+answers, and dials one approved literal address. Without `--allow-fetch`, only
+the Profile's model/auth host inventory is allowed. `--allow-fetch` permits
+arbitrary public TCP/443 for task-specific research. This supports HTTPS but
+does not inspect or prove the encrypted application protocol. Because the Profile also
+holds its model credential, that grant increases prompt-injection exfiltration
+risk; Consult deliberately does not add a credential broker in this version.
+
+ACP file handlers and permission-bearing paths remain realpath-confined to the
+Execution Workspace and reject symlink escapes:
+
+| Request kind | Read-only | Write | Write + fetch | `--allow-exec` requested |
 | --- | --- | --- | --- | --- |
 | read/search/think | allow, path-confined | allow, path-confined | allow, path-confined | allow, path-confined |
 | edit/delete/move | deny | allow, path-confined | allow, path-confined | allow, path-confined |
-| fetch | deny | deny | deny | deny |
-| execute | deny | deny | deny | allow only with cwd confined |
-| switch_mode/other | deny | allow | allow | allow |
+| fetch | deny | deny | allow via public-TCP/443 proxy | deny |
+| execute | deny | deny | deny | preflight rejects the Job |
+| switch_mode/other | deny | allow | allow | deny |
 
-Execute authority is carried explicitly in the `consult/run` payload and its
-idempotency hash. The shared permission handler grants it only when mode is
-write, the caller opted in, cwd is confined, and the normalized active sandbox
-is `bwrap`. Merely setting a flag does not weaken an unsandboxed Job.
+Execute remains represented in canonical/persisted authority for compatibility,
+but `--allow-exec` is unavailable until execute-specific resource containment
+and cross-Profile conformance are complete. Wall-clock duration and persisted
+NDJSON size are bounded now. Process count, CPU, memory, and disk quotas remain
+documented residual risks rather than implied sandbox guarantees.
 
-Bubblewrap binds the Execution Workspace according to mode and mounts only the
-runtime and proven Profile auth/config paths needed to launch the ACP agent.
-It is a filesystem sandbox; the agent needs network access to contact its model
-API. Some Profiles perform edits without first asking ACP permission, so
-non-bwrap confinement and isolated transactions are defense-in-depth rather
-than a hard process boundary.
+Conformance is deliberately two-layered. A deterministic fake ACP Profile is
+run through each built-in registry identity from the packed artifact to make
+filesystem, network, lifecycle, isolation, resume, and cleanup assertions
+mandatory. Separate real Codex and Claude controls prove vendor authentication,
+ACP/model transport, and selective transcript compatibility. Model prompts are
+not the sole proof of a security boundary because tool selection, fetch
+availability, and cancellation timing are nondeterministic.
 
 ## Delegation Chains
 
@@ -294,7 +405,11 @@ project test command. `pack:check` builds the published `.mjs`, packs the npm
 tarball, installs it globally with npm and Bun in temporary prefixes, verifies
 the package file allow-list, runs `consult help` from both installs, and proves
 an npm-installed background worker and Broker launch their compiled `.mjs`
-entrypoints and finalize a Job.
+entrypoints and finalize a Job. On a native Host with sandbox dependencies,
+`CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check` additionally runs the full
+deterministic boundary/lifecycle matrix through fake Codex and Claude registry
+identities from the npm install, plus exact confined Doctor checks for both
+identities from the Bun install, without a model call.
 
 Behavior and architecture changes update this document and, when they make or
 supersede a durable decision, add an ADR.

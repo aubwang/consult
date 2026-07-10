@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { BOOLEAN_FLAGS, boolFlag, missingFlagValueError, parseArgs } from "./args.mts";
+import {
+  BOOLEAN_FLAGS,
+  boolFlag,
+  missingFlagValueError,
+  parseArgs,
+  unsupportedFlagError,
+} from "./args.mts";
 
 test("parseArgs treats bare tokens as positional arguments", () => {
   assert.deepEqual(parseArgs(["a", "b", "c"]), {
@@ -110,6 +116,8 @@ test("boolFlag honors explicit false and undefined", () => {
   assert.equal(boolFlag(true), true);
   assert.equal(boolFlag("true"), true);
   assert.equal(boolFlag(false), false);
+  assert.equal(boolFlag("false"), false);
+  assert.equal(boolFlag("anything-else"), false);
   assert.equal(boolFlag(undefined), false);
   // The last occurrence wins for repeated flags.
   assert.equal(boolFlag([true, false]), false);
@@ -128,4 +136,12 @@ test("missingFlagValueError flags value-bearing flags without a value", () => {
   assert.equal(missingFlagValueError(parseArgs(["--agent", "codex"]).flags, ["agent"]), null);
   assert.equal(missingFlagValueError(parseArgs([]).flags, ["agent"]), null);
   assert.equal(missingFlagValueError(undefined, ["agent"]), null);
+});
+
+test("unsupportedFlagError rejects flags outside a command contract", () => {
+  assert.equal(
+    unsupportedFlagError({ agent: "codex", "allow-fetch": true }, ["agent"]),
+    "--allow-fetch is not supported by this command",
+  );
+  assert.equal(unsupportedFlagError({ agent: "codex" }, ["agent"]), null);
 });

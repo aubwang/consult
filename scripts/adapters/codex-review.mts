@@ -18,6 +18,8 @@ import { createOutput } from "../lib/companion/output.mts";
 import type { OutputDeps } from "../lib/companion/output.mts";
 import { renderSessionUpdate } from "../lib/session-update-renderer.mts";
 import type { NullOutputResult } from "../lib/null-output.mts";
+import { DEFAULT_JOB_AUTHORITY } from "../lib/job-authority.mts";
+import type { JobAuthority } from "../lib/job-authority.mts";
 
 export interface CodexReviewDeps extends PromptTurnDeps, OutputDeps {
   getDiff?: (opts: GetDiffOptions) => Promise<string>;
@@ -35,6 +37,7 @@ export interface CodexReviewOptions {
   diff?: string;
   kind?: string;
   json?: boolean;
+  authority?: JobAuthority;
   availableCommandsTimeoutMs?: number | null;
   deps?: CodexReviewDeps;
 }
@@ -49,6 +52,7 @@ export async function runCodexReview({
   diff: suppliedDiff,
   kind = "review",
   json = false,
+  authority = { ...DEFAULT_JOB_AUTHORITY },
   availableCommandsTimeoutMs: timeoutOverride = null,
   deps = {},
 }: CodexReviewOptions): Promise<NullOutputResult> {
@@ -76,6 +80,7 @@ export async function runCodexReview({
     chainId: jobId,
     parentJobId: null,
     delegationDepth: 0,
+    authority,
     mode: "read-only",
     host,
     hostSessionId,

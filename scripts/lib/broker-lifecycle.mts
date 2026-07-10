@@ -10,6 +10,8 @@ import { connectBroker } from "./broker-client.mts";
 import type { BrokerClient } from "./broker-client.mts";
 import { pidMatchesStartTime } from "./process-identity.mts";
 import { pidIsAlive, terminateProcessTree } from "./process.mts";
+import { jobAuthoritiesEqual } from "./job-authority.mts";
+import type { JobAuthority } from "./job-authority.mts";
 
 const brokerScriptPath = defaultBrokerScriptPath();
 
@@ -34,10 +36,12 @@ export interface BrokerProfileEntry {
 }
 
 export interface BrokerLifecycleInput extends BrokerIdentity {
+  authority?: JobAuthority;
   options?: BrokerLifecycleOptions;
 }
 
 export interface EnsureBrokerSessionInput extends BrokerLifecycleInput {
+  authority: JobAuthority;
   profileEntry: BrokerProfileEntry;
 }
 
@@ -45,6 +49,7 @@ export interface BrokerSessionState {
   endpoint?: string;
   pid?: number;
   pidStartTime?: string | null;
+  authority?: unknown;
   [key: string]: unknown;
 }
 
@@ -76,6 +81,7 @@ export async function ensureBrokerSession({
   host,
   hostSessionId,
   profile,
+  authority,
   profileEntry,
   options = {},
 }: EnsureBrokerSessionInput): Promise<EnsureBrokerSessionResult> {
@@ -91,12 +97,17 @@ export async function ensureBrokerSession({
       host,
       hostSessionId,
       profile,
+      authority,
       options,
     });
     return { ...existing, alreadyRunning: true };
   } catch (error) {
     const coded = error as CodedError;
-    if (coded.code !== "BROKER_UNREACHABLE" && coded.code !== "BROKER_STATE_MALFORMED") {
+    if (
+      coded.code !== "BROKER_UNREACHABLE" &&
+      coded.code !== "BROKER_STATE_MALFORMED" &&
+      coded.code !== "BROKER_AUTHORITY_MISMATCH"
+    ) {
       throw error;
     }
     if (coded.code === "BROKER_STATE_MALFORMED") {
@@ -138,6 +149,8 @@ export async function ensureBrokerSession({
         host,
         "--host-session-id",
         hostSessionId,
+        "--authority",
+        JSON.stringify(authority),
       ] as string[],
       {
         detached: true,
@@ -226,6 +239,7 @@ export async function connectBrokerSession({
   host,
   hostSessionId,
   profile,
+  authority,
   options = {},
 }: BrokerLifecycleInput): Promise<ConnectBrokerSessionResult> {
   const brokerFile = brokerFilePath({ workspaceRoot, jobId, host, hostSessionId, profile });
@@ -242,6 +256,14 @@ export async function connectBrokerSession({
     );
     next.code = (error as CodedError).code === "ENOENT" ? "BROKER_UNREACHABLE" : "BROKER_STATE_MALFORMED";
     throw next;
+  }
+
+  if (authority && !jobAuthoritiesEqual(state.authority, authority)) {
+    const error: CodedError = new Error(
+      "broker authority does not match the Job Authority selected before launch",
+    );
+    error.code = "BROKER_AUTHORITY_MISMATCH";
+    throw error;
   }
 
   try {

@@ -8,7 +8,7 @@ import { brokersDir, jobsDir, profilesPath } from "../broker-endpoint.mts";
 import { runDoctor } from "./doctor.mts";
 import type { DoctorReport } from "./doctor.mts";
 
-test("doctor json reports selected profile, job counts, broker counts, and sandbox readiness", async (t) => {
+test("doctor json reports selected profile, job counts, broker counts, and authority readiness", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeProfiles({
@@ -49,8 +49,9 @@ test("doctor json reports selected profile, job counts, broker counts, and sandb
     },
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
-      commandExists: async (command) => command === "bwrap",
       pidAlive: async (pid) => pid === 111,
+      platform: "linux",
+      probeConfined: async ({ authority }) => ({ ok: true, authority }),
     },
   });
 
@@ -84,9 +85,13 @@ test("doctor json reports selected profile, job counts, broker counts, and sandb
     },
     { total: 3, running: 1, stale: 1, malformed: 1 },
   );
-  assert.equal(report.sandbox.mode, "bwrap");
-  assert.equal(report.sandbox.bwrapConfigured, true);
-  assert.equal(report.sandbox.bwrapOnPath, true);
+  assert.equal(report.authority.ok, true);
+  assert.equal(report.authority.confined.ok, true);
+  assert.equal(report.authority.selectedProfile, "claude");
+  assert.equal(report.authority.profileRegistryId, "claude");
+  assert.equal(report.authority.defaultAuthority.confinement, "confined");
+  assert.equal(report.authority.inherit.available, true);
+  assert.equal(report.authority.legacySandboxEnv, "bwrap");
 });
 
 test("doctor human output reports missing profile setup as not delegate-ready", async (t) => {
@@ -97,7 +102,6 @@ test("doctor human output reports missing profile setup as not delegate-ready", 
     args: { positional: [], flags: {} },
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
-      commandExists: async () => false,
     },
   });
 
@@ -109,10 +113,10 @@ test("doctor human output reports missing profile setup as not delegate-ready", 
   assert.match(result.stdout, /No profile configured/);
   assert.match(result.stdout, /jobs:/);
   assert.match(result.stdout, /brokers:/);
-  assert.match(result.stdout, /sandbox:/);
+  assert.match(result.stdout, /job authority:/);
 });
 
-test("doctor marks bwrap sandbox unready when bwrap is missing from PATH", async (t) => {
+test("doctor marks default confinement unready with the probe diagnostic", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeProfiles({
@@ -124,18 +128,68 @@ test("doctor marks bwrap sandbox unready when bwrap is missing from PATH", async
 
   const result = await runDoctor({
     args: { positional: [], flags: { json: true } },
-    env: { CONSULT_AGENT_SANDBOX: "bwrap", PATH: "/missing" },
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
-      commandExists: async () => false,
+      platform: "darwin",
+      probeConfined: async () => ({
+        ok: false,
+        diagnostic: {
+          code: "AUTHORITY_PREFLIGHT_FAILED",
+          message: "sandbox-exec: Operation not permitted",
+          remediation: "Retry with --sandbox inherit only from a trusted Host.",
+        },
+      }),
     },
   });
 
   const report = JSON.parse(result.stdout) as DoctorReport;
   assert.equal(result.exitCode, 1);
   assert.equal(report.canDelegate, false);
-  assert.equal(report.sandbox.ok, false);
-  assert.equal(report.sandbox.error, "CONSULT_AGENT_SANDBOX=bwrap but bwrap was not found on PATH");
+  assert.equal(report.authority.ok, false);
+  assert.equal(report.authority.confined.ok, false);
+  assert.equal(
+    report.authority.confined.diagnostic?.message,
+    "sandbox-exec: Operation not permitted",
+  );
+  assert.equal(report.authority.inherit.available, true);
+});
+
+test("doctor validates an explicitly inherited Profile even when default confinement is unavailable", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "opencode",
+    hostDefaults: {},
+    profiles: { opencode: profile("opencode") },
+  });
+
+  const result = await runDoctor({
+    args: {
+      positional: [],
+      flags: { json: true, sandbox: "inherit", agent: "opencode" },
+    },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "linux",
+      probeInherited: async ({ authority }) => ({ ok: true, authority }),
+      probeConfined: async () => ({
+        ok: false,
+        diagnostic: {
+          code: "AUTHORITY_COMBINATION_UNSUPPORTED",
+          message: "opencode confinement unavailable",
+          remediation: "Use explicit inheritance.",
+        },
+      }),
+    },
+  });
+
+  const report = JSON.parse(result.stdout) as DoctorReport;
+  assert.equal(result.exitCode, 0);
+  assert.equal(report.canDelegate, true);
+  assert.equal(report.authority.requested.ok, true);
+  assert.equal(report.authority.requestedAuthority?.confinement, "inherit");
+  assert.equal(report.authority.confined.ok, false);
 });
 
 test("doctor reports malformed job records inside the diagnostic payload", async (t) => {
@@ -153,7 +207,7 @@ test("doctor reports malformed job records inside the diagnostic payload", async
     args: { positional: [], flags: { json: true } },
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
-      commandExists: async () => false,
+      probeConfined: async ({ authority }) => ({ ok: true, authority }),
     },
   });
 

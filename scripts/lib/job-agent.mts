@@ -6,12 +6,17 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { newSession, promptTurn, startAgent } from "./acp-client.mts";
-import type { StartedAgent } from "./acp-client.mts";
+import type { AcquireAgentLaunch, StartedAgent } from "./acp-client.mts";
 import { createFsHandlers } from "./fs-handlers.mts";
 import type { FsHandlerMode } from "./fs-handlers.mts";
+import { jobAuthorityFromRecord } from "./job-authority.mts";
+import type { JobAuthority, JobAuthorityDiagnostic } from "./job-authority.mts";
 import { decidePermission } from "./permissions.mts";
 import type { PermissionMode } from "./permissions.mts";
 import { normalizeAgentSandbox } from "./process-sandbox.mts";
+import { acquireConfinedSandboxRuntimeLaunch } from "./sandbox-runtime-launch.mts";
+import { readWorkspaceJobRecord } from "./job-records.mts";
+import { validateJobAuthorityRuntimeBoundary } from "./job-authority-preflight.mts";
 import { applySessionControls, openResumedSession } from "./session-controls.mts";
 import type { BrokerJob, BrokerSessionUpdate } from "./broker-job-runtime.mts";
 
@@ -28,8 +33,7 @@ export type AgentSessionState =
 
 export interface JobAgentRuntimeHooks {
   handleSessionUpdate(params: { sessionId: string; update: BrokerSessionUpdate }): Promise<void>;
-  getSessionMode(sessionId: string): string | undefined;
-  getSessionAllowExecute(sessionId: string): boolean;
+  getSessionAuthority(sessionId: string): JobAuthority | undefined;
   notePermissionDecision(params: {
     sessionId: string;
     decision: { allowed: boolean; reason?: string };
@@ -43,27 +47,67 @@ export interface StartJobAgentOptions {
   env?: NodeJS.ProcessEnv;
   cwd: string;
   stateWorkspaceRoot?: string;
-  mode?: string;
+  authority: JobAuthority;
   sandbox?: string;
   profileRegistryId?: string;
   jobId?: string | null;
+  resumeSourceJobId?: string | null;
+  resumeSessionId?: string | null;
+  parentJobId?: string | null;
   runtime: JobAgentRuntimeHooks;
 }
 
-export async function startJobAgent({
-  binary,
-  args = [],
-  env = {},
-  cwd,
-  stateWorkspaceRoot = cwd,
-  mode = "read-only",
-  sandbox = "off",
-  profileRegistryId,
-  jobId = null,
-  runtime,
-}: StartJobAgentOptions): Promise<StartedAgent> {
-  const sandboxMode = normalizeAgentSandbox(sandbox);
-  return await startAgent({
+export interface StartJobAgentDeps {
+  startAgent?: typeof startAgent;
+  acquireConfinedLaunch?: typeof acquireConfinedSandboxRuntimeLaunch;
+}
+
+export async function startJobAgent(
+  {
+    binary,
+    args = [],
+    env = {},
+    cwd,
+    stateWorkspaceRoot = cwd,
+    authority,
+    sandbox = "off",
+    profileRegistryId,
+    jobId = null,
+    resumeSourceJobId = null,
+    resumeSessionId = null,
+    parentJobId = null,
+    runtime,
+  }: StartJobAgentOptions,
+  deps: StartJobAgentDeps = {},
+): Promise<StartedAgent> {
+  const canonicalAuthority = canonicalRunAuthority({ authority });
+  const parentJob = parentJobId
+    ? await readWorkspaceJobRecord(stateWorkspaceRoot, parentJobId)
+    : undefined;
+  const boundary = validateJobAuthorityRuntimeBoundary({
+    authority: canonicalAuthority,
+    parentJob,
+  });
+  if (!boundary.ok) {
+    throw authorityDiagnosticError(boundary.diagnostic);
+  }
+  const sandboxMode =
+    canonicalAuthority.confinement === "inherit"
+      ? "off"
+      : normalizeAgentSandbox(sandbox);
+  const acquireLaunch: AcquireAgentLaunch | undefined =
+    canonicalAuthority.confinement === "confined"
+      ? async (launchOptions) =>
+          await (deps.acquireConfinedLaunch ?? acquireConfinedSandboxRuntimeLaunch)({
+            ...launchOptions,
+            authority: canonicalAuthority,
+            stateWorkspaceRoot,
+            jobId: jobId ?? undefined,
+            resumeSourceJobId,
+            resumeSessionId,
+          })
+      : undefined;
+  return await (deps.startAgent ?? startAgent)({
     binary,
     args,
     env: {
@@ -75,48 +119,62 @@ export async function startJobAgent({
     },
     cwd,
     workspaceRoot: cwd,
-    mode,
+    mode: canonicalAuthority.mode,
     sandbox: sandboxMode,
     profileRegistryId,
     clientHandlers: {
       sessionUpdate: async ({ sessionId, update }) =>
         await runtime.handleSessionUpdate({ sessionId, update }),
       requestPermission: async ({ sessionId, ...request }) => {
+        const sessionAuthority = runtime.getSessionAuthority(sessionId) ?? LEGACY_SAFE_AUTHORITY;
         const decision = await decidePermission({
           request,
-          mode: (runtime.getSessionMode(sessionId) ?? "read-only") as PermissionMode,
+          mode: sessionAuthority.mode as PermissionMode,
           workspaceRoot: cwd,
-          allowExecute: runtime.getSessionAllowExecute(sessionId),
+          // Execute remains unavailable in decidePermission until the runtime
+          // provides proxy-confined model transport.
+          allowFetch: sessionAuthority.allowFetch,
+          allowExecute: sessionAuthority.allowExecute,
           sandbox: sandboxMode,
         });
         runtime.notePermissionDecision({ sessionId, decision, request });
         return permissionResponse(decision, request.options);
       },
       readTextFile: async (request) => {
+        const sessionAuthority =
+          runtime.getSessionAuthority(request.sessionId) ?? LEGACY_SAFE_AUTHORITY;
         const handlers = createFsHandlers({
           workspaceRoot: cwd,
-          mode: (runtime.getSessionMode(request.sessionId) ?? "read-only") as FsHandlerMode,
+          mode: sessionAuthority.mode as FsHandlerMode,
         });
         return await handlers.readTextFile(request);
       },
       writeTextFile: async (request) => {
+        const sessionAuthority =
+          runtime.getSessionAuthority(request.sessionId) ?? LEGACY_SAFE_AUTHORITY;
         const handlers = createFsHandlers({
           workspaceRoot: cwd,
-          mode: (runtime.getSessionMode(request.sessionId) ?? "read-only") as FsHandlerMode,
+          mode: sessionAuthority.mode as FsHandlerMode,
         });
         return await handlers.writeTextFile(request);
       },
     },
-  });
+  }, acquireLaunch ? { acquireLaunch } : {});
 }
 
 export interface AgentTurnContext {
   config: { cwd: string };
-  ensureAgent(mode?: string, jobId?: string | null): Promise<StartedAgent>;
+  ensureAgent(
+    authority: JobAuthority,
+    jobId?: string | null,
+    resumeSourceJobId?: string | null,
+    resumeSessionId?: string | null,
+    parentJobId?: string | null,
+  ): Promise<StartedAgent>;
   getSession(): string | undefined;
   getSessionState?(): AgentSessionState | undefined;
   setSession(sessionId: string, sessionState?: AgentSessionState | null): void;
-  trackSession(sessionId: string, job: BrokerJob, mode: string): void;
+  trackSession(sessionId: string, job: BrokerJob): void;
   finalizeJob(job: BrokerJob, finalized: { stopReason: string; sessionId: string }): Promise<void>;
   noteTurnSettled(job: BrokerJob): void;
 }
@@ -126,7 +184,14 @@ export async function runAgentJobTurn(
   job: BrokerJob,
   ctx: AgentTurnContext,
 ): Promise<void> {
-  const agent = await ctx.ensureAgent(params.mode ?? "read-only", params.jobId);
+  const canonicalParams = canonicalizeRunParams(params);
+  const agent = await ctx.ensureAgent(
+    canonicalParams.authority,
+    canonicalParams.jobId,
+    canonicalParams.resumeJobId,
+    canonicalParams.resume,
+    canonicalParams.parentJobId,
+  );
   let sessionId: string | undefined;
   let sessionState: AgentSessionState | null = null;
   if (job.resumeSessionId) {
@@ -147,7 +212,7 @@ export async function runAgentJobTurn(
     sessionId = (sessionState as { sessionId: string }).sessionId;
     ctx.setSession(sessionId, sessionState);
   }
-  ctx.trackSession(sessionId, job, params.mode ?? "read-only");
+  ctx.trackSession(sessionId, job);
   sessionState = await applySessionControls(agent.connection, {
     sessionId,
     sessionState,
@@ -181,6 +246,55 @@ export interface CodedAgentError extends Error {
   code?: string | number;
 }
 
+export interface CanonicalConsultRunParams extends ConsultRunParams {
+  authority: JobAuthority;
+  mode: JobAuthority["mode"];
+  allowExecute: boolean;
+}
+
+/**
+ * Canonicalize protocol and persisted Job inputs at the shared launch seam.
+ * Missing authority is the only legacy case: it projects to explicit ambient
+ * inheritance. Once authority exists, flat compatibility fields may be absent
+ * but may never disagree with it.
+ */
+export function canonicalizeRunParams(params: ConsultRunParams): CanonicalConsultRunParams {
+  const authority = canonicalRunAuthority(params);
+  return {
+    ...params,
+    authority,
+    mode: authority.mode,
+    allowExecute: authority.allowExecute,
+  };
+}
+
+export function canonicalRunAuthority(record: unknown): JobAuthority {
+  const result = jobAuthorityFromRecord(record);
+  if (!result.ok) {
+    throw authorityDiagnosticError(result.diagnostic);
+  }
+  const authority = result.authority;
+  if (isRecord(record) && record.authority === undefined && authority.allowExecute) {
+    throw authorityDiagnosticError({
+      code: "AUTHORITY_EXECUTE_UNAVAILABLE",
+      message: "legacy execute authority is unavailable without canonical confined authority",
+      remediation: "Recreate the Job without execute authority.",
+    });
+  }
+  if (isRecord(record) && record.authority !== undefined) {
+    if (record.mode !== undefined && record.mode !== authority.mode) {
+      throw authorityMismatchError("mode");
+    }
+    if (
+      record.allowExecute !== undefined &&
+      record.allowExecute !== authority.allowExecute
+    ) {
+      throw authorityMismatchError("allowExecute");
+    }
+  }
+  return authority;
+}
+
 export function agentErrorMessage(error: CodedAgentError): string {
   if (error.code) {
     return `${error.code}: ${error.message}`;
@@ -188,21 +302,60 @@ export function agentErrorMessage(error: CodedAgentError): string {
   return error.message;
 }
 
-export function hashRunPayload(params: ConsultRunParams): string {
+export function hashRunPayload(
+  params: ConsultRunParams & { authority?: unknown },
+): string {
+  const authority = runPayloadAuthority(params);
   return crypto
     .createHash("sha256")
     .update(
       stableJson({
         prompt: params.prompt,
         profile: params.profile,
-        mode: params.mode,
+        authority,
         resume: params.resume ?? null,
+        resumeJobId: params.resumeJobId ?? null,
         model: params.model ?? null,
         effort: params.effort ?? null,
-        allowExecute: params.allowExecute === true,
       }),
     )
     .digest("hex");
+}
+
+function runPayloadAuthority(
+  params: ConsultRunParams & { authority?: unknown },
+): JobAuthority {
+  return canonicalRunAuthority(params);
+}
+
+const LEGACY_SAFE_AUTHORITY: JobAuthority = Object.freeze({
+  schemaVersion: 1,
+  mode: "read-only",
+  confinement: "inherit",
+  allowFetch: false,
+  allowExecute: false,
+});
+
+function authorityMismatchError(field: "mode" | "allowExecute"): CodedAgentError {
+  return authorityDiagnosticError({
+    code: "AUTHORITY_MISMATCH",
+    message: `Job Authority does not match compatibility field '${field}'`,
+    remediation: "Retry the Job without changing its authority payload.",
+    details: { field },
+  });
+}
+
+function authorityDiagnosticError(diagnostic: JobAuthorityDiagnostic): CodedAgentError {
+  const error = new Error(diagnostic.message) as CodedAgentError & {
+    diagnostic: JobAuthorityDiagnostic;
+  };
+  error.code = diagnostic.code;
+  error.diagnostic = diagnostic;
+  return error;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stableJson(value: unknown): string {
