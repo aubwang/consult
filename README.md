@@ -285,7 +285,10 @@ test runner. Source is erasable TypeScript run directly by Node from a checkout.
 Published packages contain compiled `.mjs` because Node does not type-strip
 TypeScript under `node_modules`. The package smoke also starts an installed
 background Job so source-only worker or Broker paths cannot pass on `help`
-alone.
+alone. Set `CONSULT_PACKAGE_SMOKE_CONFINED=1` on native Linux or macOS to run
+the packed Codex/Claude registry-identity matrix for filesystem, egress,
+write/isolation, background, cancellation, resume, credential staging, and
+cleanup boundaries.
 
 Architecture vocabulary is in [CONTEXT.md](CONTEXT.md), current implementation
 notes are in [docs/PLAN.md](docs/PLAN.md), and accepted decisions are in

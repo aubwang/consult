@@ -406,9 +406,10 @@ tarball, installs it globally with npm and Bun in temporary prefixes, verifies
 the package file allow-list, runs `consult help` from both installs, and proves
 an npm-installed background worker and Broker launch their compiled `.mjs`
 entrypoints and finalize a Job. On a native Host with sandbox dependencies,
-`CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check` additionally initializes
-a fake built-in Codex ACP Profile through both installed packages inside the
-real confined boundary, without a model call.
+`CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check` additionally runs the full
+deterministic boundary/lifecycle matrix through fake Codex and Claude registry
+identities from the npm install, plus exact confined Doctor checks for both
+identities from the Bun install, without a model call.
 
 Behavior and architecture changes update this document and, when they make or
 supersede a durable decision, add an ADR.
