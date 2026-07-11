@@ -20,8 +20,11 @@ Open a new shell and confirm `node --version` before installing Consult.
 
 ## Native confinement prerequisites
 
-macOS uses the built-in Seatbelt runtime and needs no additional system
-package. Linux confinement requires `bwrap` (bubblewrap), `socat`, and `rg`
+Native arm64 macOS uses the built-in Seatbelt runtime and needs no additional
+system package. An x64 Node process, including one running under Rosetta on
+Apple Silicon, is unsupported even in inherited mode. Confirm with
+`node -p process.arch`; it must print `arm64`. Linux
+confinement requires `bwrap` (bubblewrap), `socat`, and `rg`
 (ripgrep) on `PATH`. For example, on Debian or Ubuntu:
 
 ```sh

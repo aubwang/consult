@@ -54,9 +54,13 @@ const LINUX_READ_PATHS = [
   "/etc/localtime",
 ] as const;
 
-const MACOS_READ_PATHS = [
+export const MACOS_READ_PATHS = [
   "/System",
-  "/usr",
+  "/usr/bin",
+  "/usr/lib",
+  "/usr/libexec",
+  "/usr/sbin",
+  "/usr/share",
   "/bin",
   "/sbin",
   "/Library",
@@ -152,6 +156,7 @@ export interface ConfinedSandboxRuntimeLaunchInput extends AgentLaunchOptions {
 export interface ConfinedSandboxRuntimeLaunchDeps {
   manager?: SandboxRuntimeManagerLike;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   startProxy?: (options: EgressProxyOptions) => Promise<EgressProxy>;
   startAgent?: typeof startAgent;
   now?: () => number;
@@ -170,7 +175,10 @@ export async function acquireConfinedSandboxRuntimeLaunch(
   input: ConfinedSandboxRuntimeLaunchInput,
   deps: ConfinedSandboxRuntimeLaunchDeps = {},
 ): Promise<AgentLaunchLease> {
-  const platform = supportedPlatform(deps.platform ?? process.platform);
+  const platform = supportedPlatform(
+    deps.platform ?? process.platform,
+    deps.arch ?? process.arch,
+  );
   const profile = confinedProfilePolicy(input.profileRegistryId);
   assertConfinedAuthority(input.authority, input.mode);
   const manager = deps.manager ?? SandboxManager;
@@ -448,20 +456,31 @@ export async function probeConfinedSandboxRuntime(
   deps: ConfinedSandboxRuntimeLaunchDeps = {},
 ): Promise<JobAuthorityPreflightResult> {
   const profileRegistryId = input.profileRegistryId ?? input.profile;
+  const platform = input.platform ?? deps.platform ?? process.platform;
+  const arch = input.arch ?? deps.arch ?? process.arch;
   try {
-    supportedPlatform(input.platform ?? deps.platform ?? process.platform);
+    supportedPlatform(platform, arch);
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostic: {
+        code: "AUTHORITY_PLATFORM_UNSUPPORTED",
+        message: errorMessage(error),
+        remediation:
+          "Use a built-in codex or claude Profile on native Linux or macOS with a native arm64 Node process.",
+      },
+    };
+  }
+  try {
     confinedProfilePolicy(profileRegistryId);
   } catch (error) {
     return {
       ok: false,
       diagnostic: {
-        code:
-          (input.platform ?? deps.platform ?? process.platform) === "win32"
-            ? "AUTHORITY_PLATFORM_UNSUPPORTED"
-            : "AUTHORITY_COMBINATION_UNSUPPORTED",
+        code: "AUTHORITY_COMBINATION_UNSUPPORTED",
         message: errorMessage(error),
         remediation:
-          "Use a built-in codex or claude Profile on native Linux or macOS, or explicitly choose inherited ambient authority.",
+          "Use a built-in codex or claude Profile, or explicitly choose inherited ambient authority.",
       },
     };
   }
@@ -533,9 +552,15 @@ function confinedProfilePolicy(registryId: string | undefined): ConfinedProfileP
   return policy;
 }
 
-function supportedPlatform(platform: NodeJS.Platform): SupportedPlatform {
+function supportedPlatform(
+  platform: NodeJS.Platform,
+  arch: NodeJS.Architecture,
+): SupportedPlatform {
   if (platform !== "linux" && platform !== "darwin") {
     throw new Error(`confined authority is unsupported on ${platform}`);
+  }
+  if (platform === "darwin" && arch !== "arm64") {
+    throw new Error(`confined authority is unsupported for a macOS ${arch} process`);
   }
   return platform;
 }

@@ -10,7 +10,8 @@ tested Host/platform combinations.
 This harness/report remains spike evidence. ADR-0027 later adopted portable Job
 Authority and uses this report as the reason nested confinement under the
 macOS Codex Host must fail preflight rather than fall back implicitly. The
-unrestricted terminal control still requires a product-level adapter rerun.
+unrestricted product-level adapter and real Profile controls later passed on
+native arm64 macOS and are recorded in [`README.md`](README.md).
 
 ## Candidate and environment
 

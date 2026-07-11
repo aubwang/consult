@@ -19,11 +19,11 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
   manifest without changing the invoking checkout.
 - Canonical Job Authority defaults delegation to read-only native confinement,
   with explicit write, fetch, and ambient-inheritance grants.
-- Built-in Codex and Claude confinement targets native Linux and macOS with
-  direct-network denial, authenticated pinned-address proxying, minimal staged
-  credentials, exact Profile preflight, and process-tree cleanup.
-- Custom and opencode Profiles are explicit-inherit only. Native Windows and
-  confined nesting are unsupported.
+- Built-in Codex and Claude confinement targets native Linux and native arm64
+  macOS with direct-network denial, authenticated pinned-address proxying,
+  minimal staged credentials, exact Profile preflight, and process-tree cleanup.
+- Custom and opencode Profiles are explicit-inherit only. Native Windows,
+  macOS x64 processes, and confined nesting are unsupported.
 - Execute permission remains fail-closed pending execute-specific resource
   containment and cross-Profile conformance.
 - Scoped npm releases ship as `@aubwang/consult`; GitHub-clone installation is
@@ -32,33 +32,27 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
 Consult no longer ships a Claude Code plugin/Host Adapter. The Claude Profile
 is still supported. Gemini and GitHub Copilot are not supported Profiles.
 
-## Release Hardening
+## Portable Job Authority Release Evidence
 
-Before graduating portable Job Authority as the default release boundary:
+The release-hardening gates for the default boundary are complete:
 
-- Run the deterministic packed adapter matrix for both built-in registry
-  identities on every claimed OS: foreground read-only, write,
-  isolated-write, fetch/no-fetch proxying, direct-egress denial, background,
-  cancellation, resume, and process/Broker/private-root cleanup. This matrix
-  uses a purpose-built ACP fixture so every boundary assertion is mandatory,
-  not dependent on a model choosing a particular tool.
-- Overlay that boundary matrix with fresh real Codex and Claude controls on
-  every claimed OS: direct configured-Profile ACP transport, exact Doctor
-  initialization, foreground model transport, background/result, and a resume
-  challenge that does not reveal the expected prior-turn secret. Flip support
-  per Profile/OS combination; do not infer one from another. Model-directed
-  write/fetch/cancel probes are useful additional compatibility evidence, but
-  are not substitutes for the deterministic boundary matrix.
-- Record the product-level macOS Codex and Claude controls from an unrestricted
-  terminal, plus fail-closed nested results from already-confined Hosts. The
-  existing macOS spike is evidence, not the final adapter conformance run.
-- Re-run the packed adapter matrix on Linux for both the Codex and Claude
-  registry identities, then run the real Profile overlay for Codex and Claude.
-- Validate package installation through both npm and Bun from a packed tarball.
-- Document any Profile-specific differences that remain observable through the
-  common Job result contract.
-- Decide and document the compatibility policy for future Job-result schema
-  versions.
+- CI runs the deterministic packed Codex/Claude adapter matrix on Linux and
+  native arm64 macOS, covering foreground read-only, write, isolated-write,
+  fetch/no-fetch proxying, direct-egress denial, background, cancellation,
+  resume, and process/Broker/private-root cleanup.
+- Fresh real Codex and Claude overlays passed on Linux and native arm64 macOS:
+  direct configured-Profile ACP transport, exact Doctor initialization,
+  foreground model transport, background/result, and an unrevealed-secret
+  resume challenge.
+- Native macOS controls include unrestricted launches plus fail-closed nested
+  results from the already-confined Codex Host.
+- Packed artifacts install and pass confinement controls through both npm and
+  Bun. Evidence and reproducible commands live in `docs/conformance/README.md`.
+- Profile-specific launch, authentication, model, and resume differences stay
+  behind the common Job Result schema; the public result sections do not vary
+  by Profile.
+- ADR-0023 defines compatibility: additive fields may extend schema v1, while
+  breaking shape changes require a new schema version and migration guidance.
 
 ## Near-Term Follow-Ups
 
@@ -86,7 +80,7 @@ Before graduating portable Job Authority as the default release boundary:
 - A credential broker. Credentials remain process-tree readable and
   egress-constrained; `--allow-fetch` documents the resulting exfiltration
   risk instead of hiding it behind a complex broker.
-- Native Windows support. WSL2 follows the Linux path; native Windows has no
-  confinement or inheritance surface.
+- Native Windows or macOS x64 process support. WSL2 follows the Linux path; those
+  native platforms have no confinement or inheritance surface.
 - A new Claude Code plugin surface. Host-specific UI is outside the current
   product vision.

@@ -38,6 +38,9 @@ unrestricted sibling terminal when a hard child boundary is required; use
 `--sandbox inherit` only when the trusted Host deliberately accepts ambient
 authority. Consult never retries with inheritance automatically.
 
+Native macOS support requires an arm64 Node process. An x64 process, including
+Node under Rosetta, fails preflight even in inherited mode.
+
 ## Use
 
 Delegate work:
