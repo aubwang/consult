@@ -100,13 +100,19 @@ try {
 }
 
 async function assertConsultHelp(binary) {
-  const help = await run(binary, ["help"], {
+  const options = {
     env: {
       ...process.env,
       PATH: [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter),
     },
-  });
-  assert.match(help.stdout, /^Usage:\n  consult help/m);
+  };
+  const help = await run(binary, ["help"], options);
+  assert.match(help.stdout, /^Usage:\n  consult <command> \[options\]/m);
+  assert.doesNotMatch(help.stdout, /Operational contract/u);
+
+  const reference = await run(binary, ["help", "--reference"], options);
+  assert.match(reference.stdout, /Operational contract/u);
+  assert.match(reference.stdout, /## Exit codes/u);
 }
 
 async function assertInstalledBackgroundJob(binary, temporaryRoot) {
