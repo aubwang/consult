@@ -25,6 +25,7 @@ import {
 import type { JobRecord } from "../job-records.mts";
 import { resolveJobAuthority } from "../job-authority.mts";
 import type { JobAuthority, JobAuthorityDiagnostic } from "../job-authority.mts";
+import { normalizeJobLabel } from "../job-label.mts";
 import {
   preflightJobAuthority as defaultPreflightJobAuthority,
   probeInheritedProfileLaunch,
@@ -95,6 +96,7 @@ export interface ValidatedDelegateArgs {
   prompt?: string;
   model?: string;
   effort?: string;
+  label?: string;
   json?: boolean;
   resume?: boolean;
   resumeJobId?: string;
@@ -341,6 +343,7 @@ export async function runDelegate({
     host: hostIdentity.host,
     hostSessionId: hostIdentity.hostSessionId,
     profile: selected.profile,
+    label: validated.label,
     prompt: validated.background ? delegatedPrompt : truncatePrompt(validated.prompt as string),
     model: validated.model,
     effort: validated.effort,
@@ -442,7 +445,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const unsupported = unsupportedFlagError(flags, [
     "agent", "profile", "model", "effort", "host", "host-session",
     "host-session-id", "parent-job", "parent-job-id", "resume-job", "prompt",
-    "base", "sandbox", "after", "write", "read-only", "resume", "fresh", "background",
+    "base", "sandbox", "after", "label", "write", "read-only", "resume", "fresh", "background",
     "wait", "include-diff", "isolated", "allow-fetch", "allow-exec", "json",
   ]);
   if (unsupported) return { error: unsupported };
@@ -461,6 +464,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     "base",
     "sandbox",
     "after",
+    "label",
   ]);
   if (missingValue) {
     return { error: missingValue };
@@ -478,6 +482,8 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const isolated = boolFlag(flags.isolated);
   const allowFetch = boolFlag(flags["allow-fetch"]);
   const allowExecute = boolFlag(flags["allow-exec"]);
+  const label = normalizeJobLabel(stringFlag(flags.label));
+  if (!label.ok) return { error: label.error };
   if (write && readOnly) {
     return { error: "--write and --read-only are mutually exclusive" };
   }
@@ -527,6 +533,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     prompt: promptFromFlag || promptFromPositionals,
     model: stringFlag(flags.model),
     effort: stringFlag(flags.effort),
+    label: label.label,
     json: boolFlag(flags.json),
     resume,
     resumeJobId,

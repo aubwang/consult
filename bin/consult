@@ -19,4 +19,4 @@ const { exitCode, stdout, stderr } = await dispatch(sub ?? "help", parsed);
 
 if (stdout) process.stdout.write(stdout);
 if (stderr) process.stderr.write(stderr);
-process.exit(exitCode);
+process.exitCode = exitCode;

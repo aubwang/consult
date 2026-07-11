@@ -6,6 +6,7 @@ export const JOB_RESULT_SCHEMA_VERSION = 1 as const;
 
 export interface JobResultJob {
   id: string | null;
+  label: string | null;
   kind: string | null;
   status: string | null;
   profile: string | null;
@@ -21,6 +22,7 @@ export interface JobResultJob {
   effort: string | null;
   afterJobIds: string[];
   resumeSessionId: string | null;
+  reviewOfJobId: string | null;
   baseRef: string | null;
   includeDiff: boolean;
   isolated: boolean;
@@ -78,6 +80,7 @@ export function jobResultPayload(
   return {
     job: {
       id: stringOrNull(record.jobId),
+      label: stringOrNull(record.label),
       kind: stringOrNull(record.kind),
       status: stringOrNull(record.status),
       profile: stringOrNull(record.profile),
@@ -93,6 +96,7 @@ export function jobResultPayload(
       effort: stringOrNull(record.effort),
       afterJobIds: stringArray(record.afterJobIds),
       resumeSessionId: stringOrNull(record.resumeSessionId),
+      reviewOfJobId: stringOrNull(record.reviewOfJobId),
       baseRef: stringOrNull(record.baseRef),
       includeDiff: record.includeDiff === true,
       isolated: record.isolated === true,

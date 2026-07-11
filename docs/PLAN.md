@@ -118,11 +118,13 @@ Machine-readable commands expose an allow-listed versioned contract instead:
   "schemaVersion": 1,
   "job": {
     "id": "job-...",
+    "label": "dependency audit",
     "kind": "delegate",
     "status": "completed",
     "profile": "claude",
     "mode": "read-only",
-    "afterJobIds": []
+    "afterJobIds": [],
+    "reviewOfJobId": null
   },
   "outcome": {
     "stopReason": "end_turn",
@@ -148,6 +150,17 @@ Machine-readable commands expose an allow-listed versioned contract instead:
 Tool-call renderings remain in logs and live progress. `finalText` accumulates
 only Profile agent-message text so scripts do not mistake tool markers for the
 answer.
+
+Host-facing inspection is bounded by default to protect an agent Host's context
+window. Job lists show the newest 20 records, single-Job status omits logs, and
+logs show the latest 20 rendered lines. Explicit `--all` and `--tail` controls
+provide full-history and custom-window escape hatches; `result` remains the
+dedicated final-answer surface. `wait --summary` blocks on the same completion
+condition while returning bounded previews and artifact locations.
+
+Job Labels are optional, non-unique human metadata. They improve recognition
+after Host compaction but never participate in lookup, dependencies, lineage,
+or authorization.
 
 ## State Layout
 
@@ -232,6 +245,9 @@ cancellation; `--keep-running` opts out. This gives shell-capable Hosts a
 portable no-LLM-polling path without requiring Host-specific inbound prompt
 APIs. A hard kill cannot execute cleanup.
 
+`consult wait --summary` performs the same join but returns bounded one-line
+outcomes so the Host can choose which full Results to load.
+
 While a dependent worker is waiting, it handles SIGINT/SIGTERM before Profile
 startup, records cancellation, and removes any prepared isolated Execution
 Workspace. Once Profile execution begins, the normal Broker/inline lifecycle
@@ -278,6 +294,12 @@ the Job is created:
 a read-only, findings-first review Job. The verified Codex native review
 command remains an adapter optimization; Claude and opencode use ordinary ACP
 delegation against the same deterministic input.
+
+`review --job <job-id>` accepts only a completed isolated write Job with the
+exact Consult-owned patch artifact path. Consult opens that patch without
+following symlinks and supplies the source task, final report, touched-files
+list, and bounded patch to the reviewer as untrusted data. The resulting review
+records `reviewOfJobId`; it does not apply the patch or create lineage.
 
 ## Transactional Isolated Writes
 

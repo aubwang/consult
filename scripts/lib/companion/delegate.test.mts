@@ -840,7 +840,10 @@ test("delegate background writes a queued record and spawns the task worker", as
   let unrefCalled = false;
 
   const result = await runDelegate({
-    args: { positional: ["fix", "later"], flags: { background: true, agent: "codex" } },
+    args: {
+      positional: ["fix", "later"],
+      flags: { background: true, agent: "codex", label: "  parser cleanup  " },
+    },
     env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
     deps: quietDeps({
       resolveWorkspaceRoot: async () => workspaceRoot,
@@ -871,6 +874,7 @@ test("delegate background writes a queued record and spawns the task worker", as
   assert.doesNotMatch(result.stdout, /\/consult:status/);
   assert.equal(record.status, "queued");
   assert.equal(record.prompt, "fix later");
+  assert.equal(record.label, "parser cleanup");
   assert.equal(record.mode, "read-only");
   assert.equal(record.host, "claude-code");
   assert.equal(record.profile, "codex");
@@ -885,6 +889,20 @@ test("delegate background writes a queued record and spawns the task worker", as
   assert.equal((spawns[0].options as { stdio: string }).stdio, "ignore");
   assert.equal((spawns[0].options as { cwd: string }).cwd, workspaceRoot);
   assert.equal(unrefCalled, true);
+});
+
+test("delegate rejects an invalid Job label before Workspace discovery", async () => {
+  const result = await runDelegate({
+    args: { positional: ["fix"], flags: { label: "x".repeat(81) } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--label must be 1-80 characters without control characters\n");
 });
 
 test("delegate background persists its prepared isolated workspace for the inline worker", async (t) => {

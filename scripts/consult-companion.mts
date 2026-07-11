@@ -67,6 +67,9 @@ Examples:
   consult delegate --agent codex --write --isolated -- "implement the fix"
   consult status <job-id> --wait
   consult wait <job-id> [<job-id>...]
+  consult wait --summary <job-id> [<job-id>...]
+  consult logs <job-id> --tail 10
+  consult review --agent claude --job <job-id>
   consult result <job-id>
 
 Delegation defaults to read-only confinement. Use --write --isolated for
@@ -87,6 +90,10 @@ Omit --model to use that confined Profile runtime's default. Confined launch
 does not copy Codex config.toml or Claude settings.json, so pass --model when
 Host config controls the desired choice. Family aliases resolve only against
 models advertised at Session start. OpenCode exact model ids use provider/model.
+
+--label <text> adds optional non-unique human metadata to a delegate or review
+Job. Labels are trimmed, limited to 80 characters, and shown by status, chain,
+summary wait, and Job JSON. Job ids remain the only command identifiers.
 
 ## Modes and isolation
 
@@ -140,9 +147,12 @@ delegate --include-diff [--base <ref>] captures a bounded deterministic diff
 before Job creation and appends it inside untrusted-data delimiters. --base
 requires --include-diff for delegate.
 
-review [--base <ref>] always creates a read-only findings-first Job against
-a pinned diff. Codex may use its verified native review command; every other
-Profile uses the portable delegate path.
+review [--base <ref>] always creates a read-only findings-first Job against a
+pinned diff. review --job <job-id> instead reviews a completed isolated write
+Job using its original task, final report, touched-files list, and Consult-owned
+patch as bounded untrusted data. --job and --base are mutually exclusive. Codex
+may use its verified native review command; every other Profile uses the
+portable delegate path.
 
 ## Foreground and background
 
@@ -151,6 +161,14 @@ Profile uses the portable delegate path.
 - --background writes a queued Job, starts a detached worker, and returns
   immediately. Use consult wait <job-id> [<job-id>...] to block once and return
   all selected Job Results, or inspect individual Jobs with status and result.
+- consult wait --summary blocks the same way but returns one bounded line per
+  Job with its label, transport status, result/error preview, and artifact paths.
+  Use result for a selected full answer. --summary and --json are exclusive.
+- status lists the newest 20 Jobs by default; --all lists the full history.
+  status <id> prints a concise summary without embedding logs.
+- logs prints the latest 20 rendered lines by default. Use --tail <n> for a
+  different bounded window or --all for full history. --follow seeds that same
+  bounded window, then streams new updates.
 - --after <job-id> is repeatable and requires --background. Every prerequisite
   must already exist in the same Workspace. The detached worker waits for all
   prerequisites; only completed Jobs release it. A failed, cancelled, or
@@ -185,10 +203,13 @@ Job-bearing JSON uses schema version 1. A single Job is:
     {"schemaVersion":1,"job":{},"outcome":{},"artifacts":{},"lineage":{}}
 
 delegate --json, review --json, and result --json emit that envelope.
-status <id> --json adds logTail; status --json and chain --json
-return versioned collections of the same Job payload sections. wait --json
+status <id> --json emits the same envelope without embedded logs; status --json
+and chain --json return versioned collections of the same Job payload sections.
+wait --json
 returns the selected terminal Jobs in submission order. job.afterJobIds lists
-declared prerequisites. Internal Job record fields are not a public API.
+declared prerequisites. job.label is optional human metadata and
+job.reviewOfJobId identifies the isolated implementation reviewed by a review
+Job. Internal Job record fields are not a public API.
 outcome.finalText contains Profile agent-message text, while tool activity
 remains in logs. JSON is also available for setup, agents, logs, doctor, and
 brokers.
@@ -254,5 +275,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const { exitCode, stdout, stderr } = await dispatch(sub ?? "help", parsed);
   if (stdout) process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);
-  process.exit(exitCode);
+  process.exitCode = exitCode;
 }

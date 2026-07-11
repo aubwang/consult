@@ -92,6 +92,7 @@ test("runCodexReview emits the versioned Job envelope with --json", async () => 
 
 test("runCodexReview uses a supplied pinned snapshot without recapturing it", async () => {
   const client = new FakeBrokerClient();
+  const writtenRecords: JobRecord[] = [];
   const resultPromise = runCodexReview({
     profile: "codex",
     profileEntry: profileEntryFixture(),
@@ -99,16 +100,22 @@ test("runCodexReview uses a supplied pinned snapshot without recapturing it", as
     host: "terminal",
     hostSessionId: "default",
     diff: "already pinned",
+    prompt: "/review\n\nsource Job context",
+    label: "artifact review",
+    reviewOfJobId: "job-implementation",
     deps: quietDeps({
       getDiff: async () => {
         throw new Error("getDiff should not run");
       },
       ensureBrokerSession: async () => ({ client }),
       generateJobId: () => "job-review",
+      writeJobRecord: async (_workspaceRoot, _jobId, record) => {
+        writtenRecords.push(structuredClone(record));
+      },
     }),
   });
 
-  await client.waitForRequest("consult/run");
+  const request = await client.waitForRequest("consult/run");
   client.notify("consult/update", availableCommandsUpdate(["review"]));
   client.notify("consult/finalized", {
     jobId: "job-review",
@@ -118,6 +125,11 @@ test("runCodexReview uses a supplied pinned snapshot without recapturing it", as
   const result = await resultPromise;
 
   assert.equal(result.exitCode, 0);
+  const params = request.params as Record<string, unknown>;
+  assert.match(params.prompt as string, /source Job context/u);
+  assert.match(params.prompt as string, /isolated Job job-implementation/u);
+  assert.equal(writtenRecords.at(0)?.label, "artifact review");
+  assert.equal(writtenRecords.at(0)?.reviewOfJobId, "job-implementation");
 });
 
 test("runCodexReview exits 6 when the review turn finalizes as failed", async () => {

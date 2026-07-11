@@ -11,6 +11,7 @@ export const BOOLEAN_FLAGS = new Set([
   "allow-exec",
   "follow",
   "json",
+  "summary",
   "all",
   "cleanup",
   "reference",

@@ -77,7 +77,15 @@ test("dispatch prints the operational contract with help --reference", async () 
   assert.equal(result.stdout.includes("provider/model"), true);
   assert.equal(result.stdout.includes("--after <job-id>"), true);
   assert.equal(result.stdout.includes("--keep-running"), true);
+  assert.equal(result.stdout.includes("--summary"), true);
+  assert.equal(result.stdout.includes("--label <text>"), true);
+  assert.equal(result.stdout.includes("review --job <job-id>"), true);
   assert.equal(result.stdout.includes("afterJobIds"), true);
+  assert.equal(result.stdout.includes("reviewOfJobId"), true);
+  assert.match(result.stdout, /status lists the newest 20 Jobs by default/u);
+  assert.match(result.stdout, /logs prints the latest 20 rendered lines by default/u);
+  assert.match(result.stdout, /without embedded logs/u);
+  assert.doesNotMatch(result.stdout, /adds logTail/u);
   assert.equal(result.stdout.includes("Host-specific"), false);
 });
 
@@ -316,6 +324,50 @@ test("stable consult CLI preserves handler stdout exactly", async (t) => {
   assert.equal(result.code, 0);
   assert.equal(stdout.endsWith("\n\n"), false);
   assert.equal(JSON.parse(stdout).schemaVersion, 1);
+});
+
+test("stable consult CLI drains large JSON responses to a pipe", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-cli-large-json-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dataDir = path.join(root, "data");
+  fs.mkdirSync(path.join(workspaceRoot, ".git"), { recursive: true });
+  withDataDir(t, dataDir);
+  t.after(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+  const jobDir = jobsDir(workspaceRoot);
+  fs.mkdirSync(jobDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(jobDir, "job-large.json"),
+    JSON.stringify({
+      jobId: "job-large",
+      profile: "codex",
+      status: "completed",
+      submittedAt: "2026-05-14T10:00:00.000Z",
+      finalText: "x".repeat(4 * 1024 * 1024),
+    }),
+  );
+
+  const child = spawn(process.execPath, [stableCliPath, "status", "--json"], {
+    cwd: workspaceRoot,
+    env: { ...process.env, CONSULT_DATA_DIR: dataDir },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdoutPromise = new Promise<string>((resolve) => {
+    setTimeout(() => {
+      const stdoutChunks: Buffer[] = [];
+      child.stdout!.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stdout!.on("end", () => resolve(Buffer.concat(stdoutChunks).toString("utf8")));
+      child.stdout!.resume();
+    }, 100);
+  });
+  child.stderr!.resume();
+  const [result, stdout] = await Promise.all([waitForChild(child), stdoutPromise]);
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.code, 0);
+  assert.ok(Buffer.byteLength(stdout) > 4 * 1024 * 1024);
+  assert.equal(JSON.parse(stdout).jobs[0].job.id, "job-large");
 });
 
 interface WaitForChildResult {

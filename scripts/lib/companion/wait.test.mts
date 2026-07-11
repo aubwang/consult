@@ -62,6 +62,46 @@ test("wait blocks once until all selected Jobs are terminal and returns their Re
   assert.equal(envelope.jobs[1].outcome.finalText, "B is done.");
 });
 
+test("wait --summary returns bounded one-line outcomes and artifact paths", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-summary",
+    label: "parser cleanup",
+    status: "completed",
+    profile: "codex",
+    submittedAt: "2026-07-11T10:00:00.000Z",
+    completedAt: "2026-07-11T10:00:01.000Z",
+    finalText: `Implemented the requested change. ${"detail ".repeat(100)}`,
+    patchPath: "/tmp/job-summary.patch",
+    touchedFilesPath: "/tmp/job-summary-files.json",
+  });
+
+  const result = await runWait({
+    args: { positional: ["job-summary"], flags: { summary: true } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(
+    result.stdout,
+    /^job-summary \[parser cleanup\] completed \| result: Implemented the requested change\./u,
+  );
+  assert.match(result.stdout, /patch: \/tmp\/job-summary\.patch/u);
+  assert.match(result.stdout, /files: \/tmp\/job-summary-files\.json/u);
+  assert.ok(result.stdout.length < 300);
+  assert.doesNotMatch(result.stdout, /(?:detail ){10}/u);
+});
+
+test("wait rejects combining --summary with --json", async () => {
+  const result = await runWait({
+    args: { positional: ["job-summary"], flags: { summary: true, json: true } },
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--summary is not supported with --json\n");
+});
+
 test("wait cancels still-active Jobs when the Host interrupts its tool call", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
