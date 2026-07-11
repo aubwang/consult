@@ -24,8 +24,24 @@ resume challenge, and background/status/result for both Profiles. Codex used
 `job-C-fFKwXeLRuO`, background `job-3Dg1z2SiIyYM`). Each source, resumed, and
 background Job archived exactly one Profile transcript while retaining
 direct-network denial and authenticated model proxying. Product-level macOS
-adapter conformance remains to be run from the Mac; the older spike is
-necessary evidence but not a substitute for that final run.
+Codex adapter conformance is recorded below; Claude remains gated on its local
+credential prerequisite. The older spike remains supporting evidence rather
+than a substitute for these product-level runs.
+
+On 2026-07-10, unrestricted native macOS Codex conformance passed on arm64
+after repairing Homebrew linked-runtime and lexical Seatbelt read scopes. The
+harness emitted the following redacted evidence:
+
+```json
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"codex","expectation":"ready","direct":null,"doctor":{"exitCode":0,"selectedProfile":"codex","profileRegistryId":"codex","confinedReady":true,"diagnostic":null},"turn":null,"background":null}
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"codex","expectation":"ready","direct":{"ok":true,"markerMatched":true,"stopReason":"end_turn"},"doctor":{"exitCode":0,"selectedProfile":"codex","profileRegistryId":"codex","confinedReady":true,"diagnostic":null},"turn":{"jobId":"job-YxdsR-g1-TZe","status":"completed","model":null,"stopReason":"end_turn","sourceAcknowledged":true,"sessionStateArchived":true,"resumedJobId":"job-OXrcqJxSAADl","restoredSecretMatched":true},"background":{"jobId":"job-y7uwF1x_MAyF","queued":true,"completed":true,"resultMatched":true,"sessionStateArchived":true}}
+```
+
+The deterministic packed npm Codex and Claude matrices and Bun Doctor controls
+also passed with Homebrew Node 24.18.0. The real Claude controls were not run
+because this Mac has neither a stageable credential file nor a supported
+credential environment variable; Keychain-only login remains intentionally
+insufficient.
 
 Run the product-level harness from an unrestricted macOS terminal:
 

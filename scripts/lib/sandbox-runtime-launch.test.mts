@@ -11,12 +11,52 @@ import type { JobAuthority } from "./job-authority.mts";
 import {
   CONFINED_PROFILE_POLICIES,
   acquireConfinedSandboxRuntimeLaunch,
+  executableReadScopes,
   probeConfinedSandboxRuntime,
 } from "./sandbox-runtime-launch.mts";
 
 const TOKEN = "ab".repeat(32);
 const NO_PROXY =
   "localhost,127.0.0.1,::1,169.254.0.0/16,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16";
+
+test("executable read scopes include only linked Homebrew runtime packages", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-homebrew-scopes-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const nodePackage = path.join(root, "Cellar", "node@24", "24.18.0");
+  const libuvPackage = path.join(root, "Cellar", "libuv", "1.51.0");
+  const opensslPackage = path.join(root, "Cellar", "openssl@3", "3.5.1");
+  const libuvAlias = path.join(root, "opt", "libuv");
+  const opensslAlias = path.join(root, "opt", "openssl@3");
+  await Promise.all([
+    fsp.mkdir(path.join(nodePackage, "bin"), { recursive: true }),
+    fsp.mkdir(path.join(libuvPackage, "lib"), { recursive: true }),
+    fsp.mkdir(path.join(opensslPackage, "lib"), { recursive: true }),
+    fsp.mkdir(path.join(root, "opt"), { recursive: true }),
+  ]);
+  await Promise.all([
+    fsp.writeFile(path.join(nodePackage, "bin", "node"), ""),
+    fsp.writeFile(path.join(libuvPackage, "lib", "libuv.1.dylib"), ""),
+    fsp.writeFile(path.join(opensslPackage, "lib", "libcrypto.3.dylib"), ""),
+    fsp.symlink(libuvPackage, libuvAlias),
+    fsp.symlink(opensslPackage, opensslAlias),
+  ]);
+  const executable = path.join(nodePackage, "bin", "node");
+  const scopes = executableReadScopes(executable, [
+    path.join(libuvAlias, "lib", "libuv.1.dylib"),
+    path.join(libuvPackage, "lib", "libuv.1.dylib"),
+    path.join(opensslAlias, "lib", "libcrypto.3.dylib"),
+    path.join(opensslPackage, "lib", "libcrypto.3.dylib"),
+  ]);
+
+  assert.ok(scopes.includes(nodePackage));
+  assert.ok(scopes.includes(libuvAlias));
+  assert.ok(scopes.includes(libuvPackage));
+  assert.ok(scopes.includes(opensslAlias));
+  assert.ok(scopes.includes(opensslPackage));
+  assert.equal(scopes.includes(root), false);
+  assert.equal(scopes.includes(path.join(root, "opt")), false);
+  assert.equal(scopes.includes(path.join(root, "Cellar")), false);
+});
 
 test("confined launch stages minimal Codex state, sanitizes env, and removes Job state", async (t) => {
   const fixture = await makeFixture(t);
@@ -154,7 +194,7 @@ test("write and fetch authority only broaden Workspace writes and public TCP/443
     assert.deepEqual(harness.configs[0].filesystem.allowWrite, [
       lease.launch.env.HOME,
       lease.launch.env.TMPDIR,
-      fixture.workspace,
+      fs.realpathSync(fixture.workspace),
     ]);
   } finally {
     await lease.release();

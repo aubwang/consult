@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -60,6 +61,7 @@ const MACOS_READ_PATHS = [
   "/sbin",
   "/Library",
   "/dev",
+  "/etc",
   "/private/etc",
   "/private/var/db/timezone",
   "/private/var/select",
@@ -307,16 +309,36 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       allowPublicHosts: input.authority.allowFetch,
     });
 
+    const executableScopes = [
+      ...executableReadScopes(require.resolve("@anthropic-ai/sandbox-runtime")),
+      ...executableReadScopes(resolvedBinary),
+      ...[...runtimeExecutables.values()].flatMap((executable) =>
+        executableReadScopes(executable),
+      ),
+    ];
     const readPaths = existingPaths([
       ...(platform === "linux" ? LINUX_READ_PATHS : MACOS_READ_PATHS),
       workspaceRoot,
       home,
       temp,
       bin,
-      ...executableReadScopes(require.resolve("@anthropic-ai/sandbox-runtime")),
-      ...executableReadScopes(resolvedBinary),
-      ...[...runtimeExecutables.values()].flatMap(executableReadScopes),
+      ...executableScopes,
     ]);
+    const literalReadPaths =
+      platform === "darwin"
+        ? symlinkedReadPathAliases([...MACOS_READ_PATHS, ...executableScopes])
+        : [];
+    const runtimeEnvironment: NodeJS.ProcessEnv = {};
+    if (
+      platform === "darwin" &&
+      executableScopes.some((scope) =>
+        scope.includes(`${path.sep}Cellar${path.sep}openssl@3${path.sep}`),
+      )
+    ) {
+      const opensslConfig = path.join(temp, "openssl.cnf");
+      await fsp.writeFile(opensslConfig, "", { mode: 0o600 });
+      runtimeEnvironment.OPENSSL_CONF = opensslConfig;
+    }
     const hostDefaultWritePaths = [
       path.join(sourceHome, ".npm", "_logs"),
       path.join(sourceHome, ".claude", "debug"),
@@ -371,6 +393,7 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       externalSocksPort: proxy.socksPort,
       sharedDefaultWritePaths: snapshotSandboxRuntimeSharedWritePaths(hostDefaultWritePaths),
       allowedWritePaths: runtimeConfig.filesystem?.allowWrite ?? [],
+      literalReadPaths,
     });
     const childEnv = sanitizedChildEnv({
       source: hostEnv,
@@ -384,6 +407,7 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       config,
       stagedConfig,
     });
+    Object.assign(childEnv, runtimeEnvironment);
 
     return {
       launch: {
@@ -735,8 +759,23 @@ async function executableNeedsNode(executable: string): Promise<boolean> {
   }
 }
 
-function executableReadScopes(executable: string): string[] {
-  const scopes = new Set<string>([executable, path.dirname(executable)]);
+export function executableReadScopes(
+  executable: string,
+  linkedRuntimePaths: readonly string[] =
+    process.platform === "darwin" ? linkedMachORuntimePaths(executable) : [],
+): string[] {
+  const scopes = new Set<string>();
+  addExecutableReadScopes(scopes, executable);
+  for (const linkedRuntimePath of linkedRuntimePaths) {
+    addExecutableReadScopes(scopes, linkedRuntimePath);
+    addSymlinkAncestorScopes(scopes, linkedRuntimePath);
+  }
+  return [...scopes];
+}
+
+function addExecutableReadScopes(scopes: Set<string>, executable: string): void {
+  scopes.add(executable);
+  scopes.add(path.dirname(executable));
   const marker = `${path.sep}node_modules${path.sep}`;
   const markerIndex = executable.indexOf(marker);
   if (markerIndex !== -1) {
@@ -764,7 +803,88 @@ function executableReadScopes(executable: string): string[] {
       );
     }
   }
-  return [...scopes];
+}
+
+function linkedMachORuntimePaths(executable: string): string[] {
+  const linked = new Set<string>();
+  const inspected = new Set<string>();
+  const pending = [executable];
+  while (pending.length > 0) {
+    const candidate = pending.pop()!;
+    const canonical = fs.realpathSync(candidate);
+    if (inspected.has(canonical)) continue;
+    inspected.add(canonical);
+    if (!isMachO(canonical)) continue;
+    for (const dependency of inspectMachODependencies(canonical)) {
+      if (!path.isAbsolute(dependency) || isMacosSystemRuntimePath(dependency)) {
+        continue;
+      }
+      const resolved = fs.realpathSync(dependency);
+      linked.add(dependency);
+      linked.add(resolved);
+      if (!inspected.has(resolved)) pending.push(resolved);
+    }
+  }
+  return [...linked];
+}
+
+function addSymlinkAncestorScopes(scopes: Set<string>, candidate: string): void {
+  const segments = candidate.split(path.sep);
+  let current = path.parse(candidate).root;
+  for (const segment of segments) {
+    if (!segment) continue;
+    current = path.join(current, segment);
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) scopes.add(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+
+function isMachO(candidate: string): boolean {
+  const handle = fs.openSync(candidate, "r");
+  try {
+    const magic = Buffer.alloc(4);
+    if (fs.readSync(handle, magic, 0, magic.length, 0) !== magic.length) return false;
+    return new Set([
+      "feedface",
+      "cefaedfe",
+      "feedfacf",
+      "cffaedfe",
+      "cafebabe",
+      "bebafeca",
+      "cafebabf",
+      "bfbafeca",
+    ]).has(magic.toString("hex"));
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
+function inspectMachODependencies(executable: string): string[] {
+  let output: string;
+  try {
+    output = execFileSync("/usr/bin/otool", ["-L", executable], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      timeout: 5_000,
+    });
+  } catch {
+    throw new Error(`failed to inspect linked runtime dependencies for ${executable}`);
+  }
+  const dependencies: string[] = [];
+  for (const line of output.split(/\r?\n/u).slice(1)) {
+    const match = /^\s+(.+?) \(compatibility version /u.exec(line);
+    if (match) dependencies.push(match[1]);
+  }
+  return dependencies;
+}
+
+function isMacosSystemRuntimePath(candidate: string): boolean {
+  return candidate === "/System" || candidate.startsWith("/System/") ||
+    candidate === "/usr" || candidate.startsWith("/usr/");
 }
 
 function existingPaths(paths: readonly string[]): string[] {
@@ -779,6 +899,25 @@ function existingPaths(paths: readonly string[]): string[] {
     }
   }
   return [...existing];
+}
+
+function symlinkedReadPathAliases(paths: readonly string[]): string[] {
+  const aliases = new Set<string>();
+  for (const candidate of paths) {
+    try {
+      if (fs.realpathSync(candidate) !== candidate) aliases.add(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // Missing optional platform paths are omitted by existingPaths too.
+    }
+  }
+  const minimal: string[] = [];
+  for (const candidate of [...aliases].sort((left, right) => left.length - right.length)) {
+    if (!minimal.some((parent) => candidate.startsWith(`${parent}${path.sep}`))) {
+      minimal.push(candidate);
+    }
+  }
+  return minimal;
 }
 
 function readInstalledSandboxRuntimeVersion(): string {
