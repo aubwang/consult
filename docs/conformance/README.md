@@ -24,8 +24,47 @@ resume challenge, and background/status/result for both Profiles. Codex used
 `job-C-fFKwXeLRuO`, background `job-3Dg1z2SiIyYM`). Each source, resumed, and
 background Job archived exactly one Profile transcript while retaining
 direct-network denial and authenticated model proxying. Product-level macOS
-adapter conformance remains to be run from the Mac; the older spike is
-necessary evidence but not a substitute for that final run.
+Codex and Claude adapter conformance is recorded below. The older spike remains
+supporting evidence rather than a substitute for these product-level runs.
+
+On 2026-07-10, unrestricted native macOS Codex conformance passed on arm64
+after repairing Homebrew linked-runtime and lexical Seatbelt read scopes. The
+harness emitted the following redacted evidence:
+
+```json
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"codex","expectation":"ready","direct":null,"doctor":{"exitCode":0,"selectedProfile":"codex","profileRegistryId":"codex","confinedReady":true,"diagnostic":null},"turn":null,"background":null}
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"codex","expectation":"ready","direct":{"ok":true,"markerMatched":true,"stopReason":"end_turn"},"doctor":{"exitCode":0,"selectedProfile":"codex","profileRegistryId":"codex","confinedReady":true,"diagnostic":null},"turn":{"jobId":"job-YxdsR-g1-TZe","status":"completed","model":null,"stopReason":"end_turn","sourceAcknowledged":true,"sessionStateArchived":true,"resumedJobId":"job-OXrcqJxSAADl","restoredSecretMatched":true},"background":{"jobId":"job-y7uwF1x_MAyF","queued":true,"completed":true,"resultMatched":true,"sessionStateArchived":true}}
+```
+
+The normally sandboxed Codex Host control also passed and emitted:
+
+```json
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"codex","expectation":"unsupported","direct":null,"doctor":{"exitCode":1,"selectedProfile":"codex","profileRegistryId":"codex","confinedReady":false,"diagnostic":{"code":"AUTHORITY_PREFLIGHT_FAILED","message":"confined authority preflight failed: listen EPERM: operation not permitted 127.0.0.1","remediation":"Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created."}},"turn":null,"background":null}
+```
+
+On 2026-07-10, unrestricted native macOS Claude conformance also passed on
+arm64 after granting the exact Homebrew OpenSSL CA bundle paths required by
+Homebrew Node. Direct ACP/model transport, confined Doctor, the source and
+resumed turns, selective Session archival, and background/status/result all
+passed. The harness emitted the following redacted evidence:
+
+```json
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"terminal-or-explicit","agent":"claude","expectation":"ready","direct":{"ok":true,"markerMatched":true,"stopReason":"end_turn"},"doctor":{"exitCode":0,"selectedProfile":"claude","profileRegistryId":"claude","confinedReady":true,"diagnostic":null},"turn":{"jobId":"[redacted]","status":"completed","model":null,"stopReason":"end_turn","sourceAcknowledged":true,"sessionStateArchived":true,"resumedJobId":"[redacted]","restoredSecretMatched":true},"background":{"jobId":"[redacted]","queued":true,"completed":true,"resultMatched":true,"sessionStateArchived":true}}
+```
+
+The normally sandboxed Codex Host control for the Claude Profile also passed
+from a separate `workspace-write` Codex task with the supported credential
+token present only in that task's launch environment:
+
+```json
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"claude","expectation":"unsupported","direct":null,"doctor":{"exitCode":1,"selectedProfile":"claude","profileRegistryId":"claude","confinedReady":false,"diagnostic":{"code":"AUTHORITY_PREFLIGHT_FAILED","message":"confined authority preflight failed: listen EPERM: operation not permitted 127.0.0.1","remediation":"Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created."}},"turn":null,"background":null}
+```
+
+The deterministic packed npm Codex and Claude matrices and Bun Doctor controls
+also passed with Homebrew Node 24.18.0. The real Claude controls used an
+environment-scoped credential obtained through Claude's supported setup-token
+flow; no credential value was recorded. Keychain-only login remains
+intentionally insufficient for confined credential staging.
 
 Run the product-level harness from an unrestricted macOS terminal:
 
