@@ -6,10 +6,7 @@ Consult lets Codex, Claude Code, opencode, or a terminal call in the right
 subagent for a task. It uses the agent installations and authentication you
 already have—no Consult plugin, second agent stack, or new set of accounts.
 
-In concrete terms: **while you are working inside Codex, Codex can invoke
-Claude Code or opencode as a subagent and use the result in the same session.**
-Claude Code can invoke Codex; opencode can invoke either. The spawning agent
-stays in charge while Consult runs the delegated agent behind a common CLI.
+In concrete terms: **while you are working inside Codex, Claude Code, or opencode, your current agent can invoke any of the others as a subagent and use the result in the same session.** The spawning agent stays in charge while Consult runs the selected agent behind one common CLI.
 
 ```text
 ┌──────────────────────────────┐
@@ -88,7 +85,7 @@ or combine with the others.
 
 ## Get started
 
-Consult requires Node.js 24 or newer and uses its native TypeScript support.
+Consult requires Node.js 24 or newer, and is supported on Linux and Apple Silicon (M-Series) macOS devices
 
 ```sh
 npm install --global @aubwang/consult
