@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0](https://github.com/aubwang/consult/compare/v0.2.1...v0.3.0) (2026-07-11)
+
+
+### Features
+
+* add async Job orchestration ([bbc74b9](https://github.com/aubwang/consult/commit/bbc74b9f8729a8ea9c120a31eb6097630911784f))
+* add dependent background jobs ([b8a31b2](https://github.com/aubwang/consult/commit/b8a31b2a1b078698248d15a3b199c61a1dde16c8))
+* add portable multi-job wait ([3092427](https://github.com/aubwang/consult/commit/30924270980ec77e5843cb5b75b15b8e8b7e7760))
+* clarify cross-agent delegation and CLI help ([6154d64](https://github.com/aubwang/consult/commit/6154d6410dcacde80a6b0922bc0093365a4ebb80))
+* clarify cross-agent delegation and CLI help ([c2bfb01](https://github.com/aubwang/consult/commit/c2bfb018472e03b0dfc024b864131405ca6b9ba9))
+* simplify skill installation ([64962b9](https://github.com/aubwang/consult/commit/64962b9b89cbddb5532031eea5eadca7448b2f01))
+* simplify skill installation ([182caab](https://github.com/aubwang/consult/commit/182caabfe1cd5fc490ca018f50cf9de68f3d5c0b))
+
+
+### Bug Fixes
+
+* clean interrupted orchestration jobs ([20a2580](https://github.com/aubwang/consult/commit/20a25804f74341c10a60847091f28244acdd5ed4))
+* stabilize package smoke and clarify delegation graphic ([bfe9bf9](https://github.com/aubwang/consult/commit/bfe9bf9f4d9aa02f8eaefdda0cfda7d09fb5627b))
+* stabilize packed confinement smoke ([9438bf4](https://github.com/aubwang/consult/commit/9438bf476b00ec6cf6a501f669a2238961e7eb91))
+
 ## [0.2.1](https://github.com/aubwang/consult/compare/v0.2.0...v0.2.1) (2026-07-11)
 
 
