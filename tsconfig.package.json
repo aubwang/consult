@@ -14,6 +14,7 @@
     "scripts/live-companion-disconnect-drill.mts",
     "scripts/live-job-authority-conformance.mts",
     "scripts/live-sandbox-runtime-codex-spike.mts",
-    "scripts/package-smoke-cleanup.mts"
+    "scripts/package-smoke-cleanup.mts",
+    "scripts/package-smoke-readiness.mts"
   ]
 }
