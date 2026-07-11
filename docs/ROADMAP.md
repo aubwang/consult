@@ -19,11 +19,11 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
   manifest without changing the invoking checkout.
 - Canonical Job Authority defaults delegation to read-only native confinement,
   with explicit write, fetch, and ambient-inheritance grants.
-- Built-in Codex and Claude confinement targets native Linux and Apple Silicon
+- Built-in Codex and Claude confinement targets native Linux and native arm64
   macOS with direct-network denial, authenticated pinned-address proxying,
   minimal staged credentials, exact Profile preflight, and process-tree cleanup.
 - Custom and opencode Profiles are explicit-inherit only. Native Windows,
-  Intel macOS, and confined nesting are unsupported.
+  macOS x64 processes, and confined nesting are unsupported.
 - Execute permission remains fail-closed pending execute-specific resource
   containment and cross-Profile conformance.
 - Scoped npm releases ship as `@aubwang/consult`; GitHub-clone installation is
@@ -37,10 +37,10 @@ is still supported. Gemini and GitHub Copilot are not supported Profiles.
 The release-hardening gates for the default boundary are complete:
 
 - CI runs the deterministic packed Codex/Claude adapter matrix on Linux and
-  Apple Silicon macOS, covering foreground read-only, write, isolated-write,
+  native arm64 macOS, covering foreground read-only, write, isolated-write,
   fetch/no-fetch proxying, direct-egress denial, background, cancellation,
   resume, and process/Broker/private-root cleanup.
-- Fresh real Codex and Claude overlays passed on Linux and Apple Silicon macOS:
+- Fresh real Codex and Claude overlays passed on Linux and native arm64 macOS:
   direct configured-Profile ACP transport, exact Doctor initialization,
   foreground model transport, background/result, and an unrevealed-secret
   resume challenge.
@@ -80,7 +80,7 @@ The release-hardening gates for the default boundary are complete:
 - A credential broker. Credentials remain process-tree readable and
   egress-constrained; `--allow-fetch` documents the resulting exfiltration
   risk instead of hiding it behind a complex broker.
-- Native Windows or Intel macOS support. WSL2 follows the Linux path; those
+- Native Windows or macOS x64 process support. WSL2 follows the Linux path; those
   native platforms have no confinement or inheritance surface.
 - A new Claude Code plugin surface. Host-specific UI is outside the current
   product vision.

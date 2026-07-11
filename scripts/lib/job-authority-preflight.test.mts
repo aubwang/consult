@@ -41,7 +41,7 @@ test("preflight rejects native Windows including inheritance", async () => {
   if (!result.ok) assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
 });
 
-test("preflight rejects Intel macOS including inheritance", async () => {
+test("preflight rejects macOS x64 processes including inheritance", async () => {
   const result = await preflightJobAuthority({
     ...BASE,
     authority: INHERIT,
@@ -51,7 +51,7 @@ test("preflight rejects Intel macOS including inheritance", async () => {
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
-    assert.match(result.diagnostic.message, /Intel macOS/u);
+    assert.match(result.diagnostic.message, /macOS x64 process/u);
   }
 });
 

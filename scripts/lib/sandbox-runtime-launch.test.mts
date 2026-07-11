@@ -81,7 +81,7 @@ test("executable read scopes include only linked Homebrew runtime packages", asy
   assert.equal(scopes.includes(path.join(root, "Cellar")), false);
 });
 
-test("Intel Homebrew scopes do not widen to /usr/local", () => {
+test("macOS x64 Homebrew scopes do not widen to /usr/local", () => {
   const scopes = executableReadScopes(
     "/usr/local/Cellar/node@24/24.18.0/bin/node",
     [
@@ -261,7 +261,7 @@ test("custom and opencode confined Profiles fail before runtime or proxy startup
   }
 });
 
-test("Intel macOS fails before runtime or proxy startup", async (t) => {
+test("macOS x64 processes fail before runtime or proxy startup", async (t) => {
   const fixture = await makeFixture(t);
   const harness = fakeRuntime();
   await assert.rejects(
@@ -274,12 +274,12 @@ test("Intel macOS fails before runtime or proxy startup", async (t) => {
       mode: "read-only",
       profileRegistryId: "codex",
     }, { ...harness.deps, platform: "darwin", arch: "x64" }),
-    /unsupported on Intel macOS/u,
+    /unsupported for a macOS x64 process/u,
   );
   assert.deepEqual(harness.events, []);
 });
 
-test("confined preflight reports Intel macOS as platform-unsupported", async (t) => {
+test("confined preflight reports macOS x64 as platform-unsupported", async (t) => {
   const fixture = await makeFixture(t);
   const result = await probeConfinedSandboxRuntime({
     authority: authority(),
@@ -298,7 +298,7 @@ test("confined preflight reports Intel macOS as platform-unsupported", async (t)
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
-    assert.match(result.diagnostic.message, /Intel macOS/u);
+    assert.match(result.diagnostic.message, /macOS x64 process/u);
   }
 });
 

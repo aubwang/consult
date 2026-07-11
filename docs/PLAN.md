@@ -40,7 +40,7 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 - A permanent agent app server or a dependency on Codex app-server APIs.
 - Forwarding one Host's private MCP configuration to a Profile.
 - Interactive permission prompting during a Job.
-- Native Windows or Intel macOS support, or an ambient-authority fallback
+- Native Windows or macOS x64 process support, or an ambient-authority fallback
   presented as a security boundary.
 - Multiple separately named installations of one built-in Profile type.
 
@@ -296,8 +296,8 @@ Host choices; Consult may narrow them but never broadens or retries implicitly.
 Before resume lookup, diff capture, isolated-worktree creation, or Job
 persistence, preflight initializes the exact configured Profile binary, args,
 and environment inside the requested boundary. Unsupported combinations return
-a structured authority diagnostic and create no Job. Native Windows and Intel
-macOS are unsupported, including inheritance. Confined nesting is also
+a structured authority diagnostic and create no Job. Native Windows and macOS
+x64 processes are unsupported, including inheritance. Confined nesting is also
 unsupported; cooperative ambient chains must request inheritance explicitly,
 and linked child ceilings are not presented as an unforgeable OS boundary.
 
@@ -306,7 +306,7 @@ the Profile executable or Host credential state can change before the real
 launch. The launch path derives and validates the full policy again, so such a
 race can fail a created Job but cannot silently broaden its authority.
 
-The confined adapter targets native Linux and Apple Silicon macOS for built-in
+The confined adapter targets native Linux and native arm64 macOS for built-in
 `codex` and `claude` Profile identities. Custom and `opencode` Profiles remain
 inherit-only until they pass the same live conformance gates. A trusted Host
 may choose `--sandbox inherit`; that adds no Consult OS boundary and disables
@@ -324,7 +324,7 @@ Linux uses bubblewrap network/PID/mount namespaces plus seccomp; macOS uses
 Seatbelt. The Profile owns a new process group, and confinement is released
 only after tree termination is confirmed.
 
-On Apple Silicon macOS, executable read scopes recursively inspect absolute
+On native arm64 macOS, executable read scopes recursively inspect absolute
 Mach-O library links. Exact linked Homebrew formula/version roots and their
 `opt` symlink aliases are readable, while broad `/usr`, `/usr/local`, the
 Homebrew prefix, and the Cellar as a whole remain denied. System reads use exact

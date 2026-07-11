@@ -85,7 +85,7 @@ consult doctor --agent codex
 ## Safety Defaults
 
 - Delegation defaults to read-only, Consult-managed confinement. Built-in
-  `codex` and `claude` Profiles are confined on native Linux and Apple Silicon
+  `codex` and `claude` Profiles are confined on native Linux and native arm64
   macOS after an
   exact Profile preflight; a failed preflight creates no Job.
 - `consult doctor` runs that live preflight: it briefly stages the selected
@@ -105,8 +105,8 @@ consult doctor --agent codex
   Profile backend may act before Consult observes a violation. Never retry with
   inheritance silently after confined preflight fails.
 - Custom and `opencode` Profiles currently require explicit inheritance.
-  Confined nested delegation, native Windows, and Intel macOS (including
-  inheritance) are unsupported.
+  Confined nested delegation, native Windows, and macOS x64 processes
+  (including Node under Rosetta and inheritance) are unsupported.
 - Do not pass `--allow-exec`; execute-specific resource limits and
   cross-Profile conformance remain incomplete, so it fails preflight.
 - Confined Jobs bound wall-clock time and persisted logs, but do not impose

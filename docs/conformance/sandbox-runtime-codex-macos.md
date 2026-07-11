@@ -11,7 +11,7 @@ This harness/report remains spike evidence. ADR-0027 later adopted portable Job
 Authority and uses this report as the reason nested confinement under the
 macOS Codex Host must fail preflight rather than fall back implicitly. The
 unrestricted product-level adapter and real Profile controls later passed on
-Apple Silicon and are recorded in [`README.md`](README.md).
+native arm64 macOS and are recorded in [`README.md`](README.md).
 
 ## Candidate and environment
 

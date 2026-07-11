@@ -112,7 +112,7 @@ read-only review Job through the portable delegation path.
 ## Job Authority
 
 Every `delegate` and `review` defaults to read-only, Consult-managed
-confinement. On native Linux and Apple Silicon macOS, built-in `codex` and
+confinement. On native Linux and native arm64 macOS, built-in `codex` and
 `claude` Profiles receive Workspace access according to mode, a private per-Job
 home/temp directory, one selected credential source, and the system/runtime
 reads needed to start the configured Profile. Direct networking is blocked;
@@ -131,9 +131,9 @@ ambient authority. It adds no Consult OS boundary and is never selected as an
 automatic retry. Under inheritance, read-only and path policy are cooperative
 and detective rather than OS-preventive; a Profile backend may act before
 Consult observes a violation. Confined nested delegation is unsupported. Custom and
-`opencode` Profiles currently require inheritance. Native Windows and Intel
-macOS are not supported, including inherited mode. Check the exact combination
-first:
+`opencode` Profiles currently require inheritance. Native Windows and macOS
+x64 processes (including Node under Rosetta) are not supported, including
+inherited mode. Check the exact combination first:
 
 ```sh
 consult doctor --agent codex
@@ -291,7 +291,7 @@ test runner. Source is erasable TypeScript run directly by Node from a checkout.
 Published packages contain compiled `.mjs` because Node does not type-strip
 TypeScript under `node_modules`. The package smoke also starts an installed
 background Job so source-only worker or Broker paths cannot pass on `help`
-alone. Set `CONSULT_PACKAGE_SMOKE_CONFINED=1` on native Linux or Apple Silicon
+alone. Set `CONSULT_PACKAGE_SMOKE_CONFINED=1` on native Linux or native arm64
 macOS to run the packed Codex/Claude registry-identity matrix for filesystem, egress,
 write/isolation, background, cancellation, resume, credential staging, and
 cleanup boundaries.

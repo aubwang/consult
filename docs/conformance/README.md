@@ -3,7 +3,7 @@
 Live conformance status for the implemented Consult Profiles.
 
 Job Authority confinement is now implemented for the built-in Codex and Claude
-Profile identities on native Linux and Apple Silicon macOS, with exact live preflight deciding
+Profile identities on native Linux and native arm64 macOS, with exact live preflight deciding
 whether the current Host context is usable. The pinned runtime remains
 **rejected for the nested macOS Codex Host path** because it cannot establish
 its own proxy or Seatbelt boundary inside Codex's inherited sandbox. See the

@@ -467,7 +467,7 @@ export async function probeConfinedSandboxRuntime(
         code: "AUTHORITY_PLATFORM_UNSUPPORTED",
         message: errorMessage(error),
         remediation:
-          "Use a built-in codex or claude Profile on native Linux or Apple Silicon macOS.",
+          "Use a built-in codex or claude Profile on native Linux or macOS with a native arm64 Node process.",
       },
     };
   }
@@ -560,7 +560,7 @@ function supportedPlatform(
     throw new Error(`confined authority is unsupported on ${platform}`);
   }
   if (platform === "darwin" && arch !== "arm64") {
-    throw new Error(`confined authority is unsupported on Intel macOS (${arch})`);
+    throw new Error(`confined authority is unsupported for a macOS ${arch} process`);
   }
   return platform;
 }

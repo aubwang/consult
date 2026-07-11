@@ -155,7 +155,7 @@ test("doctor marks default confinement unready with the probe diagnostic", async
   assert.equal(report.authority.inherit.available, true);
 });
 
-test("doctor reports Intel macOS unsupported without an inheritance escape hatch", async (t) => {
+test("doctor reports macOS x64 unsupported without an inheritance escape hatch", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeProfiles({

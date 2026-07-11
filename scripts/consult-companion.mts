@@ -122,7 +122,7 @@ models advertised at Session start. OpenCode exact model ids use provider/model.
   seeded or captured. The original checkout stays unchanged;
   Job artifacts contain the Profile-only binary patch and touched-files list.
 - --sandbox confined (default): launch built-in codex or claude Profiles inside
-  Consult-managed native confinement on Linux or Apple Silicon macOS. Direct
+  Consult-managed native confinement on Linux or native arm64 macOS. Direct
   networking is blocked; model traffic uses an authenticated model-host
   allowlist proxy.
 - --allow-fetch: additionally permit arbitrary public TCP/443 through that proxy
@@ -145,9 +145,10 @@ models advertised at Session start. OpenCode exact model ids use provider/model.
 Confined nesting is unsupported: have the trusted root Host create a sibling
 Job, or choose inheritance explicitly for a cooperative ambient chain.
 
-Native Windows and Intel macOS are unsupported, including inheritance. Confined
+Native Windows and macOS x64 processes (including Node under Rosetta) are
+unsupported, including inheritance. Confined
 authority is currently implemented only for built-in codex and claude Profile
-identities on native Linux and Apple Silicon macOS; custom and opencode Profiles
+identities on native Linux and native arm64 macOS; custom and opencode Profiles
 require explicit --sandbox inherit. Run consult doctor --agent <profile> before
 delegation to check the exact Profile
 launch in the current Host context. Doctor briefly stages the selected

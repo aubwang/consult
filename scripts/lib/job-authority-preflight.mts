@@ -61,9 +61,9 @@ export function validateJobAuthorityRuntimeBoundary(
     return failure(
       "AUTHORITY_PLATFORM_UNSUPPORTED",
       platform === "darwin"
-        ? `Intel macOS (${arch}) does not support Consult Job Authority confinement or inheritance`
+        ? `macOS ${arch} processes do not support Consult Job Authority confinement or inheritance`
         : `${platform === "win32" ? "native Windows" : platform} does not support Consult Job Authority confinement or inheritance`,
-      "Run Consult on native Linux, WSL2, or Apple Silicon macOS.",
+      "Run Consult on native Linux, WSL2, or macOS with a native arm64 Node process.",
     );
   }
 
