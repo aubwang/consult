@@ -111,12 +111,15 @@ test("applySessionControls expands current Claude model aliases", async () => {
   ]);
 });
 
-test("normalizeModelControl maps Claude shorthand and leaves other profiles alone", () => {
+test("normalizeModelControl maps built-in Profile shorthand", () => {
   assert.equal(normalizeModelControl("claude", "opus-4.8"), "claude-opus-4-8");
   assert.equal(normalizeModelControl("claude", "sonnet"), "claude-sonnet-5");
   assert.equal(normalizeModelControl("claude", "haiku"), "claude-haiku-4-5");
   assert.equal(normalizeModelControl("claude", "fable"), "claude-fable-5");
   assert.equal(normalizeModelControl("claude", "custom-model"), "custom-model");
+  assert.equal(normalizeModelControl("codex", "sol"), "gpt-5.6-sol");
+  assert.equal(normalizeModelControl("codex", "terra"), "gpt-5.6-terra");
+  assert.equal(normalizeModelControl("codex", "luna"), "gpt-5.6-luna");
   assert.equal(normalizeModelControl("opencode", "opus"), "opus");
 });
 
@@ -191,6 +194,31 @@ test("applySessionControls resolves advertised GPT-5.6 tier aliases", async () =
     { sessionId: "session-1", modelId: "gpt-5.6-terra" },
     { sessionId: "session-1", modelId: "gpt-5.6-luna" },
     { sessionId: "session-1", modelId: "gpt-5.6-sol" },
+  ]);
+});
+
+test("applySessionControls never sends bare Codex tier aliases as model ids", async () => {
+  const calls: unknown[] = [];
+  const connection = {
+    async setSessionConfigOption(params: unknown) {
+      calls.push(params);
+      return { configOptions: [] };
+    },
+  } as unknown as AcpConnection;
+
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState: {
+      configOptions: [
+        configOption("model", "Model", "model", ["terra", "gpt-5.6-terra", "gpt-5.4"]),
+      ],
+    },
+    model: "terra",
+    profile: "codex",
+  });
+
+  assert.deepEqual(calls, [
+    { sessionId: "session-1", configId: "model", value: "gpt-5.6-terra" },
   ]);
 });
 

@@ -244,6 +244,12 @@ export async function acquireConfinedSandboxRuntimeLaunch(
 
   try {
     const now = (deps.now ?? Date.now)();
+    const sourceHome = trustedHostHome();
+    const hostEnv = { ...process.env, ...input.env };
+    const sourceConfig = profileSourceConfigDirectory(profile, hostEnv, sourceHome);
+    if (input.profileRegistryId === "claude") {
+      await assertClaudeOauthNotExpired(path.join(sourceConfig, profile.credentialFile), now);
+    }
     await sweepStaleJobRoots(now, deps.pidIsAlive ?? defaultPidIsAlive);
     root = await createPrivateJobRoot(now);
     const workspaceRoot = await realDirectory(input.workspaceRoot ?? input.cwd, "Workspace");
@@ -267,9 +273,6 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       privateDirectory(config),
     ]);
 
-    const sourceHome = trustedHostHome();
-    const hostEnv = { ...process.env, ...input.env };
-    const sourceConfig = profileSourceConfigDirectory(profile, hostEnv, sourceHome);
     const stagedConfig = path.join(home, profile.stagedConfigDir);
     await privateDirectory(stagedConfig);
     const stagedCredential = await stageOptionalRegularFile(
@@ -529,6 +532,17 @@ export async function probeConfinedSandboxRuntime(
     }
   }
   if (failure !== undefined) {
+    if (failure instanceof OauthExpiredError) {
+      return {
+        ok: false,
+        diagnostic: {
+          code: "AUTHORITY_PREFLIGHT_FAILED",
+          message: `confined authority preflight failed: ${errorMessage(failure)}`,
+          remediation:
+            "Open Claude Code on the Host and complete sign-in, then retry the Consult command. Consult will not refresh the credential or retry with inherited authority.",
+        },
+      };
+    }
     return {
       ok: false,
       diagnostic: {
@@ -1028,4 +1042,40 @@ function preflightFailureMessage(error: unknown): string {
     return "nested Linux sandbox initialization failed: bwrap namespace creation was denied by the parent sandbox";
   }
   return errorMessage(error);
+}
+
+class OauthExpiredError extends Error {
+  override readonly name = "OauthExpiredError";
+}
+
+async function assertClaudeOauthNotExpired(
+  credentialFile: string,
+  now: number,
+): Promise<void> {
+  let raw: string;
+  try {
+    raw = await fsp.readFile(credentialFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  const oauth =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>).claudeAiOauth
+      : undefined;
+  const expiresAt =
+    typeof oauth === "object" && oauth !== null
+      ? (oauth as Record<string, unknown>).expiresAt
+      : undefined;
+  if (typeof expiresAt === "number" && expiresAt <= now) {
+    throw new OauthExpiredError(
+      "Claude OAuth credential is expired; re-authenticate by running Claude Code on the Host",
+    );
+  }
 }
