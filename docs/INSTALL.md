@@ -88,9 +88,9 @@ consult doctor --agent codex
 available Profiles and whether their agent executables are installed.
 
 Confined Claude on macOS cannot read a login stored only in the macOS Keychain,
-because Consult deliberately does not broker Keychain credentials. Supply one
-supported token variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or
-`CLAUDE_CODE_OAUTH_TOKEN`) to the Host environment, or a stageable
+because Consult deliberately does not broker Keychain credentials. Supply
+`CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN` to the Host
+environment, or a stageable
 `.claude/.credentials.json`, before running Doctor or delegation. The token is
 passed only to the Job process tree; do not put it in project files or command
 arguments.
@@ -98,7 +98,11 @@ arguments.
 If a stageable Claude OAuth credential has expired, confined preflight fails
 before starting the proxy or Profile. Consult does not refresh the credential
 and does not retry with inherited authority. Open Claude Code on the Host,
-complete sign-in there, then retry the Consult command.
+complete sign-in there, then retry the Consult command. Alternatively, supply
+`CONSULT_CLAUDE_OAUTH_TOKEN` or `CONSULT_CLAUDE_API_KEY` to the Host
+environment; the Consult-specific credential takes precedence over the expired
+file. Ambient `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` variables are
+not selected as confined Profile credentials.
 
 If the shell cannot find `consult` after installation, inspect npm's global
 prefix with `npm prefix --global` and ensure its executable directory is on

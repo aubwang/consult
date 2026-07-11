@@ -107,8 +107,9 @@ models advertised at Session start. OpenCode exact model ids use provider/model.
   readable data to a public host.
 - --sandbox inherit: deliberately add no Consult OS boundary and use only the
   trusted Host's ambient authority. Read-only/path checks are then cooperative
-  and detective, not OS-preventive. Consult never retries with inheritance
-  implicitly.
+  and detective, not OS-preventive. The Profile also receives the ambient Host
+  environment without confined credential translation. Consult never retries
+  with inheritance implicitly.
 - --allow-exec: currently fails preflight while execute-specific resource and
   cross-Profile conformance work remains incomplete.
 - Confined Jobs have wall-clock and persisted-log limits, but no process-count,
@@ -128,7 +129,10 @@ require explicit --sandbox inherit. Run consult doctor --agent <profile> before
 delegation to check the exact Profile
 launch in the current Host context. Doctor briefly stages the selected
 credential and initializes/disposes the Profile, but sends no model prompt. A
-failed preflight creates no Job.
+failed preflight creates no Job. CONSULT_OPENAI_API_KEY,
+CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN explicitly override the
+corresponding Profile file; ambient vendor variables do not. Consult never
+refreshes vendor credentials.
 
 ## Pinned diffs and review
 

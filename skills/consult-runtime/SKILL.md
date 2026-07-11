@@ -67,8 +67,11 @@ TCP/443 (without TLS or application-protocol inspection) and therefore
 increases credential/data exfiltration risk.
 
 Consult does not broker the macOS Keychain. Confined Claude on macOS requires
-one supported token environment variable or a stageable
+`CONSULT_CLAUDE_API_KEY`, `CONSULT_CLAUDE_OAUTH_TOKEN`, or a stageable
 `.claude/.credentials.json`; a Keychain-only login fails preflight.
+`CONSULT_OPENAI_API_KEY` similarly overrides Codex `auth.json`. Consult-specific
+credentials take precedence; ambient vendor variables do not. Consult does not
+refresh vendor credentials.
 
 Preflight initializes the exact configured Profile before Job persistence and
 fails closed. Consult never changes a failed confined request to inheritance.
