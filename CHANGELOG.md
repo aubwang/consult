@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/aubwang/consult/compare/v0.2.0...v0.2.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* harden delegation cleanup and improve onboarding ([55bda77](https://github.com/aubwang/consult/commit/55bda77baf209d497239daeb6605bd2b35265b91))
+* retry transient package smoke cleanup races ([855411c](https://github.com/aubwang/consult/commit/855411cb40cb0ac154f73e36747db5d635134823))
+
 ## [0.2.0](https://github.com/aubwang/consult/compare/v0.1.3...v0.2.0) (2026-07-11)
 
 
