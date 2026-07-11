@@ -1,89 +1,33 @@
 ---
 name: ask-claude
-description: Ask the Claude Profile through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Claude, ask Claude, get Claude's opinion, get a Claude review, or use Claude as a supporter.
-metadata:
-  "consult.disable-model-invocation": "true"
-  "consult.argument-hint": What should Claude answer or review?
+description: Ask the configured Claude Profile through Consult for an independent review, explanation, debugging hypothesis, or design opinion. Use when the user asks to consult Claude or get Claude's perspective.
 ---
 
 # Ask Claude Through Consult
 
-Use this skill when the user wants the current Host to ask the Claude Profile for an
-independent second opinion while staying inside the current Host conversation.
+Give Claude one cold, self-contained prompt with the objective, exact Workspace
+paths, constraints, expected answer, and evidence requested.
 
-Run Claude through Consult in read-only mode by default:
-
-```sh
-consult delegate --agent claude --read-only --model sonnet -- "<prompt for Claude>"
-```
-
-Use background mode for longer reviews:
+Default to confined read-only authority and Sonnet:
 
 ```sh
-consult delegate --agent claude --read-only --model sonnet --background -- "<prompt for Claude>"
-consult wait <job-id>
+consult delegate --agent claude --read-only --model sonnet -- "<prompt>"
 ```
 
-When Claude's result should feed a predetermined later Job, the Host may use
-`--after <job-id>`. If seeing Claude's answer could change the next prompt or
-whether work should continue, wait and inspect it first.
+Use `consult review --agent claude [--base <ref>]` for the current Git change.
+Use `consult review --agent claude --job <id>` to review a completed isolated
+implementation Job without loading its patch into Host context.
 
-## Model And Effort
+For a longer second opinion, add `--background --label "<purpose>"`, then run
+`consult wait <job-id>`. Preserve a user-requested model, effort, or authority.
+Run `consult help --reference` instead of guessing unsupported model names.
 
-Default Claude model: `--model sonnet`, which Consult expands to the newest
-available Sonnet model.
+Ask reviews for prioritized actionable findings with file and line evidence.
+Ask debugging turns for ranked hypotheses and falsifying checks. Ask design
+turns to separate concrete risks from optional suggestions.
 
-If the user asks for a specific Claude variant, preserve it:
-
-```sh
-consult delegate --agent claude --read-only --model opus -- "<prompt for Claude>"
-```
-
-Family aliases (`sonnet`, `opus`, `haiku`, `fable`) resolve dynamically to the
-newest matching model the agent advertises. When the agent does not advertise
-its model list, Consult falls back to static ids: `sonnet` expands to
-`claude-sonnet-5`, `opus` to `claude-opus-4-8`, `haiku` to `claude-haiku-4-5`,
-and `fable` to `claude-fable-5`. Explicit model ids are passed through
-unchanged.
-
-If the user asks for effort or another Consult option, pass it through:
-
-```sh
-consult delegate --agent claude --read-only --model sonnet --effort high -- "<prompt for Claude>"
-```
-
-User-supplied `--model` and `--effort` override the examples above.
-
-## Prompt Shape
-
-For code review, ask:
-
-```text
-Review the current changes for bugs, regressions, missing tests, and risky
-assumptions. Prioritize actionable findings. Cite files/lines where possible.
-If you find no issues, say that clearly and note any residual risk.
-```
-
-Prefer `consult review --agent claude [--base <ref>]` when the request is
-specifically about the current Git change; it pins the diff before delegation.
-
-For design questions, ask Claude to separate concrete risks from suggestions.
-For debugging questions, ask Claude for ranked hypotheses and what evidence
-would confirm or falsify each one.
-
-## Rules
-
-- Default to `--read-only`.
-- Keep the default confined authority. If preflight fails in the current Host
-  context, report it; do not retry with `--sandbox inherit` silently.
-- Add `--allow-fetch` only when Claude itself needs task-specific public TCP/443
-  research and the increased prompt-injection exfiltration risk is acceptable.
-- Keep Host-side delegate concurrency bounded. Confined Jobs have wall-clock
-  and log limits, not process-count, CPU, memory, disk, or global fan-out quotas.
-- Do not ask Claude to edit files unless the user explicitly asks for
-  that.
-- Delegate to the `claude` Profile only; do not substitute a different
-  Profile.
-- Do not send secrets or PII in the prompt.
-- Report useful findings back to the user, but keep the current Host
-  responsible for deciding what to implement.
+- Keep the current Host responsible for conclusions and integration.
+- Do not request edits unless the user requested implementation.
+- Add `--allow-fetch` only when Claude itself needs public-web research.
+- Never retry failed confinement with inheritance automatically.
+- Never send secrets or PII.

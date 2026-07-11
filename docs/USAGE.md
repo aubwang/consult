@@ -10,8 +10,8 @@ Consult ships three built-in Profile definitions:
 
 | Profile | Agent executable | Authentication | Confined authority |
 | --- | --- | --- | --- |
-| `claude` | `claude-agent-acp` | A stageable credentials file or one supported token variable. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
-| `codex` | `codex-acp` | The underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
+| `claude` | `claude-agent-acp` | `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`, otherwise a stageable credentials file. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
+| `codex` | `codex-acp` | `CONSULT_OPENAI_API_KEY`, otherwise the underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
 | `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; explicit inheritance is required. |
 
 Run `consult setup` to inspect available Profile executables or
@@ -99,7 +99,9 @@ credentials; keep the Job's readable input narrow.
 `--sandbox inherit` deliberately adds no Consult OS boundary. It is an explicit
 escape hatch for a trusted Host and is never selected as an automatic retry.
 Read-only and path policy are cooperative and detective under inheritance, so a
-Profile backend may act before Consult observes a violation.
+Profile backend may act before Consult observes a violation. Inheritance also
+passes the Host's ambient environment without confined credential staging or
+translation, so vendor variables may affect the Profile's native authentication.
 
 Confined nested delegation is unsupported. Custom and opencode Profiles require
 inheritance. Native Windows and macOS x64 processes, including Node under
@@ -115,14 +117,28 @@ Doctor stages the selected credential briefly, opens the confined proxy,
 initializes the Profile, and disposes it. It does not send a model prompt. A
 failed preflight creates no Job.
 
+A Profile-specific Consult credential variable takes precedence over a Profile
+credential file during confined launch and prevents that file from being
+staged:
+
+- `CONSULT_OPENAI_API_KEY` becomes `OPENAI_API_KEY` inside a Codex Job;
+- `CONSULT_CLAUDE_API_KEY` becomes `ANTHROPIC_API_KEY` inside a Claude Job; and
+- `CONSULT_CLAUDE_OAUTH_TOKEN` becomes `CLAUDE_CODE_OAUTH_TOKEN` inside a
+  Claude Job.
+
+Ambient vendor variables are ignored for Profile authentication, so a
+project's `OPENAI_API_KEY` does not replace the ChatGPT login represented by
+`auth.json`. Setting both Claude-specific Consult variables is an error.
+Consult never refreshes Profile credentials automatically.
+
 Confined launch does not copy Codex `config.toml` or Claude `settings.json`.
 Pass `--model` explicitly when Host configuration controls model or provider
 selection.
 
-Confined Claude on macOS requires a supported token variable
-(`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `CLAUDE_CODE_OAUTH_TOKEN`) or a
-stageable `.claude/.credentials.json`; a Keychain-only login is unavailable in
-the private Job home. Consult deliberately does not broker the macOS Keychain.
+Confined Claude on macOS requires `CONSULT_CLAUDE_API_KEY`,
+`CONSULT_CLAUDE_OAUTH_TOKEN`, or a stageable `.claude/.credentials.json`; a
+Keychain-only login is unavailable in the private Job home. Consult deliberately
+does not broker the macOS Keychain.
 
 `--allow-exec` remains unavailable while execute-specific resource limits and
 cross-Profile conformance are incomplete. Confined Jobs have wall-clock and
@@ -140,7 +156,7 @@ consult delegate --agent codex --write -- "Add a focused test."
 For delegated implementation, prefer an isolated write Job:
 
 ```sh
-consult delegate --agent codex --write --isolated -- \
+consult delegate --agent codex --write --isolated --label "focused fix" -- \
   "Implement the focused fix and run the relevant checks."
 ```
 
@@ -154,13 +170,26 @@ stable base.
 The isolated worktree is a transactional boundary separate from native process
 confinement. Confined Job Authority still applies by default.
 
+Review a completed isolated Job directly from its Consult-owned artifacts:
+
+```sh
+consult review --agent claude --job <implementation-job-id> \
+  --label "implementation review"
+```
+
+The source task, final report, touched-files list, and patch are pinned as
+bounded untrusted input. The review does not apply the patch. `--job` and
+`--base` are mutually exclusive.
+
 ## Background Jobs
 
 ```sh
 consult delegate --agent opencode --read-only --sandbox inherit \
   --background -- "Trace the bug."
 consult wait <job-id> [<job-id>...]
-consult logs <job-id> --follow
+consult wait --summary <job-id> [<job-id>...]
+consult status <job-id>
+consult logs <job-id> --tail 10
 consult result <job-id>
 consult chain <job-id>
 consult cancel <job-id>
@@ -170,6 +199,21 @@ A foreground delegation streams updates and the final response. A background
 delegation returns a queued Job immediately. Each normal background Job gets a
 Job-scoped Broker; an isolated worker may host the same runtime inline so its
 execution directory remains separate from the original Workspace.
+
+Prefer `wait` when the Host needs the answer: one blocking CLI call avoids
+model-driven polling. Add `--summary` when the Host needs only bounded result
+previews and artifact paths, then use `result` for a selected full answer.
+`--summary` and `--json` are mutually exclusive. `status` lists only the newest
+20 Jobs by default, and a single-Job status is a concise summary without log
+output; use `status --all`
+for complete history. `logs` prints the latest 20 rendered lines by default;
+use `--tail <n>` for another bounded window, `--all` for complete history, or
+`--follow` to seed the bounded window and then stream new updates. `result`
+returns the final Job answer.
+
+A `completed` Job means its Profile turn ended successfully at the transport
+level. The Host still needs to judge whether the final text actually completed
+the delegated task.
 
 ### Dependent Jobs
 
@@ -244,8 +288,11 @@ versioned envelope:
 
 `outcome.finalText` contains the Profile's agent-message text rather than
 rendered tool-call markers. `job.afterJobIds` lists declared prerequisites;
+`job.label` is optional non-unique human metadata and `job.reviewOfJobId`
+identifies an isolated implementation reviewed by a review Job.
 `wait --json` returns a `jobs` collection of the same payloads. Internal Job
-record fields are not a public API.
+record fields are not a public API. Status JSON does not embed log tails; use
+`logs --json` when structured updates are explicitly needed.
 
 ## Host Identity
 
@@ -278,13 +325,15 @@ Useful diagnostics:
 ```sh
 consult doctor
 consult status <job-id>
-consult logs <job-id> --follow
+consult logs <job-id> --tail 10
 consult brokers
 consult brokers --cleanup
 ```
 
 If authentication fails, sign in with the Profile's native CLI first, then
-rerun `consult doctor --agent <profile>`. Consult does not refresh vendor
+rerun `consult doctor --agent <profile>`. For an expired Claude OAuth file, an
+explicit `CONSULT_CLAUDE_OAUTH_TOKEN` or `CONSULT_CLAUDE_API_KEY` bypasses the
+file. Consult does not refresh vendor
 credentials or retry with ambient inheritance automatically.
 
 ## Optional agent skills
@@ -312,8 +361,7 @@ Skill installation is optional and separate from installing the Consult CLI.
 If you do not want to use the Skills CLI, copy or symlink one of the four
 user-facing folders (`consult`, `ask-claude`, `ask-codex`, or `ask-opencode`)
 from the installed npm package into the relevant agent's local or global skill
-directory. `consult-runtime` is an internal contract and should not be
-installed as a Host skill.
+directory.
 
 The tracked [`opencode` skill entrypoint](../.opencode/skills/consult) exposes
 the generic skill from a repository checkout. These helpers teach a Host when

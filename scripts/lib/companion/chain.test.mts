@@ -8,6 +8,7 @@ test("chain prints a human rollup for the requested job chain", async (t) => {
   const records: JobRecord[] = [
     {
     jobId: "job-root",
+    label: "root implementation",
     profile: "codex",
     status: "completed",
     submittedAt: "2026-05-14T10:00:00.000Z",
@@ -70,11 +71,11 @@ test("chain prints a human rollup for the requested job chain", async (t) => {
     result.stdout,
     /^chain\tjob-root\tjob\tjob-child\troot\tjob-root\tparent\tjob-root\tchildren\tjob-grandchild/m,
   );
-  assert.match(result.stdout, /relation\tjobId\tstatus\tprofile\tdepth\tparentJobId\tchildren\tprompt\tfinalSummary/);
-  assert.match(result.stdout, /root,parent\tjob-root\tcompleted\tcodex\t0\t-\tjob-child,job-sibling\troot prompt\troot summary/);
-  assert.match(result.stdout, /target\tjob-child\trunning\tclaude\t1\tjob-root\tjob-grandchild\tchild prompt\t-/);
-  assert.match(result.stdout, /chain\tjob-sibling\tfailed\topencode\t1\tjob-root\t-\tsibling prompt\tsibling failed summary/);
-  assert.match(result.stdout, /child\tjob-grandchild\tqueued\tcodex\t2\tjob-child\t-\tgrandchild prompt\t-/);
+  assert.match(result.stdout, /relation\tjobId\tlabel\tstatus\tprofile\tdepth\tparentJobId\tchildren\tprompt\tfinalSummary/);
+  assert.match(result.stdout, /root,parent\tjob-root\troot implementation\tcompleted\tcodex\t0\t-\tjob-child,job-sibling\troot prompt\troot summary/);
+  assert.match(result.stdout, /target\tjob-child\t-\trunning\tclaude\t1\tjob-root\tjob-grandchild\tchild prompt\t-/);
+  assert.match(result.stdout, /chain\tjob-sibling\t-\tfailed\topencode\t1\tjob-root\t-\tsibling prompt\tsibling failed summary/);
+  assert.match(result.stdout, /child\tjob-grandchild\t-\tqueued\tcodex\t2\tjob-child\t-\tgrandchild prompt\t-/);
   assert.doesNotMatch(result.stdout, /job-other/);
 });
 

@@ -33,6 +33,35 @@ test("logs prints rendered text from a stored job log", async (t) => {
   assert.equal(result.stderr, "");
 });
 
+test("logs defaults to 20 rendered lines with --tail and --all overrides", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-tail", status: "completed" });
+  await writeLog(
+    workspaceRoot,
+    "job-tail",
+    Array.from({ length: 25 }, (_, index) => updateText(`line-${index}\n`)),
+  );
+
+  const recent = await runLogs({
+    args: { positional: ["job-tail"], flags: {} },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const two = await runLogs({
+    args: { positional: ["job-tail"], flags: { tail: "2" } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const all = await runLogs({
+    args: { positional: ["job-tail"], flags: { all: true } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.doesNotMatch(recent.stdout, /line-4\n/u);
+  assert.match(recent.stdout, /^line-5\n/u);
+  assert.equal(two.stdout, "line-23\nline-24\n");
+  assert.match(all.stdout, /^line-0\n/u);
+});
+
 test("logs json mode prints parsed log entries for non-following reads", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -46,6 +75,37 @@ test("logs json mode prints parsed log entries for non-following reads", async (
 
   assert.equal(result.exitCode, 0);
   assert.deepEqual(JSON.parse(result.stdout), [updateText("one"), updateText("two")]);
+});
+
+test("logs validates bounds and lets --tail 0 suppress history", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-bounds", status: "completed" });
+  await writeLog(workspaceRoot, "job-bounds", [updateText("one")]);
+
+  const invalid = await runLogs({
+    args: { positional: ["job-bounds"], flags: { tail: "no" } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const conflicting = await runLogs({
+    args: { positional: ["job-bounds"], flags: { all: true, tail: "2" } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const empty = await runLogs({
+    args: { positional: ["job-bounds"], flags: { tail: "0" } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const emptyJson = await runLogs({
+    args: { positional: ["job-bounds"], flags: { json: true, tail: "0" } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.equal(invalid.exitCode, 2);
+  assert.match(invalid.stderr, /non-negative integer/u);
+  assert.equal(conflicting.exitCode, 2);
+  assert.match(conflicting.stderr, /mutually exclusive/u);
+  assert.equal(empty.stdout, "");
+  assert.deepEqual(JSON.parse(emptyJson.stdout), []);
 });
 
 test("logs follow appends newly rendered log text until the job finalizes", async (t) => {
@@ -75,6 +135,35 @@ test("logs follow appends newly rendered log text until the job finalizes", asyn
   // CLI entrypoint does not print the streamed text a second time.
   assert.equal(result.stdout, "");
   assert.deepEqual(streamed, ["first", " second"]);
+});
+
+test("logs follow seeds only the bounded recent history before streaming new output", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-follow-tail", status: "running" });
+  await writeLog(
+    workspaceRoot,
+    "job-follow-tail",
+    Array.from({ length: 25 }, (_, index) => updateText(`line-${index}\n`)),
+  );
+  const streamed: string[] = [];
+
+  await runLogs({
+    args: { positional: ["job-follow-tail"], flags: { follow: true } },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      stdoutWrite: (text) => streamed.push(text),
+      poll: async () => {
+        await appendLog(workspaceRoot, "job-follow-tail", [updateText("line-25\n")]);
+        await writeJob(workspaceRoot, { jobId: "job-follow-tail", status: "completed" });
+      },
+    },
+  });
+
+  const output = streamed.join("");
+  assert.doesNotMatch(output, /line-4\n/u);
+  assert.match(output, /^line-5\n/u);
+  assert.match(output, /line-24\nline-25\n$/u);
 });
 
 test("logs follow skips a partially flushed trailing line and picks it up later", async (t) => {

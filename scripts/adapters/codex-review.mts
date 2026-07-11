@@ -36,6 +36,9 @@ export interface CodexReviewOptions {
   baseRef?: string | null;
   diff?: string;
   kind?: string;
+  prompt?: string;
+  label?: string;
+  reviewOfJobId?: string | null;
   json?: boolean;
   authority?: JobAuthority;
   availableCommandsTimeoutMs?: number | null;
@@ -51,6 +54,9 @@ export async function runCodexReview({
   baseRef = null,
   diff: suppliedDiff,
   kind = "review",
+  prompt: suppliedPrompt,
+  label,
+  reviewOfJobId = null,
   json = false,
   authority = { ...DEFAULT_JOB_AUTHORITY },
   availableCommandsTimeoutMs: timeoutOverride = null,
@@ -85,9 +91,11 @@ export async function runCodexReview({
     host,
     hostSessionId,
     profile,
+    label,
     prompt: slash,
     includeDiff: true,
     baseRef: baseRef as string | undefined,
+    reviewOfJobId: reviewOfJobId ?? undefined,
   });
   await writeJobRecord(workspaceRoot, jobId, jobRecord);
 
@@ -102,7 +110,9 @@ export async function runCodexReview({
       workspaceRoot,
       profileEntry,
       jobRecord,
-      prompt: appendPinnedDiff(slash, diff, { baseRef }),
+      prompt: appendPinnedDiff(suppliedPrompt ?? slash, diff, {
+        baseRef: reviewOfJobId ? `isolated Job ${reviewOfJobId}` : baseRef,
+      }),
       payloadFields: { baseRef },
       deps,
       output,

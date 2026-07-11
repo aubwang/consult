@@ -88,7 +88,7 @@ const SAFE_ENV_KEYS = [
 ] as const;
 
 interface ConfinedProfilePolicy {
-  credentialEnv: readonly string[];
+  credentialEnv: Readonly<Record<string, string>>;
   credentialFile: string;
   sourceConfigEnv?: string;
   stagedConfigDir: string;
@@ -101,7 +101,7 @@ export const CONFINED_PROFILE_POLICIES: Readonly<
   Record<"codex" | "claude", ConfinedProfilePolicy>
 > = Object.freeze({
   codex: Object.freeze({
-    credentialEnv: Object.freeze(["OPENAI_API_KEY"]),
+    credentialEnv: Object.freeze({ CONSULT_OPENAI_API_KEY: "OPENAI_API_KEY" }),
     credentialFile: "auth.json",
     sourceConfigEnv: "CODEX_HOME",
     stagedConfigDir: ".codex",
@@ -114,11 +114,10 @@ export const CONFINED_PROFILE_POLICIES: Readonly<
     requiredCommands: Object.freeze(["codex"]),
   }),
   claude: Object.freeze({
-    credentialEnv: Object.freeze([
-      "ANTHROPIC_API_KEY",
-      "ANTHROPIC_AUTH_TOKEN",
-      "CLAUDE_CODE_OAUTH_TOKEN",
-    ]),
+    credentialEnv: Object.freeze({
+      CONSULT_CLAUDE_API_KEY: "ANTHROPIC_API_KEY",
+      CONSULT_CLAUDE_OAUTH_TOKEN: "CLAUDE_CODE_OAUTH_TOKEN",
+    }),
     credentialFile: ".credentials.json",
     sourceConfigEnv: "CLAUDE_CONFIG_DIR",
     stagedConfigDir: ".claude",
@@ -247,7 +246,12 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     const sourceHome = trustedHostHome();
     const hostEnv = { ...process.env, ...input.env };
     const sourceConfig = profileSourceConfigDirectory(profile, hostEnv, sourceHome);
-    if (input.profileRegistryId === "claude") {
+    const explicitCredentialEnv = selectedConsultCredentialEnv(
+      profile,
+      hostEnv,
+      input.profileRegistryId,
+    );
+    if (input.profileRegistryId === "claude" && explicitCredentialEnv === null) {
       await assertClaudeOauthNotExpired(path.join(sourceConfig, profile.credentialFile), now);
     }
     await sweepStaleJobRoots(now, deps.pidIsAlive ?? defaultPidIsAlive);
@@ -275,14 +279,16 @@ export async function acquireConfinedSandboxRuntimeLaunch(
 
     const stagedConfig = path.join(home, profile.stagedConfigDir);
     await privateDirectory(stagedConfig);
-    const stagedCredential = await stageOptionalRegularFile(
-      path.join(sourceConfig, profile.credentialFile),
-      path.join(stagedConfig, profile.credentialFile),
-    );
-    const credentialEnv = stagedCredential ? {} : selectedCredentialEnv(profile, hostEnv);
+    const stagedCredential = explicitCredentialEnv === null
+      ? await stageOptionalRegularFile(
+          path.join(sourceConfig, profile.credentialFile),
+          path.join(stagedConfig, profile.credentialFile),
+        )
+      : false;
+    const credentialEnv = explicitCredentialEnv ?? {};
     if (!stagedCredential && Object.keys(credentialEnv).length === 0) {
       throw new Error(
-        `confined ${input.profileRegistryId} Profile has no staged credential or supported credential environment variable`,
+        `confined ${input.profileRegistryId} Profile has no staged credential or Consult credential environment variable (${Object.keys(profile.credentialEnv).join(", ")})`,
       );
     }
     if (input.resumeSourceJobId || input.resumeSessionId) {
@@ -539,7 +545,7 @@ export async function probeConfinedSandboxRuntime(
           code: "AUTHORITY_PREFLIGHT_FAILED",
           message: `confined authority preflight failed: ${errorMessage(failure)}`,
           remediation:
-            "Open Claude Code on the Host and complete sign-in, then retry the Consult command. Consult will not refresh the credential or retry with inherited authority.",
+            "Open Claude Code on the Host and complete sign-in, or supply CONSULT_CLAUDE_OAUTH_TOKEN or CONSULT_CLAUDE_API_KEY to the Host environment, then retry. Consult-specific credentials take precedence. Consult will not refresh the credential or retry with inherited authority.",
         },
       };
     }
@@ -709,19 +715,21 @@ async function stageOptionalRegularFile(source: string, destination: string): Pr
   return true;
 }
 
-function selectedCredentialEnv(
+function selectedConsultCredentialEnv(
   profile: ConfinedProfilePolicy,
   source: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  const selected: NodeJS.ProcessEnv = {};
-  for (const name of profile.credentialEnv) {
-    const value = source[name];
-    if (value) {
-      selected[name] = value;
-      break;
-    }
+  profileRegistryId: string | undefined,
+): NodeJS.ProcessEnv | null {
+  const selected = Object.entries(profile.credentialEnv)
+    .filter(([sourceName]) => Boolean(source[sourceName]));
+  if (selected.length > 1) {
+    throw new Error(
+      `multiple Consult credential variables are set for confined ${profileRegistryId ?? "Profile"} Profile: ${selected.map(([sourceName]) => sourceName).join(", ")}; set only one`,
+    );
   }
-  return selected;
+  if (selected.length === 0) return null;
+  const [[sourceName, targetName]] = selected;
+  return { [targetName]: source[sourceName] };
 }
 
 function sanitizedChildEnv(input: {

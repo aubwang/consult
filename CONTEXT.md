@@ -68,6 +68,11 @@ The Consult tracking record for exactly one `delegate` or `review` prompt turn.
 A Job records request metadata, lifecycle, outcome, artifacts, and lineage.
 _Avoid_: task, native session
 
+**Job Label**
+Optional, bounded human metadata that helps a Host recognize a Job. Labels are
+not unique and never replace Job ids in commands or relationships.
+_Avoid_: Job name, identifier
+
 **Job Result**
 The stable, versioned public representation of a Job. Schema version 1 groups
 fields under `job`, `outcome`, `artifacts`, and `lineage`; internal Job-record
@@ -84,6 +89,12 @@ _Avoid_: parent Job, child Job, workflow node
 A durable file produced around a Job, such as its NDJSON log, isolated-write
 patch, or touched-files manifest. Artifact paths belong to the Job Result.
 _Avoid_: final answer
+
+**Job Artifact Review**
+A review Job whose pinned input comes from a completed isolated write Job's
+task, final report, touched-files list, and Consult-owned patch. It is a review
+relationship, not lineage or a Job Dependency.
+_Avoid_: patch application, child Job
 
 **Delegation Chain**
 The lineage of Jobs created when delegated work invokes Consult again.
@@ -125,6 +136,10 @@ _Avoid_: marketplace, plugin manifest
 - A Job represents exactly one prompt turn against exactly one Session.
 - A Job may have zero or one live Broker while running.
 - A Job Result describes that Job only, not an automatic chain rollup.
+- A Job may have zero or one Job Label; commands continue to address its Job id.
+- A review Job may review zero or one completed isolated write Job.
+- Job Artifact Review does not apply the source patch or create lineage,
+  cancellation, authority, or Session relationships.
 - A background Job may depend on zero or more existing Jobs in its Workspace.
 - Only completed dependencies release a dependent Job; any failed, cancelled,
   or skipped dependency causes the dependent Job to be skipped.

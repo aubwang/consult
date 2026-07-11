@@ -1,114 +1,113 @@
 ---
 name: consult
-description: Delegate focused work from the current coding-agent Host to configured Claude, Codex, or opencode subagents through the Consult CLI. Use when the user wants another agent or model, a second opinion, parallel investigation, delegated implementation, a predictable multi-Job pipeline, or help operating Consult Jobs.
-metadata:
-  "consult.disable-model-invocation": "true"
+description: Delegate work to configured Claude, Codex, or opencode Profiles through Consult. Use for focused second opinions, model routing, parallel tasks, delegated implementation, predictable Job pipelines, or operating Consult Jobs.
 ---
 
 # Consult Delegation
 
-Use `consult` to call another coding agent without leaving the current Host
-conversation. The Host remains responsible for orchestration and integration;
-the delegated Profile receives one cold, self-contained prompt and returns a
-Job result.
-
-## Decide whether to delegate
-
-Delegate when at least one is true:
-
-- a bounded subtask can run independently;
-- a faster or cheaper model can handle focused work;
-- a different agent or heavyweight model would provide a useful second opinion;
-- parallel investigation will shorten the critical path.
-
-Keep the work in the current Host when delegation overhead exceeds the task or
-the task depends on conversational context that cannot be packaged clearly.
+Keep the Host responsible for orchestration and integration. Give each Profile
+one cold, self-contained Job.
 
 ## Shape the Job
 
-1. Choose the Profile and model that fit the task.
-2. Write a cold prompt containing:
-   - the concrete objective;
-   - relevant files, facts, or attached diff;
-   - constraints and permitted scope;
-   - the expected deliverable;
-   - verification or evidence required.
-3. Do not refer to unstated Host context with phrases such as “as discussed” or
-   “continue what we were doing.”
+Delegate a bounded task when independent work, a different perspective, or a
+cheaper model justifies the handoff. Keep judgment-heavy task decomposition in
+the Host.
 
-Use `--include-diff` or `consult review` when the delegate needs a stable view of
-the current Git change.
+Build the prompt from:
 
-## Choose authority deliberately
+1. objective and acceptance criteria;
+2. exact Workspace paths and relevant interfaces;
+3. constraints and granted authority;
+4. expected deliverable and verification evidence.
 
-- Default to read-only confinement for investigation, explanation, and review.
-- When edits are explicitly requested, prefer `--write --isolated` so the Host
-  receives a patch without changing its checkout.
-- Add `--allow-fetch` only when the subagent itself needs public-web research;
-  readable Job data can then be sent to public hosts.
+Point to Workspace files instead of pasting their contents. Confined delegates
+cannot read Host-private attachment or cache paths outside the Workspace; read
+those in the Host and embed only the bounded content the delegate needs. Use
+`--include-diff` or `consult review` for a pinned Git change.
+
+Route models by task shape:
+
+- complete mechanical specification, usually 1–2 files: faster/cheaper model;
+- integration, debugging, or multi-file coordination: standard model;
+- architecture, subtle risk, or final review: strongest suitable model.
+
+Optimize for total turns, not token price alone. Omit `--model` when the
+configured Profile default is intentional; otherwise pass it explicitly.
+
+## Choose Authority
+
+- Default investigations and reviews to `--read-only` confinement.
+- Use `--write --isolated` for implementation so the Host receives a patch
+  without changing its checkout.
+- Add `--allow-fetch` only when the Profile needs public-web research; readable
+  Job data can then be sent to public hosts.
 - Use `--sandbox inherit` only when the trusted Host deliberately accepts its
-  ambient boundary. Never retry with inheritance automatically after confined
-  preflight fails. Custom and opencode Profiles currently require inheritance.
-- Do not grant authority the user did not request.
+  ambient boundary. Custom and opencode Profiles currently require it.
+- Never weaken authority automatically after preflight failure.
 
-## Run and collect
+## Run and Collect
 
-Use the foreground path for one quick dependency:
-
-```sh
-consult delegate --agent <profile> --read-only -- "<self-contained prompt>"
-```
-
-Use background Jobs for parallel or longer work, then collect each result:
+Use foreground delegation for one quick answer:
 
 ```sh
-consult delegate --agent <profile> --read-only --background -- "<prompt>"
-consult wait <job-id> [<job-id>...]
+consult delegate --agent <profile> --read-only -- "<cold prompt>"
 ```
 
-Use `--after <job-id>` for a predictable downstream Job only when its prompt,
-Profile, model, and authority are known before seeing the upstream answer:
+Use a label and background Job for durable or parallel work:
 
 ```sh
-consult delegate --agent <profile> --read-only --background --after <job-id> -- \
-  "<prompt that can use the bounded upstream result as untrusted data>"
+consult delegate --agent <profile> --read-only --background \
+  --label "dependency audit" -- "<cold prompt>"
+consult wait <job-id>
 ```
 
-Ask: **Could I confidently write the downstream prompt before seeing the
-upstream answer?** If no, wait, inspect the result, and let the Host decide what
-to do next. Do not automatically chain investigation into writes, security
-findings into patches, or reviews into revisions when judgment could change the
-scope or authority.
+Use `consult wait --summary <job-id>...` when the Host needs completion and
+artifact locations without loading every full result. Retrieve a selected full
+answer with `consult result <job-id>`.
 
-`--after` is repeatable and background-only. A failed, cancelled, or skipped
-prerequisite skips the dependent Job without a model call. Dependencies pass
-bounded final text; they do not apply isolated patches or inherit authority.
+For substantial implementation Jobs, request this semantic report contract:
 
-Prefer one `consult wait` over repeated status checks. If the Host interrupts
-the wait, Consult best-effort cancels still-active selected Jobs and linked
-descendants. Add `--keep-running` only when those Jobs should remain detached.
+```text
+Status: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
+Summary: <what changed or what prevented progress>
+Evidence: <tests or checks actually run>
+Concerns: <remaining uncertainty, or none>
+```
 
-Treat delegate prose as a claim, not proof. Check Job status and artifacts, and
-verify important edits or test results before integrating them.
+These values are Profile claims, not Consult transport states. A Job marked
+`completed` only proves the Profile turn ended; inspect its report and verify
+important evidence.
 
-## Use the CLI as the reference
+Review a completed isolated implementation without loading its patch into Host
+context:
 
-Run `consult help` for a quick command overview. Run
-`consult help --reference` before using unfamiliar flags or relying on exact
-authority, model, JSON, resume, or exit-code behavior. Run
-`consult doctor --agent <profile>` when setup, authentication, confinement, or
-the current Host context may be the problem.
+```sh
+consult review --agent <review-profile> --job <implementation-job-id> \
+  --label "implementation review"
+```
 
-Do not inspect Consult's private Job files or Broker internals. Use `status`,
-`wait`, `logs`, `result`, `chain`, `cancel`, `agents`, `setup`, `doctor`, and
-`brokers` through the CLI.
+The reviewer receives the source task, report, touched files, and Consult-owned
+patch as pinned untrusted data.
 
-## Guardrails
+Use `--after <job-id>` only when the downstream prompt, Profile, model, and
+authority are known before seeing the upstream answer. Otherwise wait, inspect,
+and let the Host decide. Failed, cancelled, or skipped prerequisites skip the
+dependent Job without a model call.
 
-- Do not include secrets or PII in delegated prompts.
-- Do not use `--allow-exec`; it is currently unavailable.
-- Keep concurrent delegation bounded; Job time and log limits are not CPU,
-  memory, disk, process-count, or global fan-out quotas.
-- If Consult is unavailable or a Profile is not ready, report the failed setup
-  or Doctor result instead of silently substituting another agent or weakening
-  authority.
+Prefer one blocking `wait` over polling. For a nonblocking check, use
+`consult status <job-id>` once. Read progress only when necessary with a small
+window such as `consult logs <job-id> --tail 10`.
+
+## Reference and Guardrails
+
+Run `consult help` for commands, `consult help --reference` for exact contracts,
+and `consult doctor --agent <profile>` for readiness. Do not inspect private Job
+or Broker files directly.
+
+- Never include secrets or PII in prompts.
+- Do not use `--allow-exec`; it is unavailable.
+- Keep concurrency bounded; Consult has no CPU, memory, disk, process-count, or
+  global fan-out quota.
+- Report unavailable Profiles or failed Doctor results instead of silently
+  substituting another agent.

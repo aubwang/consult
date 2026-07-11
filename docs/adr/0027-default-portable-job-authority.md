@@ -55,9 +55,12 @@ backends becomes preferable if this transform expands beyond generated
 filesystem/network policy, repeated upstream versions break its shape, or
 independent runtime defects require a growing local fork.
 
-Each Job receives a private home/temp environment. Consult copies one selected
-regular credential file, or passes one supported credential environment
-variable when no file exists. Whole Host configuration trees are not staged;
+Each Job receives a private home/temp environment. A Profile-specific Consult
+credential environment variable takes precedence and is translated to the
+vendor variable only inside the Job. Otherwise, Consult copies one selected
+regular credential file. Ambient vendor variables such as `OPENAI_API_KEY` and
+`ANTHROPIC_API_KEY` are not selected as Profile credentials. Whole Host
+configuration trees are not staged;
 Codex `config.toml` and Claude `settings.json` are deliberately absent, so an
 explicit model may be needed when those files define Profile behavior.
 The Profile process tree can read that credential; the guarantee is

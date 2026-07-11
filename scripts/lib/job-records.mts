@@ -36,6 +36,7 @@ export interface JobRecord extends Record<string, unknown> {
   host?: string;
   hostSessionId?: string;
   profile?: string;
+  label?: string;
   authority?: JobAuthority;
   mode?: string;
   prompt?: string;
@@ -66,6 +67,7 @@ export interface JobRecord extends Record<string, unknown> {
   patchBytes?: number;
   touchedFilesPath?: string;
   cleanupMetadataPath?: string;
+  reviewOfJobId?: string;
   // Foreground jobs run in-process in the companion (ADR-0021): runner is
   // "inline" and runnerPid is the companion pid `consult cancel` signals.
   // runnerStartTime guards that signal against pid reuse.
@@ -230,6 +232,7 @@ export interface BrokerJobMetadataFields {
   host?: string;
   hostSessionId?: string;
   profile?: string;
+  label?: string;
   authority?: JobAuthority;
   mode?: string;
   prompt?: string;
@@ -246,6 +249,7 @@ export interface BrokerJobMetadataFields {
   baseRef?: string;
   isolated?: boolean;
   allowExecute?: boolean;
+  reviewOfJobId?: string;
 }
 
 export interface FinalizedJobOutcome {
@@ -271,6 +275,7 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["host", job.host],
       ["hostSessionId", job.hostSessionId],
       ["profile", job.profile],
+      ["label", job.label],
       ["authority", job.authority],
       ["mode", job.mode],
       ["prompt", job.prompt],
@@ -287,6 +292,7 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["baseRef", job.baseRef],
       ["isolated", job.isolated],
       ["allowExecute", job.allowExecute],
+      ["reviewOfJobId", job.reviewOfJobId],
     ].filter(([, value]) => value !== undefined),
   ) as BrokerJobMetadataFields;
 }

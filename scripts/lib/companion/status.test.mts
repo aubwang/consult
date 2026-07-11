@@ -34,6 +34,7 @@ test("status lists all jobs newest first", async (t) => {
   });
   await writeJob(workspaceRoot, {
     jobId: "job-new",
+    label: "API review",
     profile: "claude",
     status: "running",
     submittedAt: "2026-05-14T10:00:00.000Z",
@@ -59,7 +60,40 @@ test("status lists all jobs newest first", async (t) => {
   assert.match(result.stdout, /job-new/);
   assert.equal(result.stdout.indexOf("job-new") < result.stdout.indexOf("job-mid"), true);
   assert.equal(result.stdout.indexOf("job-mid") < result.stdout.indexOf("job-old"), true);
-  assert.match(result.stdout, /job-new\tclaude\trunning\t-\t-\t-/);
+  assert.match(result.stdout, /job-new\tAPI review\tclaude\trunning\t-\t-\t-/);
+});
+
+test("status lists only the 20 newest Jobs unless --all is explicit", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  for (let index = 0; index < 22; index += 1) {
+    await writeJob(workspaceRoot, {
+      jobId: `job-${index}`,
+      profile: "codex",
+      status: "completed",
+      submittedAt: `2026-05-14T10:00:${String(index).padStart(2, "0")}.000Z`,
+    });
+  }
+
+  const recent = await runStatus({
+    args: { positional: [], flags: {} },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const all = await runStatus({
+    args: { positional: [], flags: { all: true } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const recentJson = await runStatus({
+    args: { positional: [], flags: { json: true } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.match(recent.stdout, /job-21/u);
+  assert.doesNotMatch(recent.stdout, /job-0\t/u);
+  assert.doesNotMatch(recent.stdout, /job-1\t/u);
+  assert.match(all.stdout, /job-0\t/u);
+  assert.match(all.stdout, /job-1\t/u);
+  assert.equal(JSON.parse(recentJson.stdout).jobs.length, 20);
 });
 
 test("status table shows parent and child relationships", async (t) => {
@@ -92,16 +126,17 @@ test("status table shows parent and child relationships", async (t) => {
   });
 
   assert.equal(result.exitCode, 0);
-  assert.match(result.stdout, /depth\tparentJobId\tchildren/);
-  assert.match(result.stdout, /job-root\tcodex\trunning\t0\t-\tjob-child/);
-  assert.match(result.stdout, /job-child\tclaude\tqueued\t1\tjob-root\t-/);
+  assert.match(result.stdout, /status\tdepth\tparentJobId\tchildren/);
+  assert.match(result.stdout, /job-root\t-\tcodex\trunning\t0\t-\tjob-child/);
+  assert.match(result.stdout, /job-child\t-\tclaude\tqueued\t1\tjob-root\t-/);
 });
 
-test("status prints one job as pretty JSON with a log tail", async (t) => {
+test("status prints one concise Job summary without embedded logs", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeJob(workspaceRoot, {
     jobId: "job-one",
+    label: "inspect Broker logs",
     profile: "codex",
     status: "running",
     submittedAt: "2026-05-14T10:00:00.000Z",
@@ -115,12 +150,20 @@ test("status prints one job as pretty JSON with a log tail", async (t) => {
   });
 
   assert.equal(result.exitCode, 0);
-  assert.match(result.stdout, /"jobId": "job-one"/);
-  assert.match(result.stdout, /"childJobIds": \[\]/);
-  assert.match(result.stdout, /log tail/);
-  assert.doesNotMatch(result.stdout, /line-4/);
-  assert.match(result.stdout, /line-5/);
-  assert.match(result.stdout, /line-24/);
+  assert.equal(
+    result.stdout,
+    [
+      "jobId: job-one",
+      "label: inspect Broker logs",
+      "profile: codex",
+      "status: running",
+      "submittedAt: 2026-05-14T10:00:00.000Z",
+      "prompt: inspect logs",
+      "children: -",
+      "",
+    ].join("\n"),
+  );
+  assert.doesNotMatch(result.stdout, /line-/u);
 });
 
 test("status one-job mode includes direct child job ids", async (t) => {
@@ -150,7 +193,7 @@ test("status one-job mode includes direct child job ids", async (t) => {
   assert.equal(envelope.schemaVersion, 1);
   assert.equal(envelope.job.id, "job-parent");
   assert.deepEqual(envelope.lineage.childJobIds, ["job-child"]);
-  assert.deepEqual(envelope.logTail, []);
+  assert.equal("logTail" in envelope, false);
 });
 
 test("status json list mode emits one array line", async (t) => {
@@ -213,7 +256,8 @@ test("status wait exits with final state after polling a job to completion", asy
 
   assert.equal(result.exitCode, 0);
   assert.equal(polls, 1);
-  assert.match(result.stdout, /"status": "completed"/);
+  assert.match(result.stdout, /^status: completed$/mu);
+  assert.match(result.stdout, /^result: done$/mu);
 });
 
 test("status follow streams rendered logs until the job finalizes", async (t) => {

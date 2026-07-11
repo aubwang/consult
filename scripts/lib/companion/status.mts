@@ -1,5 +1,3 @@
-import fs from "node:fs/promises";
-
 import { addJobRelationships } from "../delegation-chain.mts";
 import {
   jobLogPath,
@@ -18,7 +16,10 @@ import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.
 import { pollUntilFinalRecord } from "./job-poll.mts";
 import { runLogs } from "./logs.mts";
 import type { CommandResult, OutputDeps } from "./output.mts";
+import { boolFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
+
+const DEFAULT_STATUS_JOB_LIMIT = 20;
 
 export interface StatusDeps extends OutputDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
@@ -80,20 +81,13 @@ export async function runStatus({
             childJobIds: enrichedRecord.childJobIds,
             logPath: jobLogPath(workspaceRoot, jobId),
           }),
-          logTail: await readLogTail(workspaceRoot, jobId),
         })}\n`,
         stderr: "",
       };
     }
-    const lines = [
-      JSON.stringify(enrichedRecord, null, 2),
-      "",
-      "log tail:",
-      ...(await readLogTail(workspaceRoot, jobId)),
-    ];
     return {
       exitCode: 0,
-      stdout: `${lines.join("\n")}\n`,
+      stdout: renderJobSummary(enrichedRecord),
       stderr: "",
     };
   }
@@ -109,12 +103,15 @@ export async function runStatus({
     throw error;
   }
   const enrichedRecords = records.map((record) => addJobRelationships(record, records));
+  const visibleRecords = boolFlag(args.flags?.all)
+    ? enrichedRecords
+    : enrichedRecords.slice(0, DEFAULT_STATUS_JOB_LIMIT);
   return {
     exitCode: 0,
     stdout: args.flags?.json
       ? `${JSON.stringify({
           schemaVersion: JOB_RESULT_SCHEMA_VERSION,
-          jobs: enrichedRecords.map((record) =>
+          jobs: visibleRecords.map((record) =>
             jobResultPayload(record, {
               childJobIds: record.childJobIds,
               logPath:
@@ -124,7 +121,7 @@ export async function runStatus({
             }),
           ),
         })}\n`
-      : renderJobTable(enrichedRecords),
+      : renderJobTable(visibleRecords),
     stderr: "",
   };
 }
@@ -143,22 +140,9 @@ async function waitForFinalRecord(
   });
 }
 
-async function readLogTail(workspaceRoot: string, jobId: string): Promise<string[]> {
-  let contents: string;
-  try {
-    contents = await fs.readFile(jobLogPath(workspaceRoot, jobId), "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-  return contents.trimEnd().split("\n").slice(-20);
-}
-
 function renderJobTable(records: Array<JobRecord & { childJobIds: string[] }>): string {
   const lines = [
-    "jobId\tprofile\tstatus\tdepth\tparentJobId\tchildren\tsubmittedAt\tcompletedAt\tprompt",
+    "jobId\tlabel\tprofile\tstatus\tdepth\tparentJobId\tchildren\tsubmittedAt\tcompletedAt\tprompt",
   ];
   if (records.length === 0) {
     lines.push("(no jobs)");
@@ -167,6 +151,7 @@ function renderJobTable(records: Array<JobRecord & { childJobIds: string[] }>): 
       lines.push(
         [
           record.jobId,
+          record.label ?? "-",
           record.profile ?? "-",
           record.status ?? "-",
           record.delegationDepth ?? "-",
@@ -179,5 +164,25 @@ function renderJobTable(records: Array<JobRecord & { childJobIds: string[] }>): 
       );
     }
   }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderJobSummary(record: JobRecord & { childJobIds: string[] }): string {
+  const lines = [
+    `jobId: ${record.jobId}`,
+  ];
+  if (record.label) lines.push(`label: ${record.label}`);
+  lines.push(`profile: ${record.profile ?? "-"}`, `status: ${record.status ?? "-"}`);
+  for (const [label, value] of [
+    ["submittedAt", record.submittedAt],
+    ["startedAt", record.startedAt],
+    ["completedAt", record.completedAt],
+  ] as const) {
+    if (value) lines.push(`${label}: ${value}`);
+  }
+  if (record.prompt) lines.push(`prompt: ${briefText(record.prompt)}`);
+  if (record.errorMessage) lines.push(`error: ${briefText(record.errorMessage)}`);
+  if (record.finalText) lines.push(`result: ${briefText(record.finalText)}`);
+  lines.push(`children: ${record.childJobIds.length ? record.childJobIds.join(",") : "-"}`);
   return `${lines.join("\n")}\n`;
 }
