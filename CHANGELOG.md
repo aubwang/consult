@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/aubwang/consult/compare/v0.3.0...v0.4.0) (2026-07-11)
+
+
+### Features
+
+* make job handoffs context efficient ([707c61d](https://github.com/aubwang/consult/commit/707c61d1fdf0bf97c4f733d31ec75f74326a9c43))
+* make Job handoffs context efficient ([d817c53](https://github.com/aubwang/consult/commit/d817c531d47c07f7182ed09c28e565761308a7d9))
+
+
+### Bug Fixes
+
+* isolate profile credential overrides ([0944147](https://github.com/aubwang/consult/commit/09441470cecfdc2565010da1152039568035cc6c))
+
 ## [0.3.0](https://github.com/aubwang/consult/compare/v0.2.1...v0.3.0) (2026-07-11)
 
 
