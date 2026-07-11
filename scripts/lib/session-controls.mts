@@ -125,10 +125,12 @@ async function applyModelControl(
     profile,
   }: { sessionId: string; sessionState: SessionControlsState; model: string; profile: string },
 ): Promise<SessionControlsState> {
+  const normalizedModel = normalizeModelControl(profile, model);
+  const requestedModel = profile === "codex" ? normalizedModel : model;
   if (sessionState?.models) {
     const modelId =
-      resolveAdvertisedModel(model, advertisedModelIds(sessionState.models)) ??
-      normalizeModelControl(profile, model);
+      resolveAdvertisedModel(requestedModel, advertisedModelIds(sessionState.models)) ??
+      normalizedModel;
     await setSessionModel(connection, { sessionId, modelId });
     return sessionState;
   }
@@ -144,8 +146,8 @@ async function applyModelControl(
     sessionId,
     sessionState,
     option,
-    requestedValue: model,
-    fallbackValue: normalizeModelControl(profile, model),
+    requestedValue: requestedModel,
+    fallbackValue: normalizedModel,
     controlName: "model",
   });
 }
@@ -221,11 +223,14 @@ function versionSegments(id: string): number[] {
 }
 
 export function normalizeModelControl(profile: string, model: string): string {
-  if (profile !== "claude") {
-    return model;
-  }
   const normalized = model.toLowerCase().replaceAll("_", "-");
-  return CLAUDE_MODEL_ALIASES[normalized] ?? model;
+  if (profile === "claude") {
+    return CLAUDE_MODEL_ALIASES[normalized] ?? model;
+  }
+  if (profile === "codex") {
+    return CODEX_MODEL_ALIASES[normalized] ?? model;
+  }
+  return model;
 }
 
 const CLAUDE_MODEL_ALIASES: Record<string, string> = {
@@ -253,6 +258,12 @@ const CLAUDE_MODEL_ALIASES: Record<string, string> = {
   "claude-fable": "claude-fable-5",
   "fable-5": "claude-fable-5",
   "claude-fable-5": "claude-fable-5",
+};
+
+const CODEX_MODEL_ALIASES: Record<string, string> = {
+  sol: "gpt-5.6-sol",
+  terra: "gpt-5.6-terra",
+  luna: "gpt-5.6-luna",
 };
 
 async function applyEffortControl(

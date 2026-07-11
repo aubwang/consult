@@ -291,19 +291,6 @@ async function createHarness(t: TestContext) {
   await fsp.mkdir(runtimeDir);
   process.env.CONSULT_DATA_DIR = dataDir;
   process.env.XDG_RUNTIME_DIR = runtimeDir;
-  t.after(async () => {
-    if (oldDataDir === undefined) {
-      delete process.env.CONSULT_DATA_DIR;
-    } else {
-      process.env.CONSULT_DATA_DIR = oldDataDir;
-    }
-    if (oldRuntimeDir === undefined) {
-      delete process.env.XDG_RUNTIME_DIR;
-    } else {
-      process.env.XDG_RUNTIME_DIR = oldRuntimeDir;
-    }
-    await fsp.rm(dir, { recursive: true, force: true });
-  });
 
   const input = {
     workspaceRoot,
@@ -324,11 +311,41 @@ async function createHarness(t: TestContext) {
       env: {},
     },
   };
+  const brokerFile = brokerFilePath(input);
+
+  t.after(async () => {
+    try {
+      let brokerPid: number | undefined;
+      try {
+        brokerPid = JSON.parse(await fsp.readFile(brokerFile, "utf8")).pid;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+      const result = await teardownBrokerSession(input);
+      if (brokerPid && result.teardown !== "noop" && result.teardown !== "stale") {
+        assert.equal(isPidAlive(brokerPid), false, "test Broker must exit before fixture cleanup");
+      }
+    } finally {
+      if (oldDataDir === undefined) {
+        delete process.env.CONSULT_DATA_DIR;
+      } else {
+        process.env.CONSULT_DATA_DIR = oldDataDir;
+      }
+      if (oldRuntimeDir === undefined) {
+        delete process.env.XDG_RUNTIME_DIR;
+      } else {
+        process.env.XDG_RUNTIME_DIR = oldRuntimeDir;
+      }
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
 
   return {
     dir,
     input,
-    brokerFile: brokerFilePath(input),
+    brokerFile,
   };
 }
 

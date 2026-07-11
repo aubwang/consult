@@ -95,6 +95,11 @@ supported token variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or
 passed only to the Job process tree; do not put it in project files or command
 arguments.
 
+If a stageable Claude OAuth credential has expired, confined preflight fails
+before starting the proxy or Profile. Consult does not refresh the credential
+and does not retry with inherited authority. Open Claude Code on the Host,
+complete sign-in there, then retry the Consult command.
+
 If the shell cannot find `consult` after installation, inspect npm's global
 prefix with `npm prefix --global` and ensure its executable directory is on
 `PATH`. On macOS and Linux this is usually the `bin` directory under that
