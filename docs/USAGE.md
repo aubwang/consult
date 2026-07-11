@@ -10,8 +10,8 @@ Consult ships three built-in Profile definitions:
 
 | Profile | Agent executable | Authentication | Confined authority |
 | --- | --- | --- | --- |
-| `claude` | `claude-agent-acp` | A stageable credentials file or one supported token variable. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
-| `codex` | `codex-acp` | The underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
+| `claude` | `claude-agent-acp` | `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`, otherwise a stageable credentials file. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
+| `codex` | `codex-acp` | `CONSULT_OPENAI_API_KEY`, otherwise the underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
 | `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; explicit inheritance is required. |
 
 Run `consult setup` to inspect available Profile executables or
@@ -99,7 +99,9 @@ credentials; keep the Job's readable input narrow.
 `--sandbox inherit` deliberately adds no Consult OS boundary. It is an explicit
 escape hatch for a trusted Host and is never selected as an automatic retry.
 Read-only and path policy are cooperative and detective under inheritance, so a
-Profile backend may act before Consult observes a violation.
+Profile backend may act before Consult observes a violation. Inheritance also
+passes the Host's ambient environment without confined credential staging or
+translation, so vendor variables may affect the Profile's native authentication.
 
 Confined nested delegation is unsupported. Custom and opencode Profiles require
 inheritance. Native Windows and macOS x64 processes, including Node under
@@ -115,14 +117,28 @@ Doctor stages the selected credential briefly, opens the confined proxy,
 initializes the Profile, and disposes it. It does not send a model prompt. A
 failed preflight creates no Job.
 
+A Profile-specific Consult credential variable takes precedence over a Profile
+credential file during confined launch and prevents that file from being
+staged:
+
+- `CONSULT_OPENAI_API_KEY` becomes `OPENAI_API_KEY` inside a Codex Job;
+- `CONSULT_CLAUDE_API_KEY` becomes `ANTHROPIC_API_KEY` inside a Claude Job; and
+- `CONSULT_CLAUDE_OAUTH_TOKEN` becomes `CLAUDE_CODE_OAUTH_TOKEN` inside a
+  Claude Job.
+
+Ambient vendor variables are ignored for Profile authentication, so a
+project's `OPENAI_API_KEY` does not replace the ChatGPT login represented by
+`auth.json`. Setting both Claude-specific Consult variables is an error.
+Consult never refreshes Profile credentials automatically.
+
 Confined launch does not copy Codex `config.toml` or Claude `settings.json`.
 Pass `--model` explicitly when Host configuration controls model or provider
 selection.
 
-Confined Claude on macOS requires a supported token variable
-(`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or `CLAUDE_CODE_OAUTH_TOKEN`) or a
-stageable `.claude/.credentials.json`; a Keychain-only login is unavailable in
-the private Job home. Consult deliberately does not broker the macOS Keychain.
+Confined Claude on macOS requires `CONSULT_CLAUDE_API_KEY`,
+`CONSULT_CLAUDE_OAUTH_TOKEN`, or a stageable `.claude/.credentials.json`; a
+Keychain-only login is unavailable in the private Job home. Consult deliberately
+does not broker the macOS Keychain.
 
 `--allow-exec` remains unavailable while execute-specific resource limits and
 cross-Profile conformance are incomplete. Confined Jobs have wall-clock and
@@ -284,7 +300,9 @@ consult brokers --cleanup
 ```
 
 If authentication fails, sign in with the Profile's native CLI first, then
-rerun `consult doctor --agent <profile>`. Consult does not refresh vendor
+rerun `consult doctor --agent <profile>`. For an expired Claude OAuth file, an
+explicit `CONSULT_CLAUDE_OAUTH_TOKEN` or `CONSULT_CLAUDE_API_KEY` bypasses the
+file. Consult does not refresh vendor
 credentials or retry with ambient inheritance automatically.
 
 ## Optional agent skills

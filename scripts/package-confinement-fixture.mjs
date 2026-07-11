@@ -153,6 +153,9 @@ async function assertCredentialBoundary() {
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "CONSULT_OPENAI_API_KEY",
+    "CONSULT_CLAUDE_API_KEY",
+    "CONSULT_CLAUDE_OAUTH_TOKEN",
   ]) {
     if (process.env[name] !== undefined) {
       throw new Error(`credential environment ${name} leaked despite file staging`);

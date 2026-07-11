@@ -4,7 +4,7 @@
     {
       "id": "codex",
       "label": "OpenAI Codex (ACP shim: codex-acp)",
-      "notes": "Wraps the codex CLI. Run `codex login` first to authenticate with OpenAI (or set OPENAI_API_KEY).",
+      "notes": "Wraps the codex CLI. Run `codex login` first to authenticate with OpenAI (or set CONSULT_OPENAI_API_KEY).",
       "binary": "codex-acp",
       "args": [],
       "install": {
@@ -20,7 +20,7 @@
     {
       "id": "claude",
       "label": "Claude Agent (ACP shim: claude-agent-acp)",
-      "notes": "Uses the Claude Code CLI's auth under the hood. Run `claude /login` first, or set ANTHROPIC_API_KEY.",
+      "notes": "Uses the Claude Code CLI's auth under the hood. Run `claude /login` first, or set CONSULT_CLAUDE_API_KEY or CONSULT_CLAUDE_OAUTH_TOKEN.",
       "binary": "claude-agent-acp",
       "args": [],
       "install": { "type": "npm", "cmd": "npm install -g @zed-industries/claude-agent-acp" },

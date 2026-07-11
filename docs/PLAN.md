@@ -366,9 +366,11 @@ aliases that the pinned runtime canonicalizes, including `/etc` for the already-
 Job-private configuration instead of exposing mutable Host OpenSSL config.
 
 Each confined Job receives a private home, temp directory, XDG directories,
-and a sanitized environment. Only one credential source is exposed: the
-Profile's selected regular credential file is copied into Job state, otherwise
-the first configured supported credential environment variable is passed.
+and a sanitized environment. Only one credential source is exposed: a
+Profile-specific Consult credential variable is translated to the vendor
+variable when present; otherwise the Profile's selected regular credential
+file is copied into Job state. Ambient vendor variables are not credential
+fallbacks.
 Whole Host config
 trees, MCP configuration, secret-manager paths, and ambient proxy variables are
 not forwarded. Credentials are process-tree readable; the security property is
