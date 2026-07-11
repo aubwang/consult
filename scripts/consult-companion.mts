@@ -16,6 +16,7 @@ import * as setup from "./lib/companion/setup.mts";
 import * as status from "./lib/companion/status.mts";
 import * as taskResumeCandidate from "./lib/companion/task-resume-candidate.mts";
 import * as taskWorker from "./lib/companion/task-worker.mts";
+import * as wait from "./lib/companion/wait.mts";
 
 interface CompanionHandler {
   run(subcommand: string, parsedArgs: ParsedArgs): Promise<CliResult>;
@@ -32,6 +33,7 @@ const handlers: Record<string, CompanionHandler> = {
   status,
   result,
   cancel,
+  wait,
   brokers,
   "task-worker": taskWorker,
   "task-resume-candidate": taskResumeCandidate,
@@ -51,6 +53,7 @@ Commands:
   review     Run a pinned, read-only Git review.
   doctor     Check Profile and Job Authority readiness.
   status     List Jobs or inspect one Job.
+  wait       Wait once for one or more Jobs and return their Results.
   logs       Print or follow Job updates.
   result     Print a finished Job result.
   chain      Show a Job's delegation lineage.
@@ -63,6 +66,7 @@ Examples:
   consult delegate --agent claude --read-only -- "review this design"
   consult delegate --agent codex --write --isolated -- "implement the fix"
   consult status <job-id> --wait
+  consult wait <job-id> [<job-id>...]
   consult result <job-id>
 
 Delegation defaults to read-only confinement. Use --write --isolated for

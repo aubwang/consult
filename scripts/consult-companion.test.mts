@@ -56,6 +56,7 @@ test("dispatch prints concise help for the help subcommand", async () => {
   assert.equal(result.stdout.includes("delegate"), true);
   assert.equal(result.stdout.includes("setup"), true);
   assert.equal(result.stdout.includes("status"), true);
+  assert.equal(result.stdout.includes("wait"), true);
   assert.equal(result.stdout.includes("doctor"), true);
   assert.equal(result.stdout.includes("logs"), true);
   assert.equal(result.stdout.includes("chain"), true);
