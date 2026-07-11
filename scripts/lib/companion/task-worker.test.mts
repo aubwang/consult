@@ -55,6 +55,257 @@ test("task-worker runs a queued delegate job and finalizes its record", async (t
   assert.equal(record.finalText, "done");
 });
 
+test("task-worker forwards completed prerequisite results to the dependent prompt", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-research",
+    kind: "delegate",
+    status: "completed",
+    profile: "claude",
+    submittedAt: "2026-05-14T09:00:00.000Z",
+    completedAt: "2026-05-14T09:01:00.000Z",
+    finalText: "Argentina and France remain.",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-synthesis",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "read-only",
+    host: "codex",
+    profile: "codex",
+    prompt: "Compare the remaining teams.",
+    hostSessionId: "codex-1",
+    afterJobIds: ["job-research"],
+  });
+  const client = new FakeBrokerClient();
+
+  const resultPromise = runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-synthesis" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  assert.match(request.params.prompt as string, /^Compare the remaining teams\./u);
+  assert.match(request.params.prompt as string, /BEGIN CONSULT UPSTREAM JOB RESULTS/u);
+  assert.match(request.params.prompt as string, /job-research/u);
+  assert.match(request.params.prompt as string, /Argentina and France remain\./u);
+  assert.match(request.params.prompt as string, /UNTRUSTED DATA/u);
+  client.notify("consult/finalized", {
+    jobId: "job-synthesis",
+    stopReason: "end_turn",
+    sessionId: "session-synthesis",
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.exitCode, 0);
+});
+
+test("task-worker waits for prerequisite Jobs before starting the Profile", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-research",
+    kind: "delegate",
+    status: "running",
+    profile: "claude",
+    submittedAt: "2026-05-14T09:00:00.000Z",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-synthesis",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "read-only",
+    host: "codex",
+    profile: "codex",
+    prompt: "Compare the remaining teams.",
+    hostSessionId: "codex-1",
+    afterJobIds: ["job-research"],
+  });
+  const client = new FakeBrokerClient();
+  let polls = 0;
+
+  const resultPromise = runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-synthesis" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      poll: async () => {
+        polls += 1;
+        await writeJob(workspaceRoot, {
+          jobId: "job-research",
+          kind: "delegate",
+          status: "completed",
+          profile: "claude",
+          submittedAt: "2026-05-14T09:00:00.000Z",
+          completedAt: "2026-05-14T09:01:00.000Z",
+          finalText: "Argentina and France remain.",
+        });
+      },
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  assert.equal(polls, 1);
+  assert.match(request.params.prompt as string, /Argentina and France remain\./u);
+  client.notify("consult/finalized", {
+    jobId: "job-synthesis",
+    stopReason: "end_turn",
+    sessionId: "session-synthesis",
+  });
+
+  assert.equal((await resultPromise).exitCode, 0);
+});
+
+test("task-worker skips a dependent Job when a prerequisite does not complete", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-research",
+    kind: "delegate",
+    status: "failed",
+    profile: "claude",
+    submittedAt: "2026-05-14T09:00:00.000Z",
+    completedAt: "2026-05-14T09:01:00.000Z",
+    errorMessage: "model transport failed",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-synthesis",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "read-only",
+    host: "codex",
+    profile: "codex",
+    prompt: "Compare the remaining teams.",
+    hostSessionId: "codex-1",
+    afterJobIds: ["job-research"],
+  });
+
+  const result = await runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-synthesis" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadProfiles: async () => {
+        throw new Error("Profile must not start for a skipped Job");
+      },
+      ensureBrokerSession: async () => {
+        throw new Error("Broker must not start for a skipped Job");
+      },
+      now: () => "2026-05-14T10:00:01.000Z",
+    }),
+  });
+
+  const record = await readJob(workspaceRoot, "job-synthesis");
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.status, "skipped");
+  assert.equal(record.stopReason, "skipped");
+  assert.equal(record.completedAt, "2026-05-14T10:00:01.000Z");
+  assert.match(record.errorMessage as string, /job-research \(failed\)/u);
+});
+
+test("task-worker fails a dependent Job when prerequisite waiting times out", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-research",
+    kind: "delegate",
+    status: "running",
+    profile: "claude",
+    submittedAt: "2026-05-14T09:00:00.000Z",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-synthesis",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "read-only",
+    host: "codex",
+    profile: "codex",
+    prompt: "Compare the remaining teams.",
+    hostSessionId: "codex-1",
+    afterJobIds: ["job-research"],
+  });
+
+  const result = await runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-synthesis" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadProfiles: async () => {
+        throw new Error("Profile must not start after dependency timeout");
+      },
+      maxDependencyWaitMs: 0,
+      dependencyNowMs: () => 0,
+      now: () => "2026-05-14T10:30:00.000Z",
+    }),
+  });
+
+  const record = await readJob(workspaceRoot, "job-synthesis");
+  assert.equal(result.exitCode, 1);
+  assert.equal(record.status, "failed");
+  assert.match(record.errorMessage as string, /DEPENDENCY_WAIT_TIMEOUT/u);
+});
+
+test("task-worker cancels dependency waiting and cleans an isolated workspace on interrupt", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const prepared = isolatedFixture(workspaceRoot, "job-synthesis");
+  await writeJob(workspaceRoot, {
+    jobId: "job-research",
+    kind: "delegate",
+    status: "running",
+    profile: "claude",
+    submittedAt: "2026-05-14T09:00:00.000Z",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-synthesis",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "write",
+    host: "codex",
+    profile: "codex",
+    prompt: "Implement the predetermined change.",
+    hostSessionId: "codex-1",
+    isolated: true,
+    isolatedWorkspace: prepared,
+    afterJobIds: ["job-research"],
+  });
+  const controller = new AbortController();
+  let cleanupCalls = 0;
+
+  const result = await runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-synthesis" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      signal: controller.signal,
+      interruptExitCode: () => 143,
+      poll: async () => controller.abort(),
+      cleanupIsolatedWorkspace: async () => {
+        cleanupCalls += 1;
+        return {};
+      },
+      loadProfiles: async () => {
+        throw new Error("Profile must not start after interruption");
+      },
+      now: () => "2026-05-14T10:00:01.000Z",
+    }),
+  });
+
+  const record = await readJob(workspaceRoot, "job-synthesis");
+  assert.equal(result.exitCode, 143);
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.stopReason, "cancelled");
+  assert.equal(cleanupCalls, 1);
+});
+
 test("task-worker runs isolated background jobs inline and persists artifacts", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

@@ -19,6 +19,7 @@ import {
   createQueuedJobRecord,
   failJobRecord,
   jobLogPath,
+  readWorkspaceJobRecord,
   writeJobRecord as defaultWriteJobRecord,
 } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
@@ -98,6 +99,7 @@ export interface ValidatedDelegateArgs {
   resume?: boolean;
   resumeJobId?: string;
   background?: boolean;
+  afterJobIds?: string[];
   includeDiff?: boolean;
   baseRef?: string;
   isolated?: boolean;
@@ -149,6 +151,23 @@ export async function runDelegate({
   const generateJobId = deps.generateJobId ?? defaultGenerateJobId;
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
   const jobId = generateJobId();
+  for (const dependencyJobId of validated.afterJobIds ?? []) {
+    if (dependencyJobId === jobId) {
+      output.stderr(`Job cannot depend on itself: ${jobId}\n`);
+      return output.result(2);
+    }
+    try {
+      await readWorkspaceJobRecord(workspaceRoot, dependencyJobId);
+    } catch (error) {
+      const lookupResult = jobLookupErrorResult(
+        error,
+        dependencyJobId,
+        "dependency Job not found",
+      );
+      output.stderr(lookupResult.stderr);
+      return output.result(lookupResult.exitCode);
+    }
+  }
   // Delegation lineage: an explicit --parent-job flag wins; otherwise fall
   // back to CONSULT_PARENT_JOB, which the Broker injects into delegated agent
   // environments so nested delegations stay chained (ADR-0007/0008).
@@ -325,6 +344,7 @@ export async function runDelegate({
     prompt: validated.background ? delegatedPrompt : truncatePrompt(validated.prompt as string),
     model: validated.model,
     effort: validated.effort,
+    afterJobIds: validated.afterJobIds,
     ...(validated.includeDiff
       ? { includeDiff: true, baseRef: validated.baseRef }
       : {}),
@@ -422,7 +442,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const unsupported = unsupportedFlagError(flags, [
     "agent", "profile", "model", "effort", "host", "host-session",
     "host-session-id", "parent-job", "parent-job-id", "resume-job", "prompt",
-    "base", "sandbox", "write", "read-only", "resume", "fresh", "background",
+    "base", "sandbox", "after", "write", "read-only", "resume", "fresh", "background",
     "wait", "include-diff", "isolated", "allow-fetch", "allow-exec", "json",
   ]);
   if (unsupported) return { error: unsupported };
@@ -440,6 +460,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     "prompt",
     "base",
     "sandbox",
+    "after",
   ]);
   if (missingValue) {
     return { error: missingValue };
@@ -449,6 +470,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const resume = boolFlag(flags.resume);
   const fresh = boolFlag(flags.fresh);
   const background = boolFlag(flags.background);
+  const afterJobIds = [...new Set(stringFlags(flags.after))];
   const wait = boolFlag(flags.wait);
   const resumeJobId = stringFlag(flags["resume-job"]);
   const includeDiff = boolFlag(flags["include-diff"]);
@@ -470,6 +492,9 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   }
   if (background && wait) {
     return { error: "--background and --wait are mutually exclusive" };
+  }
+  if (afterJobIds.length > 0 && !background) {
+    return { error: "--after requires --background" };
   }
   if (baseRef !== undefined && !includeDiff) {
     return { error: "--base requires --include-diff" };
@@ -506,12 +531,18 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     resume,
     resumeJobId,
     background,
+    afterJobIds,
     includeDiff,
     baseRef,
     isolated,
     allowFetch,
     allowExecute,
   };
+}
+
+function stringFlags(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values.filter((entry): entry is string => typeof entry === "string");
 }
 
 function truncatePrompt(prompt: string): string {

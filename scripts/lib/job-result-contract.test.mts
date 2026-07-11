@@ -20,6 +20,7 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       completedAt: "2026-07-09T10:00:02.000Z",
       model: "gpt-5",
       effort: "high",
+      afterJobIds: ["job-research", "job-review", 42 as unknown as string],
       resumeSessionId: "session-previous",
       baseRef: "origin/main",
       includeDiff: true,
@@ -69,6 +70,7 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       completedAt: "2026-07-09T10:00:02.000Z",
       model: "gpt-5",
       effort: "high",
+      afterJobIds: ["job-research", "job-review"],
       resumeSessionId: "session-previous",
       baseRef: "origin/main",
       includeDiff: true,
@@ -115,6 +117,7 @@ test("job result envelope uses explicit nulls and empty artifact lists", () => {
   assert.equal(envelope.job.profile, null);
   assert.equal(envelope.job.mode, null);
   assert.equal(envelope.job.includeDiff, false);
+  assert.deepEqual(envelope.job.afterJobIds, []);
   assert.deepEqual(envelope.job.authority, {
     schemaVersion: 1,
     mode: "read-only",

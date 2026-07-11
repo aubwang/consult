@@ -12,6 +12,8 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
   Profile configuration.
 - Foreground and background Jobs with durable status, logs, cancellation,
   resume, and Delegation Chain lineage.
+- Background Job Dependencies with bounded upstream-result forwarding,
+  terminal skip propagation, and a portable multi-Job wait command.
 - Versioned Profile-neutral Job JSON with outcome and artifact sections.
 - Deterministic pinned-diff delegation and Profile-neutral review; Codex's
   native review path remains an internal optimization.
@@ -84,3 +86,6 @@ The release-hardening gates for the default boundary are complete:
   native platforms have no confinement or inheritance surface.
 - A new Claude Code plugin surface. Host-specific UI is outside the current
   product vision.
+- Host-specific completion prompt injection. Consult uses a blocking CLI wait
+  and does not attach to Codex app-server, Claude session internals, or the
+  opencode TUI server to wake an idle Host model.

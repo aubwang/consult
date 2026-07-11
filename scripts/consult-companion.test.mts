@@ -56,6 +56,7 @@ test("dispatch prints concise help for the help subcommand", async () => {
   assert.equal(result.stdout.includes("delegate"), true);
   assert.equal(result.stdout.includes("setup"), true);
   assert.equal(result.stdout.includes("status"), true);
+  assert.equal(result.stdout.includes("wait"), true);
   assert.equal(result.stdout.includes("doctor"), true);
   assert.equal(result.stdout.includes("logs"), true);
   assert.equal(result.stdout.includes("chain"), true);
@@ -74,6 +75,10 @@ test("dispatch prints the operational contract with help --reference", async () 
   assert.equal(result.stdout.includes("## Exit codes"), true);
   assert.equal(result.stdout.includes("Omit --model"), true);
   assert.equal(result.stdout.includes("provider/model"), true);
+  assert.equal(result.stdout.includes("--after <job-id>"), true);
+  assert.equal(result.stdout.includes("--keep-running"), true);
+  assert.equal(result.stdout.includes("afterJobIds"), true);
+  assert.equal(result.stdout.includes("Host-specific"), false);
 });
 
 test("dispatch prints help for help aliases", async () => {
@@ -94,7 +99,7 @@ test("help documents the extended exit codes, lineage env, and json coverage", a
   assert.doesNotMatch(result.stdout, /7 .*review.*not supported/);
   assert.match(result.stdout, /8 Codex native review command was not advertised/);
   assert.match(result.stdout, /CONSULT_PARENT_JOB/);
-  assert.match(result.stdout, /setup, agents, logs, doctor, and brokers/);
+  assert.match(result.stdout, /setup, agents, logs, doctor, and\s+brokers/);
   assert.match(result.stdout, /most recent completed or failed delegate Session/);
   assert.match(result.stdout, /cancelled Jobs are skipped/);
   assert.doesNotMatch(result.stdout, /latest finalized delegate Session/);

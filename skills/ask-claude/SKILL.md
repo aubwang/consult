@@ -21,9 +21,12 @@ Use background mode for longer reviews:
 
 ```sh
 consult delegate --agent claude --read-only --model sonnet --background -- "<prompt for Claude>"
-consult status <job-id> --wait
-consult result <job-id>
+consult wait <job-id>
 ```
+
+When Claude's result should feed a predetermined later Job, the Host may use
+`--after <job-id>`. If seeing Claude's answer could change the next prompt or
+whether work should continue, wait and inspect it first.
 
 ## Model And Effort
 

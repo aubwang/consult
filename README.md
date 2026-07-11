@@ -45,6 +45,8 @@ or fetch.
   cancellation, or resume.
 - **Know what happened.** Each delegated turn has a durable status, log, result,
   and—when it writes—an optional patch artifact.
+- **Chain predictable work without babysitting it.** Let cheap research Jobs
+  feed a later synthesis Job, then wait once for the finished pipeline.
 
 Consult is deliberately a CLI, not another agent platform. If your coding agent
 can run a command, it can use Consult.
@@ -65,10 +67,11 @@ $ consult delegate --agent codex --model gpt-5.4-mini \
     "Reproduce the cancellation race, add a regression test, and fix it."
 consult delegate job-c3d4 queued
 
-$ consult status job-c3d4 --wait
-job-c3d4 completed
+$ consult wait job-a1b2 job-c3d4
+job-a1b2 completed
+Found a cleanup race after cancellation acknowledgement.
 
-$ consult result job-c3d4
+job-c3d4 completed
 Added a regression test and fixed the cancellation cleanup race.
 
 # Before accepting the patch, call in a heavyweight second opinion.
@@ -178,12 +181,31 @@ Background Jobs can be inspected and controlled without keeping a terminal
 attached:
 
 ```sh
-consult status <job-id> --wait
+consult wait <job-id> [<job-id>...]
 consult logs <job-id> --follow
 consult result <job-id>
 consult cancel <job-id>
 consult delegate --agent claude --resume -- "Now check the remaining edge case."
 ```
+
+When a downstream prompt is known before an upstream answer arrives, declare a
+dependency and let Consult pass the bounded result forward:
+
+```sh
+consult delegate --agent claude --model haiku --allow-fetch --background -- \
+  "Find the teams still playing in the tournament. Return evidence."
+# Suppose that prints job-research.
+
+consult delegate --agent codex --background --after job-research -- \
+  "Compare the remaining teams using the upstream research."
+
+consult wait job-research <dependent-job-id>
+```
+
+If the next prompt, authority, or model depends on the quality of the upstream
+answer, wait and inspect it first instead of using `--after`. Interrupting
+`consult wait` normally cancels its still-active Jobs; add `--keep-running` when
+they should remain detached.
 
 Use `--json` when another agent or script will parse the result. Use
 `--include-diff` for a stable snapshot of uncommitted changes, and `--model` to

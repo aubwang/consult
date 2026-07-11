@@ -19,6 +19,7 @@ export interface JobResultJob {
   completedAt: string | null;
   model: string | null;
   effort: string | null;
+  afterJobIds: string[];
   resumeSessionId: string | null;
   baseRef: string | null;
   includeDiff: boolean;
@@ -90,6 +91,7 @@ export function jobResultPayload(
       completedAt: stringOrNull(record.completedAt),
       model: stringOrNull(record.model),
       effort: stringOrNull(record.effort),
+      afterJobIds: stringArray(record.afterJobIds),
       resumeSessionId: stringOrNull(record.resumeSessionId),
       baseRef: stringOrNull(record.baseRef),
       includeDiff: record.includeDiff === true,
