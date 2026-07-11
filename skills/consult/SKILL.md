@@ -1,116 +1,93 @@
 ---
 name: consult
-description: Use Consult delegation commands such as delegate, status, result, cancel, agents, setup, or brokers from any Host. The consult CLI autodetects Codex and opencode Host identity from the environment.
+description: Delegate focused work from the current coding-agent Host to a configured Claude, Codex, or opencode subagent through the Consult CLI. Use when the user wants another agent or model, a second opinion, parallel investigation, delegated implementation, or help operating Consult Jobs.
 metadata:
   "consult.disable-model-invocation": "true"
 ---
 
-# Consult
+# Consult Delegation
 
-Use this skill to invoke Consult through the single `consult` CLI. Do not use
-Host-specific wrapper commands.
+Use `consult` to call another coding agent without leaving the current Host
+conversation. The Host remains responsible for orchestration and integration;
+the delegated Profile receives one cold, self-contained prompt and returns a
+Job result.
 
-## Host Identity
+## Decide whether to delegate
 
-Run Consult commands directly:
+Delegate when at least one is true:
 
-```sh
-consult <command> ...
-```
+- a bounded subtask can run independently;
+- a faster or cheaper model can handle focused work;
+- a different agent or heavyweight model would provide a useful second opinion;
+- parallel investigation will shorten the critical path.
 
-The CLI resolves Host identity in this order:
+Keep the work in the current Host when delegation overhead exceeds the task or
+the task depends on conversational context that cannot be packaged clearly.
 
-1. Explicit `--host` / `--host-session` flags.
-2. `CONSULT_HOST` / `CONSULT_HOST_SESSION_ID` environment variables.
-3. Known Host session variables:
-   - `OPENCODE_SESSION_ID` or `OPENCODE_RUN_ID` -> `opencode`
-   - `CODEX_THREAD_ID` -> `codex`
-4. `terminal/default`.
+## Shape the Job
 
-Claude Code has no product Host Adapter or stable auto-detected session
-variable. A Claude spawning Host must pass `--host claude-code
---host-session <stable-session-id>` (or set the two `CONSULT_*` variables), or
-its Jobs intentionally fall into the shared `terminal/default` scope.
+1. Choose the Profile and model that fit the task.
+2. Write a cold prompt containing:
+   - the concrete objective;
+   - relevant files, facts, or attached diff;
+   - constraints and permitted scope;
+   - the expected deliverable;
+   - verification or evidence required.
+3. Do not refer to unstated Host context with phrases such as “as discussed” or
+   “continue what we were doing.”
 
-## Commands
+Use `--include-diff` or `consult review` when the delegate needs a stable view of
+the current Git change.
 
-Supported first:
+## Choose authority deliberately
 
-- `delegate`: delegate a prompt to the selected Profile.
-- `status`: show all Jobs in the Workspace or one Job by id.
-- `result`: show the final stored output for a completed Job.
-- `cancel`: cancel a queued or running Job.
-- `agents`: list or set configured Profiles.
-- `setup`: install or verify Profiles.
-- `brokers`: inspect live Broker locators and clean stale Broker state.
-- `review`: run a pinned, read-only review through any configured Profile.
+- Default to read-only confinement for investigation, explanation, and review.
+- When edits are explicitly requested, prefer `--write --isolated` so the Host
+  receives a patch without changing its checkout.
+- Add `--allow-fetch` only when the subagent itself needs public-web research;
+  readable Job data can then be sent to public hosts.
+- Use `--sandbox inherit` only when the trusted Host deliberately accepts its
+  ambient boundary. Never retry with inheritance automatically after confined
+  preflight fails. Custom and opencode Profiles currently require inheritance.
+- Do not grant authority the user did not request.
 
-Examples:
+## Run and collect
 
-```sh
-consult delegate --agent claude --read-only -- "review this diff"
-consult delegate --agent opencode --read-only --sandbox inherit -- "summarize this repo"
-consult delegate --agent codex --read-only --include-diff -- "look for missed edge cases"
-consult review --agent claude --base main
-consult delegate --agent codex --write --isolated -- "implement the focused fix"
-consult status
-consult result job-id
-consult cancel job-id
-```
-
-For the full operational contract — flag semantics, `--json` output shapes,
-exit codes, model selection, and polling and resume behavior — run
-`consult help`.
-
-Forward user arguments directly to `consult`. Do not inspect
-`~/.consult/workspaces`, job JSON, broker endpoint files, or modules under
-`scripts/lib`; the CLI is the adapter boundary.
-
-## Manual Setup
-
-1. Put the Consult CLI on `PATH` with
-   `npm install --global @aubwang/consult`; repository developers may instead
-   run `bun link` from a checkout.
-2. Make this skill visible to the Host by copying or symlinking `skills/consult`
-   into the Host's skill directory.
-3. Configure Profiles with the Consult CLI before first delegation, for example:
+Use the foreground path for one quick dependency:
 
 ```sh
-consult setup
-consult setup --install codex
-consult agents --set codex --host codex
-consult doctor --agent codex
+consult delegate --agent <profile> --read-only -- "<self-contained prompt>"
 ```
 
-## Safety Defaults
+Use background Jobs for parallel or longer work, then collect each result:
 
-- Delegation defaults to read-only, Consult-managed confinement. Built-in
-  `codex` and `claude` Profiles are confined on native Linux and native arm64
-  macOS after an
-  exact Profile preflight; a failed preflight creates no Job.
-- `consult doctor` runs that live preflight: it briefly stages the selected
-  credential and initializes/disposes the Profile, but sends no model prompt.
-- Confined Claude on macOS needs a supported token environment variable or a
-  stageable `.claude/.credentials.json`. Consult does not broker a Keychain-only
-  Claude login; surface the Doctor failure instead of retrying with inheritance.
-- Use `--include-diff` or `review` when the Profile needs an immutable snapshot
-  of current changes.
-- When edits are explicitly requested, prefer `--write --isolated`; Consult
-  returns a patch artifact without changing the invoking checkout.
-- Add `--allow-fetch` only when task-specific public TCP/443 research is worth
-  delegating. The Profile holds its selected model credential, so fetch
-  increases prompt-injection exfiltration risk; the Host may search instead.
-- `--sandbox inherit` is a deliberate trusted-Host escape hatch with no Consult
-  OS boundary. Read-only and path checks are then cooperative/detective: a
-  Profile backend may act before Consult observes a violation. Never retry with
-  inheritance silently after confined preflight fails.
-- Custom and `opencode` Profiles currently require explicit inheritance.
-  Confined nested delegation, native Windows, and macOS x64 processes
-  (including Node under Rosetta and inheritance) are unsupported.
-- Do not pass `--allow-exec`; execute-specific resource limits and
-  cross-Profile conformance remain incomplete, so it fails preflight.
-- Confined Jobs bound wall-clock time and persisted logs, but do not impose
-  process-count, CPU, memory, disk, or global fan-out quotas. Keep Host-side
-  delegate concurrency bounded.
-- Prefer `--json` when parsing Job output. Public Job JSON is versioned and
-  grouped under `job`, `outcome`, `artifacts`, and `lineage`.
+```sh
+consult delegate --agent <profile> --read-only --background -- "<prompt>"
+consult status <job-id> --wait
+consult result <job-id>
+```
+
+Treat delegate prose as a claim, not proof. Check Job status and artifacts, and
+verify important edits or test results before integrating them.
+
+## Use the CLI as the reference
+
+Run `consult help` for a quick command overview. Run
+`consult help --reference` before using unfamiliar flags or relying on exact
+authority, model, JSON, resume, or exit-code behavior. Run
+`consult doctor --agent <profile>` when setup, authentication, confinement, or
+the current Host context may be the problem.
+
+Do not inspect Consult's private Job files or Broker internals. Use `status`,
+`logs`, `result`, `chain`, `cancel`, `agents`, `setup`, `doctor`, and `brokers`
+through the CLI.
+
+## Guardrails
+
+- Do not include secrets or PII in delegated prompts.
+- Do not use `--allow-exec`; it is currently unavailable.
+- Keep concurrent delegation bounded; Job time and log limits are not CPU,
+  memory, disk, process-count, or global fan-out quotas.
+- If Consult is unavailable or a Profile is not ready, report the failed setup
+  or Doctor result instead of silently substituting another agent or weakening
+  authority.

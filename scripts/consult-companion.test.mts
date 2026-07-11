@@ -44,18 +44,14 @@ test("dispatch rejects an unknown subcommand", async () => {
   assert.equal(result.stderr.startsWith("unknown subcommand:"), true);
   assert.equal(result.stderr.includes("Usage:"), true);
   assert.equal(result.stderr.includes("consult help"), true);
+  assert.equal(result.stderr.includes("Operational contract"), false);
 });
 
-test("dispatch prints help for the help subcommand", async () => {
+test("dispatch prints concise help for the help subcommand", async () => {
   const result = await dispatch("help", {} as ParsedArgs);
 
   assert.equal(result.exitCode, 0);
-  assert.equal(result.stdout.includes("Common workflow:"), true);
-  assert.equal(result.stdout.includes("Terms:"), true);
-  assert.equal(result.stdout.includes("Host"), true);
-  assert.equal(result.stdout.includes("Profile"), true);
-  assert.equal(result.stdout.includes("Job"), true);
-  assert.equal(result.stdout.includes("Broker"), true);
+  assert.equal(result.stdout.includes("Examples:"), true);
   assert.equal(result.stdout.includes("consult delegate --agent claude --read-only --"), true);
   assert.equal(result.stdout.includes("delegate"), true);
   assert.equal(result.stdout.includes("setup"), true);
@@ -64,11 +60,20 @@ test("dispatch prints help for the help subcommand", async () => {
   assert.equal(result.stdout.includes("logs"), true);
   assert.equal(result.stdout.includes("chain"), true);
   assert.equal(result.stdout.includes("brokers"), true);
+  assert.equal(result.stdout.includes("consult help --reference"), true);
+  assert.equal(result.stdout.includes("Operational contract"), false);
+  assert.equal(result.stdout.includes("## Exit codes"), false);
+  assert.equal(result.stdout.includes("adversarial-review"), false);
+});
+
+test("dispatch prints the operational contract with help --reference", async () => {
+  const result = await dispatch("help", { positional: [], flags: { reference: true } });
+
+  assert.equal(result.exitCode, 0);
   assert.equal(result.stdout.includes("Operational contract"), true);
   assert.equal(result.stdout.includes("## Exit codes"), true);
   assert.equal(result.stdout.includes("Omit --model"), true);
   assert.equal(result.stdout.includes("provider/model"), true);
-  assert.equal(result.stdout.includes("adversarial-review"), false);
 });
 
 test("dispatch prints help for help aliases", async () => {
@@ -82,7 +87,7 @@ test("dispatch prints help for help aliases", async () => {
 });
 
 test("help documents the extended exit codes, lineage env, and json coverage", async () => {
-  const result = await dispatch("help", { positional: [], flags: {} });
+  const result = await dispatch("help", { positional: [], flags: { reference: true } });
 
   assert.equal(result.exitCode, 0);
   assert.match(result.stdout, /6 delegated turn finalized as failed/);

@@ -13,6 +13,7 @@ export const BOOLEAN_FLAGS = new Set([
   "json",
   "all",
   "cleanup",
+  "reference",
 ]);
 
 export type FlagValue = string | boolean | (string | boolean)[];

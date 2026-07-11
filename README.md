@@ -6,12 +6,17 @@ Consult lets Codex, Claude Code, opencode, or a terminal call in the right
 subagent for a task. It uses the agent installations and authentication you
 already have—no Consult plugin, second agent stack, or new set of accounts.
 
+In concrete terms: **while you are working inside Codex, Codex can invoke
+Claude Code or opencode as a subagent and use the result in the same session.**
+Claude Code can invoke Codex; opencode can invoke either. The spawning agent
+stays in charge while Consult runs the delegated agent behind a common CLI.
+
 ```text
-You stay in Codex, Claude Code, opencode, or a terminal
-    └── consult
-          ├── fast model        quick investigation
-          ├── focused coder     implementation in a clean worktree
-          └── heavyweight model final second opinion
+You stay in                         Consult can invoke
+
+Codex ───────┐                      ┌── Claude Code
+Claude Code ─┼── consult delegate ──┼── Codex
+opencode ────┘                      └── opencode
 ```
 
 Keep a strong model in the driver's seat while cheaper or faster models handle
@@ -95,6 +100,38 @@ consult doctor --agent codex
 You are ready when Doctor reports that the selected Profile can delegate. For
 Linux prerequisites, Apple Silicon notes, and development-checkout setup, see
 [Installation](docs/INSTALL.md).
+
+## Teach your Host about Consult
+
+The CLI works without a skill: an agent can always run `consult help` and invoke
+the commands directly. Skills make Consult easier for a Host to discover and
+use well. They provide judgment about when to delegate, how to write a cold
+prompt, and which authority to grant. `consult help` is the quick command
+overview; `consult help --reference` is the detailed contract for exact flags
+and behavior.
+
+The npm package includes these user-facing skill folders:
+
+| Skill | Purpose |
+| --- | --- |
+| `consult` | General delegation workflow for any Host. |
+| `ask-claude` | Ask Claude for a review, explanation, or second opinion. |
+| `ask-codex` | Delegate focused work or review to Codex. |
+| `ask-opencode` | Delegate through a configured opencode provider. |
+
+Installing the CLI places those files inside the npm package, but it does not
+register them with every Host automatically. Copy or symlink the desired folder
+into that Host's skill directory. For example, with Codex:
+
+```sh
+mkdir -p ~/.codex/skills
+ln -s "$(npm root --global)/@aubwang/consult/skills/consult" \
+  ~/.codex/skills/consult
+```
+
+A repository checkout already exposes the generic skill to opencode through
+`.opencode/skills/consult`. Skill locations differ by Host; the CLI remains the
+portable integration boundary.
 
 ## Common tasks
 
