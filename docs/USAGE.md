@@ -1,8 +1,8 @@
 # Consult Usage Reference
 
 This page holds the operational details behind the shorter examples in the
-[README](../README.md). Run `consult help` for the exact CLI surface installed
-on your machine.
+[README](../README.md). Run `consult help` for a quick command overview or
+`consult help --reference` for the exact CLI contract installed on your machine.
 
 ## Profiles
 
