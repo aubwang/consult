@@ -5,6 +5,8 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readJsonWhenReady } from "./package-smoke-readiness.mts";
+
 const scriptsRoot = path.dirname(fileURLToPath(import.meta.url));
 const fixtureSource = path.join(scriptsRoot, "package-confinement-fixture.mjs");
 const FINAL_STATUSES = new Set(["completed", "cancelled", "failed"]);
@@ -98,8 +100,7 @@ async function runFullProfileMatrix(harness) {
   const cancelQueued = await delegate(harness, "cancel", ["--write", "--background"]);
   assert.equal(cancelQueued.job.status, "queued");
   const cancelProbePath = path.join(harness.workspace, ".probe-cancel.json");
-  await waitForFile(cancelProbePath);
-  const cancelProbe = await readJson(cancelProbePath);
+  const cancelProbe = await readJsonWhenReady(cancelProbePath);
   await waitForFile(cancelProbe.heartbeat);
   await command(harness, ["cancel", cancelQueued.job.id]);
   const cancelled = await waitForFinal(harness, cancelQueued.job.id);
