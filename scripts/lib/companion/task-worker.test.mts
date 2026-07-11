@@ -253,6 +253,59 @@ test("task-worker fails a dependent Job when prerequisite waiting times out", as
   assert.match(record.errorMessage as string, /DEPENDENCY_WAIT_TIMEOUT/u);
 });
 
+test("task-worker cancels dependency waiting and cleans an isolated workspace on interrupt", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const prepared = isolatedFixture(workspaceRoot, "job-synthesis");
+  await writeJob(workspaceRoot, {
+    jobId: "job-research",
+    kind: "delegate",
+    status: "running",
+    profile: "claude",
+    submittedAt: "2026-05-14T09:00:00.000Z",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-synthesis",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "write",
+    host: "codex",
+    profile: "codex",
+    prompt: "Implement the predetermined change.",
+    hostSessionId: "codex-1",
+    isolated: true,
+    isolatedWorkspace: prepared,
+    afterJobIds: ["job-research"],
+  });
+  const controller = new AbortController();
+  let cleanupCalls = 0;
+
+  const result = await runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-synthesis" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      signal: controller.signal,
+      interruptExitCode: () => 143,
+      poll: async () => controller.abort(),
+      cleanupIsolatedWorkspace: async () => {
+        cleanupCalls += 1;
+        return {};
+      },
+      loadProfiles: async () => {
+        throw new Error("Profile must not start after interruption");
+      },
+      now: () => "2026-05-14T10:00:01.000Z",
+    }),
+  });
+
+  const record = await readJob(workspaceRoot, "job-synthesis");
+  assert.equal(result.exitCode, 143);
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.stopReason, "cancelled");
+  assert.equal(cleanupCalls, 1);
+});
+
 test("task-worker runs isolated background jobs inline and persists artifacts", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

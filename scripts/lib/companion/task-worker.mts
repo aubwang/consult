@@ -47,6 +47,8 @@ interface TaskWorkerDeps extends RunDelegateOnceDeps {
   maxDependencyWaitMs?: number;
   dependencyNowMs?: () => number;
   poll?: (ms: number) => Promise<void>;
+  signal?: AbortSignal;
+  interruptExitCode?: () => number;
   [key: string]: unknown;
 }
 
@@ -56,8 +58,28 @@ interface TaskWorkerOptions {
 }
 
 export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<CommandResult> {
-  const result = await runTaskWorker({ args: parsedArgs });
-  return { exitCode: result.exitCode, stdout: "", stderr: "" };
+  const controller = new AbortController();
+  let exitCode = 143;
+  const onSigint = () => {
+    exitCode = 130;
+    controller.abort();
+  };
+  const onSigterm = () => {
+    exitCode = 143;
+    controller.abort();
+  };
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+  try {
+    const result = await runTaskWorker({
+      args: parsedArgs,
+      deps: { signal: controller.signal, interruptExitCode: () => exitCode },
+    });
+    return { exitCode: result.exitCode, stdout: "", stderr: "" };
+  } finally {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+  }
 }
 
 export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Promise<CommandResult> {
@@ -114,9 +136,20 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
         maxWaitMs: deps.maxDependencyWaitMs,
         nowMs: deps.dependencyNowMs,
         poll: deps.poll,
+        signal: deps.signal,
       });
     } catch (error) {
       const coded = error as { code?: string; message?: string };
+      if (coded.code === "DEPENDENCY_WAIT_CANCELLED") {
+        finalizeJobRecord(jobRecord, {
+          stopReason: "cancelled",
+          errorMessage: coded.message,
+          now: deps.now,
+        });
+        await writeJobRecord(workspaceRoot, jobId, jobRecord);
+        await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+        return output.result(deps.interruptExitCode?.() ?? 143);
+      }
       const message = `${coded.code ?? "DEPENDENCY_WAIT_FAILED"}: ${coded.message ?? String(error)}`;
       failJobRecord(jobRecord, { errorMessage: message, now: deps.now });
       await writeJobRecord(workspaceRoot, jobId, jobRecord);
