@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 
-import { parseArgs } from "./lib/args.mts";
+import { boolFlag, parseArgs } from "./lib/args.mts";
 import type { ParsedArgs } from "./lib/args.mts";
 import type { CliResult } from "./lib/companion/job-record-errors.mts";
 import * as agents from "./lib/companion/agents.mts";
@@ -38,65 +38,36 @@ const handlers: Record<string, CompanionHandler> = {
 };
 
 const summaryUsage = `Usage:
-  consult help
   consult <command> [options]
+  consult help --reference
 
-Consult lets the current Host delegate one self-contained prompt turn to a
-configured ACP Profile.
-
-Common workflow:
-  consult setup
-  consult agents
-  consult delegate --agent claude --read-only -- "review this design"
-  consult review --agent claude --base main
-  consult delegate --agent codex --read-only --include-diff -- "find edge cases"
-  consult delegate --agent opencode --write --isolated --sandbox inherit --background -- "add the test"
-  consult status <job-id> --wait
-  consult result <job-id>
-  consult logs <job-id> --follow
+Delegate focused work from the current Host to a configured Claude, Codex, or
+opencode Profile.
 
 Commands:
-  setup      Install or verify Profiles and set a default.
-             Options: --install <profile>, --set-default <profile>, --json
-  agents     List configured Profiles or update defaults.
-             Options: --set <profile>, --host <host>, --json
-  delegate   Send one prompt turn to a Profile.
-             Options: --agent <profile>, --read-only, --write, --isolated,
-                      --sandbox <confined|inherit>, --allow-fetch,
-                      --allow-exec, --background, --include-diff,
-                      --base <ref>, --resume, --resume-job <job-id>, --fresh,
-                      --parent-job <job-id>, --model <name>, --effort <level>,
-                      --json
-             --model accepts an exact id or an advertised family alias:
-             Codex sol/terra/luna; Claude sonnet/opus/haiku/fable.
-  review     Run a pinned, read-only review through any configured Profile.
-             Options: --agent <profile>, --base <ref>,
-                      --sandbox <confined|inherit>, --json
-  doctor     Diagnose Profile, Host Identity, Job, Broker, and Job Authority.
-             Options: --agent <profile>, --profile <profile>, --read-only,
-                      --write, --isolated, --sandbox <confined|inherit>,
-                      --allow-fetch, --allow-exec, --json
-  status     Show all Workspace Jobs or inspect one Job.
-             Options: --wait, --follow, --json
-  result     Print stored final agent text for a finished Job.
-             Options: --json
-  logs       Print or follow rendered Job updates.
-             Options: --follow, --json (not together)
-  chain      Show a Delegation Chain rollup for one Job.
-             Options: --json
-  cancel     Cancel a queued or running Job and active descendants.
-  brokers    Inspect live Broker state.
-             Options: --cleanup, --json
-  help       Show this help.
+  setup      Install or verify Profiles.
+  agents     List Profiles or set defaults.
+  delegate   Send one self-contained prompt turn to a Profile.
+  review     Run a pinned, read-only Git review.
+  doctor     Check Profile and Job Authority readiness.
+  status     List Jobs or inspect one Job.
+  logs       Print or follow Job updates.
+  result     Print a finished Job result.
+  chain      Show a Job's delegation lineage.
+  cancel     Cancel an active Job and descendants.
+  brokers    Inspect or clean Broker state.
+  help       Show concise help.
 
-Terms:
-  Host       Where Consult is invoked: terminal, Codex, opencode, or explicit custom Host.
-  Profile    The delegated ACP agent: built-ins are claude, codex, and opencode.
-  Job        One prompt turn with durable request, outcome, artifacts, and lineage.
-  Broker     A short-lived process connecting one background Job to one Profile.
+Examples:
+  consult setup
+  consult delegate --agent claude --read-only -- "review this design"
+  consult delegate --agent codex --write --isolated -- "implement the fix"
+  consult status <job-id> --wait
+  consult result <job-id>
 
-Read-only is the default. Prefer --write --isolated when delegated work should
-edit: Consult returns the Profile-only patch without changing this checkout.
+Delegation defaults to read-only confinement. Use --write --isolated for
+transactional edits. Run consult help --reference for all flags, authority
+semantics, background/resume behavior, JSON contracts, and exit codes.
 `;
 
 const operationalUsage = `Operational contract
@@ -221,18 +192,26 @@ terminal/default.
 - 8 Codex native review command was not advertised by the installed shim
 `;
 
-const usage = `${summaryUsage}\n${operationalUsage}`;
+const referenceUsage = `${summaryUsage}\n${operationalUsage}`;
 
 export async function dispatch(
   subcommand: string | undefined,
   parsedArgs: ParsedArgs,
 ): Promise<CliResult> {
   if (!subcommand || subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
-    return { exitCode: 0, stdout: usage, stderr: "" };
+    return {
+      exitCode: 0,
+      stdout: boolFlag(parsedArgs?.flags?.reference) ? referenceUsage : summaryUsage,
+      stderr: "",
+    };
   }
   const handler = handlers[subcommand];
   if (!handler) {
-    return { exitCode: 2, stdout: "", stderr: `unknown subcommand: ${subcommand}\n\n${usage}` };
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `unknown subcommand: ${subcommand}\n\n${summaryUsage}`,
+    };
   }
   try {
     return await handler.run(subcommand, parsedArgs);
