@@ -324,6 +324,14 @@ Linux uses bubblewrap network/PID/mount namespaces plus seccomp; macOS uses
 Seatbelt. The Profile owns a new process group, and confinement is released
 only after tree termination is confirmed.
 
+On macOS, executable read scopes recursively inspect absolute Mach-O library
+links. Exact linked Homebrew formula/version roots and their `opt` symlink
+aliases are readable, while the Homebrew prefix and Cellar as a whole remain
+denied. The generated Seatbelt transform restores lexical aliases that the
+pinned runtime canonicalizes, including `/etc` for the already-allowed
+`/private/etc`. When Homebrew OpenSSL is linked, Consult points it at an empty
+Job-private configuration instead of exposing mutable Host OpenSSL config.
+
 Each confined Job receives a private home, temp directory, XDG directories,
 and a sanitized environment. Only one credential source is exposed: the
 Profile's selected regular credential file is copied into Job state, otherwise

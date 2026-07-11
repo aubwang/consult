@@ -104,7 +104,7 @@ if (options.expect === "unsupported") {
     "delegate", "--agent", options.agent, "--read-only", "--sandbox", "confined",
     "--json", "--", "This prompt must never reach a Profile.",
   ]);
-  const rejectedPayload = parseJson<Record<string, any>>(rejected.stdout, "rejected delegate");
+  const rejectedPayload = parseJson<Record<string, any>>(rejected.stderr, "rejected delegate");
   if (
     rejected.code !== 2 ||
     rejectedPayload.error?.code !== "AUTHORITY_PREFLIGHT_FAILED"

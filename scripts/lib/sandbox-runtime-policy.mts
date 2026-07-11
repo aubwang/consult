@@ -37,6 +37,7 @@ export interface TransformSandboxRuntimeLaunchInput {
   externalSocksPort: number;
   sharedDefaultWritePaths: readonly string[];
   allowedWritePaths: readonly string[];
+  literalReadPaths?: readonly string[];
 }
 
 export interface SandboxRuntimePolicyError extends Error {
@@ -62,6 +63,7 @@ export function transformSandboxRuntimeLaunch({
   externalSocksPort,
   sharedDefaultWritePaths,
   allowedWritePaths,
+  literalReadPaths = [],
 }: TransformSandboxRuntimeLaunchInput): SandboxRuntimeLaunch {
   assertRuntimeVersion(runtimeVersion);
   assertSafeAbsolutePath(jobTempDir, "Job temp directory");
@@ -81,6 +83,9 @@ export function transformSandboxRuntimeLaunch({
   }
   for (const allowedPath of allowedWritePaths) {
     assertSafeAbsolutePath(allowedPath, "allowed write path");
+  }
+  for (const literalReadPath of literalReadPaths) {
+    assertSafeAbsolutePath(literalReadPath, "literal read path");
   }
   if (
     launch.argv.length !== 3 ||
@@ -109,6 +114,7 @@ export function transformSandboxRuntimeLaunch({
           externalSocksPort,
           sharedDefaultWritePaths,
           allowedWritePaths,
+          literalReadPaths,
         );
   return { argv: [launch.argv[0], "-c", command], env: { ...launch.env } };
 }
@@ -251,6 +257,7 @@ function transformMacosPolicy(
   externalSocksPort: number,
   sharedDefaultWritePaths: readonly string[],
   allowedWritePaths: readonly string[],
+  literalReadPaths: readonly string[],
 ): string {
   const words = parseShellWords(source);
   const sandboxIndex = words.indexOf("/usr/bin/sandbox-exec");
@@ -272,6 +279,7 @@ function transformMacosPolicy(
   ]) {
     assertContains(profile, marker, `macOS policy marker ${JSON.stringify(marker)}`);
   }
+  profile = injectMacosLiteralReadPaths(profile, literalReadPaths);
 
   for (const sharedPath of sharedDefaultWritePaths) {
     for (const operation of ["file-write-unlink", "file-write-create", "file-write\\*"]) {
@@ -301,6 +309,21 @@ function transformMacosPolicy(
   );
   assertNoUnauthenticatedProxyWords(authenticated, externalHttpPort, externalSocksPort);
   return quoteShellWords(authenticated);
+}
+
+function injectMacosLiteralReadPaths(
+  profile: string,
+  literalReadPaths: readonly string[],
+): string {
+  if (literalReadPaths.length === 0) return profile;
+  const marker = "; File write\n";
+  if (occurrenceCount(profile, marker) !== 1) {
+    throw policyShapeError("macOS file-write marker does not occur exactly once");
+  }
+  const rules = literalReadPaths.map((readPath) =>
+    `(allow file-read*\n  (subpath "${readPath}")\n  (with message "Consult runtime path alias"))`,
+  );
+  return profile.replace(marker, `${rules.join("\n")}\n\n${marker}`);
 }
 
 function assertMacosWriteRules(profile: string, allowedWrites: ReadonlySet<string>): void {

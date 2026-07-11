@@ -246,6 +246,7 @@ async function createHarness(binary, temporaryRoot, installer, profile) {
     workspace,
     data,
     hostWriteCanary,
+    sandboxRootsBefore,
     env,
     close: async () => await sentinel.close(),
   };

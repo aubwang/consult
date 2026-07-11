@@ -144,6 +144,7 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
       "/private/tmp/consult-job/home",
       "/private/tmp/consult-job/temporary",
     ],
+    literalReadPaths: ["/opt/homebrew/opt/libuv/lib"],
   };
   const transformed = transformSandboxRuntimeLaunch(input);
 
@@ -153,6 +154,10 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
   assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@127\\.0\\.0\\.1:41002`, "u"));
   assert.doesNotMatch(transformed.argv[2], /subpath "\/tmp\/claude"/u);
   assert.doesNotMatch(transformed.argv[2], /subpath "\/private\/tmp\/claude"/u);
+  assert.match(
+    transformed.argv[2],
+    /\(allow file-read\*\n  \(subpath "\/opt\/homebrew\/opt\/libuv\/lib"\)/u,
+  );
   assert.doesNotMatch(
     transformed.argv[2],
     /\(allow file-write[^\n]*\n  \(subpath "\/Users\/me\/\.claude\/debug"\)/u,
