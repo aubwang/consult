@@ -12,11 +12,18 @@ Claude Code can invoke Codex; opencode can invoke either. The spawning agent
 stays in charge while Consult runs the delegated agent behind a common CLI.
 
 ```text
-You stay in                         Consult can invoke
-
-Codex ───────┐                      ┌── Claude Code
-Claude Code ─┼── consult delegate ──┼── Codex
-opencode ────┘                      └── opencode
+┌──────────────────────────────┐
+│ Your current Host            │
+│ Codex / Claude Code /        │
+│ opencode                     │
+└──────────────┬───────────────┘
+               │ consult delegate
+               ▼
+┌──────────────────────────────┐
+│ The subagent you choose      │
+│ Claude Code / Codex /        │
+│ opencode                     │
+└──────────────────────────────┘
 ```
 
 Keep a strong model in the driver's seat while cheaper or faster models handle
@@ -119,19 +126,24 @@ The npm package includes these user-facing skill folders:
 | `ask-codex` | Delegate focused work or review to Codex. |
 | `ask-opencode` | Delegate through a configured opencode provider. |
 
-Installing the CLI places those files inside the npm package, but it does not
-register them with every Host automatically. Copy or symlink the desired folder
-into that Host's skill directory. For example, with Codex:
+Install them for the current project with the standard Skills CLI:
 
 ```sh
-mkdir -p ~/.codex/skills
-ln -s "$(npm root --global)/@aubwang/consult/skills/consult" \
-  ~/.codex/skills/consult
+npx skills add aubwang/consult
 ```
 
-A repository checkout already exposes the generic skill to opencode through
-`.opencode/skills/consult`. Skill locations differ by Host; the CLI remains the
-portable integration boundary.
+The installer asks which Consult skill and detected coding agent to use. To
+make your selection available across projects instead, add `--global`:
+
+```sh
+npx skills add aubwang/consult --global
+```
+
+Skill installation is optional and separate from installing the Consult CLI.
+The repository checkout also exposes the generic skill to opencode through
+`.opencode/skills/consult`. See the
+[Usage reference](docs/USAGE.md#optional-agent-skills) for manual installation
+and scope details.
 
 ## Common tasks
 
