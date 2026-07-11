@@ -251,7 +251,31 @@ credentials or retry with ambient inheritance automatically.
 ## Optional agent skills
 
 The repository ships a generic `$consult` skill and convenience skills for
-asking Claude, Codex, and opencode under [`skills/`](../skills/). The tracked
-[`opencode` skill entrypoint](../.opencode/skills/consult) exposes the generic
-skill from a checkout. These helpers can teach a Host the command surface, but
-they are optional: the CLI is the integration boundary.
+asking Claude, Codex, and opencode under [`skills/`](../skills/). Install the
+desired skill for coding agents in the current project with:
+
+```sh
+npx skills add aubwang/consult
+```
+
+Project-local installation is the default. To make the selected skill available
+to the selected coding agents across projects, install it globally:
+
+```sh
+npx skills add aubwang/consult --global
+```
+
+The Skills CLI prompts for the Consult skill and detected coding agents. Its
+explicit selection flags remain available for non-interactive setup, but the
+short commands above are the recommended interactive path.
+
+Skill installation is optional and separate from installing the Consult CLI.
+If you do not want to use the Skills CLI, copy or symlink one of the four
+user-facing folders (`consult`, `ask-claude`, `ask-codex`, or `ask-opencode`)
+from the installed npm package into the relevant agent's local or global skill
+directory. `consult-runtime` is an internal contract and should not be
+installed as a Host skill.
+
+The tracked [`opencode` skill entrypoint](../.opencode/skills/consult) exposes
+the generic skill from a repository checkout. These helpers teach a Host when
+and how to delegate, but the CLI remains the integration boundary.
