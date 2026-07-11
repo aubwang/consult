@@ -9,6 +9,7 @@ import {
   assertInstalledConfinedDoctors,
   assertInstalledConfinedMatrix,
 } from "./package-confinement-smoke.mjs";
+import { removePackageTemporaryRoot } from "./package-smoke-cleanup.mts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "consult-package-"));
@@ -95,7 +96,7 @@ try {
     `package smoke passed (${manifest.filename}, ${manifest.files.length} files)\n`,
   );
 } finally {
-  await fs.rm(temporaryRoot, { recursive: true, force: true });
+  await removePackageTemporaryRoot(temporaryRoot);
 }
 
 async function assertConsultHelp(binary) {
