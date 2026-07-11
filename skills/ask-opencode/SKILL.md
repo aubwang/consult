@@ -1,73 +1,31 @@
 ---
 name: ask-opencode
-description: Ask opencode through a Consult Profile for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult opencode, ask opencode, get an opencode review, or use opencode as a supporter.
-metadata:
-  "consult.disable-model-invocation": "true"
-  "consult.argument-hint": What should opencode answer or review?
+description: Ask the configured opencode Profile through Consult for an independent review, explanation, debugging hypothesis, or design opinion. Use when the user asks to consult opencode or get an opencode perspective.
 ---
 
 # Ask opencode Through Consult
 
-Use this skill when the user wants an opencode Profile second opinion through
-Consult.
+Give opencode one cold, self-contained prompt with the objective, exact
+Workspace paths, constraints, expected answer, and evidence requested.
 
-Run opencode through Consult in read-only mode by default:
-
-```sh
-consult delegate --agent opencode --read-only --sandbox inherit -- "<prompt for opencode>"
-```
-
-Use background mode for longer reviews:
+opencode currently requires the trusted Host's inherited sandbox:
 
 ```sh
-consult delegate --agent opencode --read-only --sandbox inherit --background -- "<prompt for opencode>"
-consult wait <job-id>
+consult delegate --agent opencode --read-only --sandbox inherit -- "<prompt>"
 ```
 
-When opencode's result should feed a predetermined later Job, the Host may use
-`--after <job-id>`. If seeing opencode's answer could change the next prompt or
-whether work should continue, wait and inspect it first.
+For a longer second opinion, add `--background --label "<purpose>"`, then run
+`consult wait <job-id>`. Preserve a user-requested provider/model or effort.
+Otherwise leave `--model` unset to use opencode's configured default; use
+`consult help --reference` rather than guessing model names.
 
-## Model And Effort
+Ask reviews for prioritized actionable findings with file and line evidence.
+Ask debugging turns for ranked hypotheses and minimal reproduction ideas. Ask
+design turns to focus on maintainability and missed edge cases.
 
-Default opencode model: leave `--model` unset so the inherited opencode Profile
-uses its ambient configured default.
-
-If the user asks for a specific provider/model or effort, preserve it:
-
-```sh
-consult delegate --agent opencode --read-only --sandbox inherit --model openrouter/anthropic/claude-sonnet-4.5 --effort high -- "<prompt for opencode>"
-```
-
-Use model names accepted by the installed opencode Profile. Do not invent model
-names; if unsure, omit `--model` and let the Profile default apply.
-
-## Prompt Shape
-
-For code review, ask:
-
-```text
-Review the current changes for bugs, regressions, missing tests, and risky
-assumptions. Prioritize actionable findings. Cite files/lines where possible.
-If you find no issues, say that clearly and note any residual risk.
-```
-
-For design questions, ask opencode to focus on maintainability and missed edge
-cases. For debugging questions, ask for ranked hypotheses and minimal
-reproduction ideas.
-
-## Rules
-
-- Default to `--read-only`.
-- The `opencode` Profile is not yet supported by Consult-managed confinement;
-  `--sandbox inherit` is required and adds no Consult OS boundary. State that
-  limitation when it materially affects the request.
-- Add `--allow-fetch` only after opencode gains confined support; fetch cannot
-  be combined with inheritance.
-- Do not ask opencode to edit files unless the user explicitly asks for
-  that.
-- Delegate to the `opencode` Profile only; do not substitute a different
-  Profile.
-- Do not send secrets or PII in the prompt.
-- Report useful findings back to the user, but keep the current Host
-  responsible for deciding what to implement.
+- Keep the current Host responsible for conclusions and integration.
+- Do not request edits unless the user requested implementation.
+- State the inherited-authority limitation when it materially affects the task.
+- Do not add `--allow-fetch`; fetch requires confinement.
+- Delegate only to opencode rather than silently substituting another Profile.
+- Never send secrets or PII.

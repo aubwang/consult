@@ -156,7 +156,7 @@ consult delegate --agent codex --write -- "Add a focused test."
 For delegated implementation, prefer an isolated write Job:
 
 ```sh
-consult delegate --agent codex --write --isolated -- \
+consult delegate --agent codex --write --isolated --label "focused fix" -- \
   "Implement the focused fix and run the relevant checks."
 ```
 
@@ -170,13 +170,26 @@ stable base.
 The isolated worktree is a transactional boundary separate from native process
 confinement. Confined Job Authority still applies by default.
 
+Review a completed isolated Job directly from its Consult-owned artifacts:
+
+```sh
+consult review --agent claude --job <implementation-job-id> \
+  --label "implementation review"
+```
+
+The source task, final report, touched-files list, and patch are pinned as
+bounded untrusted input. The review does not apply the patch. `--job` and
+`--base` are mutually exclusive.
+
 ## Background Jobs
 
 ```sh
 consult delegate --agent opencode --read-only --sandbox inherit \
   --background -- "Trace the bug."
 consult wait <job-id> [<job-id>...]
-consult logs <job-id> --follow
+consult wait --summary <job-id> [<job-id>...]
+consult status <job-id>
+consult logs <job-id> --tail 10
 consult result <job-id>
 consult chain <job-id>
 consult cancel <job-id>
@@ -186,6 +199,21 @@ A foreground delegation streams updates and the final response. A background
 delegation returns a queued Job immediately. Each normal background Job gets a
 Job-scoped Broker; an isolated worker may host the same runtime inline so its
 execution directory remains separate from the original Workspace.
+
+Prefer `wait` when the Host needs the answer: one blocking CLI call avoids
+model-driven polling. Add `--summary` when the Host needs only bounded result
+previews and artifact paths, then use `result` for a selected full answer.
+`--summary` and `--json` are mutually exclusive. `status` lists only the newest
+20 Jobs by default, and a single-Job status is a concise summary without log
+output; use `status --all`
+for complete history. `logs` prints the latest 20 rendered lines by default;
+use `--tail <n>` for another bounded window, `--all` for complete history, or
+`--follow` to seed the bounded window and then stream new updates. `result`
+returns the final Job answer.
+
+A `completed` Job means its Profile turn ended successfully at the transport
+level. The Host still needs to judge whether the final text actually completed
+the delegated task.
 
 ### Dependent Jobs
 
@@ -260,8 +288,11 @@ versioned envelope:
 
 `outcome.finalText` contains the Profile's agent-message text rather than
 rendered tool-call markers. `job.afterJobIds` lists declared prerequisites;
+`job.label` is optional non-unique human metadata and `job.reviewOfJobId`
+identifies an isolated implementation reviewed by a review Job.
 `wait --json` returns a `jobs` collection of the same payloads. Internal Job
-record fields are not a public API.
+record fields are not a public API. Status JSON does not embed log tails; use
+`logs --json` when structured updates are explicitly needed.
 
 ## Host Identity
 
@@ -294,7 +325,7 @@ Useful diagnostics:
 ```sh
 consult doctor
 consult status <job-id>
-consult logs <job-id> --follow
+consult logs <job-id> --tail 10
 consult brokers
 consult brokers --cleanup
 ```
@@ -330,8 +361,7 @@ Skill installation is optional and separate from installing the Consult CLI.
 If you do not want to use the Skills CLI, copy or symlink one of the four
 user-facing folders (`consult`, `ask-claude`, `ask-codex`, or `ask-opencode`)
 from the installed npm package into the relevant agent's local or global skill
-directory. `consult-runtime` is an internal contract and should not be
-installed as a Host skill.
+directory.
 
 The tracked [`opencode` skill entrypoint](../.opencode/skills/consult) exposes
 the generic skill from a repository checkout. These helpers teach a Host when

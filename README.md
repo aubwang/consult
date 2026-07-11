@@ -170,6 +170,13 @@ Review a pinned diff through any configured Profile:
 consult review --agent claude --base main
 ```
 
+Or send a completed isolated implementation directly to another Profile for
+review without loading its patch into the Host context:
+
+```sh
+consult review --agent codex --job <implementation-job-id>
+```
+
 Grant public-web access when research is part of the delegated task:
 
 ```sh
@@ -182,6 +189,7 @@ attached:
 
 ```sh
 consult wait <job-id> [<job-id>...]
+consult wait --summary <job-id> [<job-id>...]
 consult logs <job-id> --follow
 consult result <job-id>
 consult cancel <job-id>
@@ -209,7 +217,8 @@ they should remain detached.
 
 Use `--json` when another agent or script will parse the result. Use
 `--include-diff` for a stable snapshot of uncommitted changes, and `--model` to
-select an exact model or advertised family alias.
+select an exact model or advertised family alias. Add `--label "<purpose>"` to
+make durable Jobs easier to recognize later.
 
 The [Usage reference](docs/USAGE.md) covers cold prompts, Profiles, authority,
 isolated artifacts, background Jobs, resume, JSON output, and troubleshooting.
