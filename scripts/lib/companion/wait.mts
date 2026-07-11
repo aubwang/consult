@@ -165,9 +165,13 @@ async function handleInterrupt({
       }));
   const failures: string[] = [];
   for (const jobId of activeJobIds) {
-    const result = await cancelJob(workspaceRoot, jobId);
-    if (result.exitCode !== 0) {
-      failures.push(`${jobId}: ${result.stderr.trim() || `exit ${result.exitCode}`}`);
+    try {
+      const result = await cancelJob(workspaceRoot, jobId);
+      if (result.exitCode !== 0) {
+        failures.push(`${jobId}: ${result.stderr.trim() || `exit ${result.exitCode}`}`);
+      }
+    } catch (error) {
+      failures.push(`${jobId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   const failureSuffix = failures.length > 0 ? `; cancellation errors: ${failures.join("; ")}` : "";

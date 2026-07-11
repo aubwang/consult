@@ -128,6 +128,33 @@ test("wait can leave active Jobs running when interrupted explicitly", async (t)
   assert.equal(result.stderr, "wait interrupted; active Jobs left running\n");
 });
 
+test("wait reports cleanup errors without losing the interrupt outcome", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-active",
+    status: "running",
+    profile: "codex",
+    submittedAt: "2026-07-11T10:00:01.000Z",
+  });
+  const controller = new AbortController();
+
+  const result = await runWait({
+    args: { positional: ["job-active"], flags: {} },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      signal: controller.signal,
+      poll: async () => controller.abort(),
+      cancelJob: async () => {
+        throw new Error("cancel transport unavailable");
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 130);
+  assert.match(result.stderr, /cancellation errors: job-active: cancel transport unavailable/u);
+});
+
 test("wait times out once for the selected Job set", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

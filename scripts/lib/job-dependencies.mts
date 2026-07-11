@@ -13,6 +13,7 @@ export interface WaitForJobDependenciesOptions {
   maxWaitMs?: number;
   poll?: (ms: number) => Promise<void>;
   nowMs?: () => number;
+  signal?: AbortSignal;
 }
 
 export async function waitForJobDependencies({
@@ -21,12 +22,16 @@ export async function waitForJobDependencies({
   maxWaitMs = 30 * 60 * 1000,
   poll = (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
   nowMs = () => Date.now(),
+  signal,
 }: WaitForJobDependenciesOptions): Promise<JobRecord[]> {
   const deadline = nowMs() + maxWaitMs;
   while (true) {
     const records = await Promise.all(jobIds.map((jobId) => readRecord(jobId)));
     if (records.every((record) => isFinalStatus(record.status))) {
       return records;
+    }
+    if (signal?.aborted) {
+      throw dependencyWaitCancelledError();
     }
     if (nowMs() >= deadline) {
       const error = new Error("timed out waiting for prerequisite Jobs") as Error & {
@@ -36,7 +41,18 @@ export async function waitForJobDependencies({
       throw error;
     }
     await poll(200);
+    if (signal?.aborted) {
+      throw dependencyWaitCancelledError();
+    }
   }
+}
+
+function dependencyWaitCancelledError(): Error {
+  const error = new Error("prerequisite Job wait interrupted") as Error & {
+    code?: string;
+  };
+  error.code = "DEPENDENCY_WAIT_CANCELLED";
+  return error;
 }
 
 export function appendUpstreamJobResults(
