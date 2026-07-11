@@ -23,9 +23,12 @@ Use background mode for longer reviews:
 
 ```sh
 consult delegate --agent codex --read-only --background -- "<prompt for Codex>"
-consult status <job-id> --wait
-consult result <job-id>
+consult wait <job-id>
 ```
+
+When Codex's result should feed a predetermined later Job, the Host may use
+`--after <job-id>`. If seeing Codex's answer could change the next prompt or
+whether work should continue, wait and inspect it first.
 
 ## Model And Effort
 

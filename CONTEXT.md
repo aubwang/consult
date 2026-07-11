@@ -74,6 +74,12 @@ fields under `job`, `outcome`, `artifacts`, and `lineage`; internal Job-record
 fields are not automatically exposed.
 _Avoid_: raw record dump, rendered log
 
+**Job Dependency**
+An orchestration edge from a background Job to an existing prerequisite Job in
+the same Workspace. It delays the dependent prompt turn and carries bounded
+successful upstream results; it is distinct from Delegation Chain lineage.
+_Avoid_: parent Job, child Job, workflow node
+
 **Artifact**
 A durable file produced around a Job, such as its NDJSON log, isolated-write
 patch, or touched-files manifest. Artifact paths belong to the Job Result.
@@ -119,6 +125,11 @@ _Avoid_: marketplace, plugin manifest
 - A Job represents exactly one prompt turn against exactly one Session.
 - A Job may have zero or one live Broker while running.
 - A Job Result describes that Job only, not an automatic chain rollup.
+- A background Job may depend on zero or more existing Jobs in its Workspace.
+- Only completed dependencies release a dependent Job; any failed, cancelled,
+  or skipped dependency causes the dependent Job to be skipped.
+- Job Dependencies do not imply authority inheritance, cancellation lineage,
+  patch application, or Profile Session continuation.
 - Every root Job has a Job Authority granted by its trusted Host.
 - New Jobs default to read-only confined Job Authority with fetch and execute
   disabled; any broader grant is explicit.

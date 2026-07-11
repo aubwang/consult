@@ -18,6 +18,7 @@ export const JOB_STATUS = Object.freeze({
   COMPLETED: "completed",
   CANCELLED: "cancelled",
   FAILED: "failed",
+  SKIPPED: "skipped",
 } as const);
 
 export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
@@ -26,6 +27,7 @@ export const FINAL_JOB_STATUSES: readonly JobStatus[] = Object.freeze([
   JOB_STATUS.COMPLETED,
   JOB_STATUS.CANCELLED,
   JOB_STATUS.FAILED,
+  JOB_STATUS.SKIPPED,
 ]);
 
 export interface JobRecord extends Record<string, unknown> {
@@ -51,6 +53,7 @@ export interface JobRecord extends Record<string, unknown> {
   delegationDepth?: number;
   model?: string;
   effort?: string;
+  afterJobIds?: string[];
   resumeSessionId?: string;
   resumeJobId?: string;
   sessionStateArchived?: boolean;
@@ -173,6 +176,9 @@ export function statusFromStopReason(stopReason: unknown): JobStatus {
   if (stopReason === "failed") {
     return JOB_STATUS.FAILED;
   }
+  if (stopReason === "skipped") {
+    return JOB_STATUS.SKIPPED;
+  }
   return JOB_STATUS.COMPLETED;
 }
 
@@ -233,6 +239,7 @@ export interface BrokerJobMetadataFields {
   delegationDepth?: number;
   model?: string;
   effort?: string;
+  afterJobIds?: string[];
   resumeSessionId?: string;
   resumeJobId?: string;
   sessionStateArchived?: boolean;
@@ -273,6 +280,7 @@ export function brokerJobMetadata(job: BrokerJobMetadataFields): BrokerJobMetada
       ["delegationDepth", job.delegationDepth],
       ["model", job.model],
       ["effort", job.effort],
+      ["afterJobIds", job.afterJobIds],
       ["resumeSessionId", job.resumeSessionId],
       ["resumeJobId", job.resumeJobId],
       ["sessionStateArchived", job.sessionStateArchived],
