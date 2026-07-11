@@ -54,9 +54,13 @@ const LINUX_READ_PATHS = [
   "/etc/localtime",
 ] as const;
 
-const MACOS_READ_PATHS = [
+export const MACOS_READ_PATHS = [
   "/System",
-  "/usr",
+  "/usr/bin",
+  "/usr/lib",
+  "/usr/libexec",
+  "/usr/sbin",
+  "/usr/share",
   "/bin",
   "/sbin",
   "/Library",

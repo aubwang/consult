@@ -119,6 +119,7 @@ test("resolveJobAuthority fails execute closed after structural validation", () 
   if (!unavailable.ok) {
     assert.equal(unavailable.diagnostic.code, "AUTHORITY_EXECUTE_UNAVAILABLE");
     assert.equal(unavailable.diagnostic.reason, undefined);
+    assert.match(unavailable.diagnostic.message, /execute-specific resource containment/u);
     assert.match(unavailable.diagnostic.remediation, /Remove --allow-exec/);
   }
 });
