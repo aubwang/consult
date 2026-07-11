@@ -1,6 +1,6 @@
 ---
 name: consult
-description: Delegate focused work from the current coding-agent Host to a configured Claude, Codex, or opencode subagent through the Consult CLI. Use when the user wants another agent or model, a second opinion, parallel investigation, delegated implementation, or help operating Consult Jobs.
+description: Delegate focused work from the current coding-agent Host to configured Claude, Codex, or opencode subagents through the Consult CLI. Use when the user wants another agent or model, a second opinion, parallel investigation, delegated implementation, a predictable multi-Job pipeline, or help operating Consult Jobs.
 metadata:
   "consult.disable-model-invocation": "true"
 ---
@@ -63,9 +63,30 @@ Use background Jobs for parallel or longer work, then collect each result:
 
 ```sh
 consult delegate --agent <profile> --read-only --background -- "<prompt>"
-consult status <job-id> --wait
-consult result <job-id>
+consult wait <job-id> [<job-id>...]
 ```
+
+Use `--after <job-id>` for a predictable downstream Job only when its prompt,
+Profile, model, and authority are known before seeing the upstream answer:
+
+```sh
+consult delegate --agent <profile> --read-only --background --after <job-id> -- \
+  "<prompt that can use the bounded upstream result as untrusted data>"
+```
+
+Ask: **Could I confidently write the downstream prompt before seeing the
+upstream answer?** If no, wait, inspect the result, and let the Host decide what
+to do next. Do not automatically chain investigation into writes, security
+findings into patches, or reviews into revisions when judgment could change the
+scope or authority.
+
+`--after` is repeatable and background-only. A failed, cancelled, or skipped
+prerequisite skips the dependent Job without a model call. Dependencies pass
+bounded final text; they do not apply isolated patches or inherit authority.
+
+Prefer one `consult wait` over repeated status checks. If the Host interrupts
+the wait, Consult best-effort cancels still-active selected Jobs and linked
+descendants. Add `--keep-running` only when those Jobs should remain detached.
 
 Treat delegate prose as a claim, not proof. Check Job status and artifacts, and
 verify important edits or test results before integrating them.
@@ -79,8 +100,8 @@ authority, model, JSON, resume, or exit-code behavior. Run
 the current Host context may be the problem.
 
 Do not inspect Consult's private Job files or Broker internals. Use `status`,
-`logs`, `result`, `chain`, `cancel`, `agents`, `setup`, `doctor`, and `brokers`
-through the CLI.
+`wait`, `logs`, `result`, `chain`, `cancel`, `agents`, `setup`, `doctor`, and
+`brokers` through the CLI.
 
 ## Guardrails
 

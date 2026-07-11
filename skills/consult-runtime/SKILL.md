@@ -15,7 +15,10 @@ The public entrypoint is `consult <subcommand> ...`.
 - `delegate`: create a Job and run one prompt turn inline or through a scoped Broker.
 - `doctor`: diagnose Profile, Host Identity, Job, Broker, and default Job
   Authority readiness for the current Workspace and Host context.
-- `status`: show queued, running, completed, cancelled, or failed Job state.
+- `status`: show queued, running, completed, cancelled, failed, or skipped Job
+  state.
+- `wait`: block once for one or more terminal Job Results; interrupting it
+  best-effort cancels still-active selected Jobs unless `--keep-running` is set.
 - `result`: render a completed Job result and metadata.
 - `logs`: print or follow rendered logs for one Job.
 - `chain`: show the Delegation Chain rollup for one Job.
@@ -30,7 +33,15 @@ The `consult` CLI resolves Host identity from explicit flags, explicit
 session variables such as `OPENCODE_SESSION_ID`, `OPENCODE_RUN_ID`,
 and `CODEX_THREAD_ID`.
 
-Jobs move through `queued -> running -> completed`, `cancelled`, or `failed`. Job records live under `workspaces/<hash>/jobs/`.
+Jobs move through `queued -> running -> completed`, `cancelled`, `failed`, or
+`skipped`. Job records live under `workspaces/<hash>/jobs/`.
+
+Repeatable `delegate --background --after <job-id>` dependencies wait for
+existing same-Workspace Jobs. Completed prerequisite final text is appended in
+declared order inside a bounded untrusted-data block. A failed, cancelled, or
+skipped prerequisite skips the dependent Job without starting its Profile.
+Dependencies do not imply lineage, authority inheritance, patch application,
+or Session continuation.
 
 Logs are NDJSON files at `workspaces/<hash>/logs/<id>.log`.
 

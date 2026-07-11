@@ -145,11 +145,20 @@ Profile uses the portable delegate path.
 - Foreground delegate (default) streams progress and final agent text, then
   prints consult <kind> <job-id> <status>.
 - --background writes a queued Job, starts a detached worker, and returns
-  immediately. Poll with consult status <job-id> --wait, then use
-  consult result <job-id>.
+  immediately. Use consult wait <job-id> [<job-id>...] to block once and return
+  all selected Job Results, or inspect individual Jobs with status and result.
+- --after <job-id> is repeatable and requires --background. Every prerequisite
+  must already exist in the same Workspace. The detached worker waits for all
+  prerequisites; only completed Jobs release it. A failed, cancelled, or
+  skipped prerequisite finalizes the dependent Job as skipped without starting
+  its Profile. Successful upstream final text is appended to the downstream
+  prompt inside a UTF-8-safe 256 KiB untrusted-data block.
 - Each normal background Job has a Job-scoped Broker. An isolated background
   worker may host the same runtime inline so Workspace identity and execution
   cwd remain separate.
+- consult wait handles SIGINT/SIGTERM by best-effort cancelling its still-active
+  selected Jobs and linked descendants. Use --keep-running to stop waiting
+  without cancellation. Hard process kills cannot run cleanup.
 
 ## Sessions and lineage
 
@@ -173,10 +182,12 @@ Job-bearing JSON uses schema version 1. A single Job is:
 
 delegate --json, review --json, and result --json emit that envelope.
 status <id> --json adds logTail; status --json and chain --json
-return versioned collections of the same Job payload sections. Internal Job
-record fields are not a public API. outcome.finalText contains Profile
-agent-message text, while tool activity remains in logs. JSON is also available
-for setup, agents, logs, doctor, and brokers.
+return versioned collections of the same Job payload sections. wait --json
+returns the selected terminal Jobs in submission order. job.afterJobIds lists
+declared prerequisites. Internal Job record fields are not a public API.
+outcome.finalText contains Profile agent-message text, while tool activity
+remains in logs. JSON is also available for setup, agents, logs, doctor, and
+brokers.
 
 ## Host Identity
 
@@ -194,6 +205,8 @@ terminal/default.
 - 5 result requested before Job finalization
 - 6 delegated turn finalized as failed
 - 8 Codex native review command was not advertised by the installed shim
+- 130 wait interrupted by SIGINT
+- 143 wait interrupted by SIGTERM
 `;
 
 const referenceUsage = `${summaryUsage}\n${operationalUsage}`;
