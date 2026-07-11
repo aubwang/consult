@@ -159,7 +159,7 @@ confinement. Confined Job Authority still applies by default.
 ```sh
 consult delegate --agent opencode --read-only --sandbox inherit \
   --background -- "Trace the bug."
-consult status <job-id> --wait
+consult wait <job-id> [<job-id>...]
 consult logs <job-id> --follow
 consult result <job-id>
 consult chain <job-id>
@@ -170,6 +170,43 @@ A foreground delegation streams updates and the final response. A background
 delegation returns a queued Job immediately. Each normal background Job gets a
 Job-scoped Broker; an isolated worker may host the same runtime inline so its
 execution directory remains separate from the original Workspace.
+
+### Dependent Jobs
+
+Use a Job Dependency when the downstream prompt is already known before the
+upstream result arrives:
+
+```sh
+consult delegate --agent claude --model haiku --allow-fetch --background -- \
+  "Research the remaining tournament teams and cite reliable sources."
+
+consult delegate --agent codex --background --after job-research -- \
+  "Compare the teams using the upstream research."
+
+consult wait job-research job-comparison
+```
+
+`--after` is repeatable and background-only. Every prerequisite must already
+exist in the same Workspace. The dependent worker waits up to 30 minutes for
+all prerequisites. Completed Jobs release it and their final text is appended
+in declared order inside a UTF-8-safe untrusted-data block capped at 256 KiB.
+If any prerequisite fails, is cancelled, or is skipped, the dependent Job is
+also `skipped` without starting its Profile.
+
+Dependencies are orchestration, not Delegation Chain lineage. They do not
+inherit authority, apply isolated-write patches, continue a Profile Session, or
+create cancellation parentage. The dependent Job receives exactly the
+authority selected on its own command.
+
+Use `consult wait <job-id>...` to make one blocking tool call and receive every
+selected terminal Job Result in argument order. No LLM polling occurs while the
+CLI waits. SIGINT and SIGTERM best-effort cancel still-active selected Jobs and
+their linked descendants; use `--keep-running` to stop waiting without
+cancelling them. SIGKILL cannot run cleanup.
+
+Do not predeclare a dependency when seeing the upstream answer could change
+whether the next Job should exist or alter its prompt, Profile, model, or
+authority. In that case, wait, inspect, and let the Host make the decision.
 
 ## Resume and lineage
 
@@ -191,9 +228,9 @@ boundary.
 
 ## JSON output
 
-Use `--json` with `delegate`, `review`, `status`, `result`, `logs`, `chain`,
-`doctor`, `agents`, `setup`, and `brokers`. Job-bearing commands use a versioned
-envelope:
+Use `--json` with `delegate`, `review`, `status`, `wait`, `result`, `logs`,
+`chain`, `doctor`, `agents`, `setup`, and `brokers`. Job-bearing commands use a
+versioned envelope:
 
 ```json
 {
@@ -206,7 +243,9 @@ envelope:
 ```
 
 `outcome.finalText` contains the Profile's agent-message text rather than
-rendered tool-call markers. Internal Job record fields are not a public API.
+rendered tool-call markers. `job.afterJobIds` lists declared prerequisites;
+`wait --json` returns a `jobs` collection of the same payloads. Internal Job
+record fields are not a public API.
 
 ## Host Identity
 

@@ -38,6 +38,8 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 
 - Cross-Profile native conversation transfer.
 - A permanent agent app server or a dependency on Codex app-server APIs.
+- Host-specific prompt injection or wake-up APIs. Portable waiting remains a
+  normal blocking CLI operation.
 - Forwarding one Host's private MCP configuration to a Profile.
 - Interactive permission prompting during a Job.
 - Native Windows or macOS x64 process support, or an ambient-authority fallback
@@ -105,7 +107,7 @@ target a Profile associated with the same product as its Host.
 A Job is the durable record for one prompt turn. Lifecycle:
 
 ```text
-queued -> running -> completed | cancelled | failed
+queued -> running -> completed | cancelled | failed | skipped
 ```
 
 Mutable records may gain internal fields as implementation needs change.
@@ -119,7 +121,8 @@ Machine-readable commands expose an allow-listed versioned contract instead:
     "kind": "delegate",
     "status": "completed",
     "profile": "claude",
-    "mode": "read-only"
+    "mode": "read-only",
+    "afterJobIds": []
   },
   "outcome": {
     "stopReason": "end_turn",
@@ -204,6 +207,35 @@ is recorded as the inline runner so `consult cancel` can signal it safely.
 The external Job behavior is identical across transports. `jobId` is the
 idempotency key for Broker requests; replay with a different payload is a
 conflict. Payload identity includes permission-relevant execution opt-ins.
+
+## Job Dependencies and Waiting
+
+`delegate --background --after <job-id>` creates a Job Dependency. `--after`
+is repeatable; every prerequisite must already exist in the same Workspace, so
+dependency edges always point to existing Jobs and cannot form cycles through
+the public CLI.
+
+The dependent Job's detached worker waits up to 30 minutes for every
+prerequisite to reach terminal state before it starts a Profile. Only
+`completed` prerequisites release the prompt turn. A failed, cancelled, or
+skipped prerequisite finalizes the dependent Job as `skipped` without a model
+call. Successful prerequisite final text is appended to the original prompt in
+declared order inside an explicitly untrusted, UTF-8-safe block capped at 256
+KiB total. Dependencies do not apply isolated-write patches or imply lineage,
+authority inheritance, or Session continuation.
+
+`consult wait <job-id>...` performs one blocking join and returns the selected
+versioned Job Results in argument order. It uses persisted Job records as the
+source of truth and shares one 30-minute timeout. On SIGINT or SIGTERM, it
+best-effort cancels still-active selected Jobs through normal cascade-aware
+cancellation; `--keep-running` opts out. This gives shell-capable Hosts a
+portable no-LLM-polling path without requiring Host-specific inbound prompt
+APIs. A hard kill cannot execute cleanup.
+
+While a dependent worker is waiting, it handles SIGINT/SIGTERM before Profile
+startup, records cancellation, and removes any prepared isolated Execution
+Workspace. Once Profile execution begins, the normal Broker/inline lifecycle
+owns process-tree and isolated-workspace cleanup.
 
 ## Sessions and Resume
 
