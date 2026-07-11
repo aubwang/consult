@@ -41,6 +41,20 @@ test("preflight rejects native Windows including inheritance", async () => {
   if (!result.ok) assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
 });
 
+test("preflight rejects macOS x64 processes including inheritance", async () => {
+  const result = await preflightJobAuthority({
+    ...BASE,
+    authority: INHERIT,
+    platform: "darwin",
+    arch: "x64",
+  }, { probeInherited: async ({ authority }) => ({ ok: true, authority }) });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
+    assert.match(result.diagnostic.message, /macOS x64 process/u);
+  }
+});
+
 test("runtime boundary rejects persisted execute grants and native Windows", () => {
   const execute = validateJobAuthorityRuntimeBoundary({
     authority: { ...CONFINED, mode: "write", allowExecute: true },
@@ -58,6 +72,15 @@ test("runtime boundary rejects persisted execute grants and native Windows", () 
   assert.equal(windows.ok, false);
   if (!windows.ok) {
     assert.equal(windows.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
+  }
+
+  const freebsd = validateJobAuthorityRuntimeBoundary({
+    authority: INHERIT,
+    platform: "freebsd",
+  });
+  assert.equal(freebsd.ok, false);
+  if (!freebsd.ok) {
+    assert.equal(freebsd.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
   }
 });
 

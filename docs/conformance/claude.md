@@ -1,5 +1,11 @@
 # Claude Agent ACP Conformance
 
+> **Historical report.** This page records the May 2026 cooperative ACP
+> permission and legacy optional-bubblewrap implementation. Its whole-config
+> mount and “plugin” language does not describe ADR-0027's current private-home,
+> selected-credential native boundary. See
+> [`README.md`](README.md#job-authority-confinement).
+
 Date: 2026-05-15
 Workspace under test: `/tmp/iter15-claude`, `/tmp/iter16-claude`, `/tmp/iter16-resume`
 Backend: claude-agent-acp wrapping Claude Code CLI v2.1.142 (auth via existing `~/.claude/.credentials.json`)

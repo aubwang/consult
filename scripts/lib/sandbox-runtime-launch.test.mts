@@ -10,6 +10,7 @@ import type { EgressProxyOptions } from "./egress-proxy.mts";
 import type { JobAuthority } from "./job-authority.mts";
 import {
   CONFINED_PROFILE_POLICIES,
+  MACOS_READ_PATHS,
   acquireConfinedSandboxRuntimeLaunch,
   executableReadScopes,
   probeConfinedSandboxRuntime,
@@ -18,6 +19,19 @@ import {
 const TOKEN = "ab".repeat(32);
 const NO_PROXY =
   "localhost,127.0.0.1,::1,169.254.0.0/16,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16";
+
+test("macOS system reads exclude the user-managed /usr/local subtree", () => {
+  const scopes: readonly string[] = MACOS_READ_PATHS;
+  assert.equal(
+    scopes.some((scope) =>
+      scope === "/usr/local" || "/usr/local".startsWith(`${scope}/`),
+    ),
+    false,
+  );
+  for (const required of ["/usr/bin", "/usr/lib", "/usr/libexec", "/usr/sbin", "/usr/share"]) {
+    assert.ok(scopes.includes(required));
+  }
+});
 
 test("executable read scopes include only linked Homebrew runtime packages", async (t) => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-homebrew-scopes-"));
@@ -65,6 +79,23 @@ test("executable read scopes include only linked Homebrew runtime packages", asy
   assert.equal(scopes.includes(root), false);
   assert.equal(scopes.includes(path.join(root, "opt")), false);
   assert.equal(scopes.includes(path.join(root, "Cellar")), false);
+});
+
+test("macOS x64 Homebrew scopes do not widen to /usr/local", () => {
+  const scopes = executableReadScopes(
+    "/usr/local/Cellar/node@24/24.18.0/bin/node",
+    [
+      "/usr/local/opt/libuv/lib/libuv.1.dylib",
+      "/usr/local/Cellar/libuv/1.51.0/lib/libuv.1.dylib",
+    ],
+  );
+
+  assert.ok(scopes.includes("/usr/local/Cellar/node@24/24.18.0"));
+  assert.ok(scopes.includes("/usr/local/opt/libuv/lib"));
+  assert.ok(scopes.includes("/usr/local/Cellar/libuv/1.51.0"));
+  assert.equal(scopes.includes("/usr/local"), false);
+  assert.equal(scopes.includes("/usr/local/Cellar"), false);
+  assert.equal(scopes.includes("/usr/local/opt"), false);
 });
 
 test("confined launch stages minimal Codex state, sanitizes env, and removes Job state", async (t) => {
@@ -227,6 +258,47 @@ test("custom and opencode confined Profiles fail before runtime or proxy startup
       /confined authority is unsupported for Profile registry identity/u,
     );
     assert.deepEqual(harness.events, []);
+  }
+});
+
+test("macOS x64 processes fail before runtime or proxy startup", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      cwd: fixture.workspace,
+      env: { OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "codex",
+    }, { ...harness.deps, platform: "darwin", arch: "x64" }),
+    /unsupported for a macOS x64 process/u,
+  );
+  assert.deepEqual(harness.events, []);
+});
+
+test("confined preflight reports macOS x64 as platform-unsupported", async (t) => {
+  const fixture = await makeFixture(t);
+  const result = await probeConfinedSandboxRuntime({
+    authority: authority(),
+    workspaceRoot: fixture.workspace,
+    profile: "codex",
+    profileRegistryId: "codex",
+    profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+    platform: "darwin",
+    arch: "x64",
+  }, {
+    startAgent: async () => {
+      throw new Error("Profile launch must not be reached");
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
+    assert.match(result.diagnostic.message, /macOS x64 process/u);
   }
 });
 

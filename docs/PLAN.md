@@ -40,8 +40,8 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 - A permanent agent app server or a dependency on Codex app-server APIs.
 - Forwarding one Host's private MCP configuration to a Profile.
 - Interactive permission prompting during a Job.
-- Native Windows confinement or an ambient-authority fallback presented as a
-  security boundary.
+- Native Windows or macOS x64 process support, or an ambient-authority fallback
+  presented as a security boundary.
 - Multiple separately named installations of one built-in Profile type.
 
 ## Repository Layout
@@ -296,18 +296,18 @@ Host choices; Consult may narrow them but never broadens or retries implicitly.
 Before resume lookup, diff capture, isolated-worktree creation, or Job
 persistence, preflight initializes the exact configured Profile binary, args,
 and environment inside the requested boundary. Unsupported combinations return
-a structured authority diagnostic and create no Job. Native Windows is
-unsupported, including inheritance. Confined nesting is also unsupported;
-cooperative ambient chains must request inheritance explicitly, and linked
-child ceilings are not presented as an unforgeable OS boundary.
+a structured authority diagnostic and create no Job. Native Windows and macOS
+x64 processes are unsupported, including inheritance. Confined nesting is also
+unsupported; cooperative ambient chains must request inheritance explicitly,
+and linked child ceilings are not presented as an unforgeable OS boundary.
 
 Preflight is an early compatibility check, not an immutable launch guarantee:
 the Profile executable or Host credential state can change before the real
 launch. The launch path derives and validates the full policy again, so such a
 race can fail a created Job but cannot silently broaden its authority.
 
-The confined adapter targets native Linux and macOS for built-in `codex` and
-`claude` Profile identities. Custom and `opencode` Profiles remain
+The confined adapter targets native Linux and native arm64 macOS for built-in
+`codex` and `claude` Profile identities. Custom and `opencode` Profiles remain
 inherit-only until they pass the same live conformance gates. A trusted Host
 may choose `--sandbox inherit`; that adds no Consult OS boundary and disables
 the legacy `CONSULT_AGENT_SANDBOX` launch layer. `consult doctor` reports the
@@ -324,11 +324,12 @@ Linux uses bubblewrap network/PID/mount namespaces plus seccomp; macOS uses
 Seatbelt. The Profile owns a new process group, and confinement is released
 only after tree termination is confirmed.
 
-On macOS, executable read scopes recursively inspect absolute Mach-O library
-links. Exact linked Homebrew formula/version roots and their `opt` symlink
-aliases are readable, while the Homebrew prefix and Cellar as a whole remain
-denied. The generated Seatbelt transform restores lexical aliases that the
-pinned runtime canonicalizes, including `/etc` for the already-allowed
+On native arm64 macOS, executable read scopes recursively inspect absolute
+Mach-O library links. Exact linked Homebrew formula/version roots and their
+`opt` symlink aliases are readable, while broad `/usr`, `/usr/local`, the
+Homebrew prefix, and the Cellar as a whole remain denied. System reads use exact
+`/usr` subtrees instead. The generated Seatbelt transform restores lexical
+aliases that the pinned runtime canonicalizes, including `/etc` for the already-allowed
 `/private/etc`. When Homebrew OpenSSL is linked, Consult points it at an empty
 Job-private configuration instead of exposing mutable Host OpenSSL config.
 
@@ -377,8 +378,9 @@ Execution Workspace and reject symlink escapes:
 Execute remains represented in canonical/persisted authority for compatibility,
 but `--allow-exec` is unavailable until execute-specific resource containment
 and cross-Profile conformance are complete. Wall-clock duration and persisted
-NDJSON size are bounded now. Process count, CPU, memory, and disk quotas remain
-documented residual risks rather than implied sandbox guarantees.
+NDJSON size are bounded now. Process count, CPU, memory, disk, and global
+fan-out quotas remain documented residual risks rather than implied sandbox
+guarantees; the trusted Host must bound concurrent Jobs.
 
 Conformance is deliberately two-layered. A deterministic fake ACP Profile is
 run through each built-in registry identity from the packed artifact to make
@@ -395,7 +397,9 @@ Nested delegation uses `chainId`, `parentJobId`, and `delegationDepth`.
 `--parent-job` wins. A child inherits Workspace, lineage, and a permission
 ceiling but not model, effort, or resume choices. Default maximum depth is two.
 Cancelling a parent cancels active descendants; child failure does not
-automatically fail the parent.
+automatically fail the parent. Parent linkage is child-controlled, so linked
+ceilings and the depth limit are cooperative product policy rather than an
+authenticated OS boundary.
 
 ## Packaging and Verification
 

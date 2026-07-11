@@ -148,7 +148,7 @@ export function resolveJobAuthority(
     return failure({
       code: "AUTHORITY_EXECUTE_UNAVAILABLE",
       message:
-        "execute authority is unavailable until confined networking and model transport are enforced",
+        "execute authority is unavailable until execute-specific resource containment and cross-Profile conformance are complete",
       remediation: "Remove --allow-exec; confined execute authority is not currently available.",
     });
   }

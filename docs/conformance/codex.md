@@ -1,5 +1,11 @@
 # Codex ACP Conformance
 
+> **Historical report.** This page records the May 2026 cooperative ACP
+> permission and legacy optional-bubblewrap implementation. Its statements
+> about missing preventive read-only enforcement, selected Host config mounts,
+> and a Consult “plugin” do not describe ADR-0027's current default native Job
+> Authority boundary. See [`README.md`](README.md#job-authority-confinement).
+
 Date: 2026-05-15
 Workspace under test: the local Consult checkout, plus temporary git workspaces
 for write tests.

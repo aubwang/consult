@@ -64,6 +64,8 @@ and focused checks.
 - Add `--allow-fetch` only when the delegated Codex itself needs task-specific
   public TCP/443 research and the increased prompt-injection exfiltration risk is
   acceptable.
+- Keep Host-side delegate concurrency bounded. Confined Jobs have wall-clock
+  and log limits, not process-count, CPU, memory, disk, or global fan-out quotas.
 - Do not ask the delegated Codex to edit files unless the user explicitly asks for
   that.
 - Delegate to the `codex` Profile only; do not substitute a different

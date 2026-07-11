@@ -28,9 +28,10 @@ identity; runtime boundaries compare it rather than reconstructing authority
 from legacy flags.
 
 Before Job creation, Consult initializes the exact selected ACP Profile inside
-the requested boundary. Native Linux and macOS confinement is available only
-for built-in Codex and Claude Profile identities after combination-specific
-conformance. Native Windows is unsupported, including inheritance. Confined
+the requested boundary. Native Linux and native arm64 macOS confinement is
+available only for built-in Codex and Claude Profile identities after
+combination-specific conformance. Native Windows and macOS x64 processes are
+unsupported, including inheritance. Confined
 nesting is unsupported. Custom and opencode Profiles require explicit
 inheritance until separately proven.
 

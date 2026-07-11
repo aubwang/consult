@@ -1,5 +1,10 @@
 # OpenCode ACP Conformance
 
+> **Historical report.** This page records the May 2026 cooperative ACP and
+> legacy optional-bubblewrap path. OpenCode is currently inherit-only; these
+> results are not evidence of ADR-0027 native confinement. See
+> [`README.md`](README.md#job-authority-confinement).
+
 Date: 2026-05-15
 Workspace under test: `/tmp/iter18-oc-sweep`
 Backend: `opencode` v1.14.41 + the `acp` subcommand

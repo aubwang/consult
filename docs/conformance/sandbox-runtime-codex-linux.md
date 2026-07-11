@@ -56,9 +56,11 @@ The full-network confined result is not contradictory. That outer policy
 allows the native primitives needed for Consult to add a stricter inner
 filesystem/network boundary.
 
-## Remaining gates
+## Integration gates at spike time (historical)
 
-A compatibility KEEP is deliberately narrower than an integration decision:
+A compatibility KEEP was deliberately narrower than an integration decision.
+ADR-0027 and the current conformance matrix later satisfied the following gates;
+they remain useful regression requirements, not current missing work:
 
 1. `/usr/bin/true` is not Codex ACP. Selected auth/config staging, a fresh
    writable runtime home, actual Profile startup, model transport, and teardown
