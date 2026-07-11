@@ -14,6 +14,7 @@ export const BOOLEAN_FLAGS = new Set([
   "all",
   "cleanup",
   "reference",
+  "keep-running",
 ]);
 
 export type FlagValue = string | boolean | (string | boolean)[];
