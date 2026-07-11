@@ -37,6 +37,12 @@ harness emitted the following redacted evidence:
 {"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"codex","expectation":"ready","direct":{"ok":true,"markerMatched":true,"stopReason":"end_turn"},"doctor":{"exitCode":0,"selectedProfile":"codex","profileRegistryId":"codex","confinedReady":true,"diagnostic":null},"turn":{"jobId":"job-YxdsR-g1-TZe","status":"completed","model":null,"stopReason":"end_turn","sourceAcknowledged":true,"sessionStateArchived":true,"resumedJobId":"job-OXrcqJxSAADl","restoredSecretMatched":true},"background":{"jobId":"job-y7uwF1x_MAyF","queued":true,"completed":true,"resultMatched":true,"sessionStateArchived":true}}
 ```
 
+The normally sandboxed Codex Host control also passed and emitted:
+
+```json
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"codex","expectation":"unsupported","direct":null,"doctor":{"exitCode":1,"selectedProfile":"codex","profileRegistryId":"codex","confinedReady":false,"diagnostic":{"code":"AUTHORITY_PREFLIGHT_FAILED","message":"confined authority preflight failed: listen EPERM: operation not permitted 127.0.0.1","remediation":"Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created."}},"turn":null,"background":null}
+```
+
 The deterministic packed npm Codex and Claude matrices and Bun Doctor controls
 also passed with Homebrew Node 24.18.0. The real Claude controls were not run
 because this Mac has neither a stageable credential file nor a supported
