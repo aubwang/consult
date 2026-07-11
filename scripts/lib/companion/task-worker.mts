@@ -4,6 +4,8 @@ import { profilesPath } from "../broker-endpoint.mts";
 import { cleanupIsolatedWorkspace as defaultCleanupIsolatedWorkspace } from "../isolated-workspace.mts";
 import type { PreparedIsolatedWorkspace } from "../isolated-workspace.mts";
 import {
+  failJobRecord,
+  finalizeJobRecord,
   readWorkspaceJobRecord,
   writeJobRecord as defaultWriteJobRecord,
   type JobRecord,
@@ -12,6 +14,10 @@ import { loadProfiles as defaultLoadProfiles } from "../profiles.mts";
 import type { ProfilesData } from "../profiles.mts";
 import { processStartTime } from "../process-identity.mts";
 import { canonicalRunAuthority } from "../job-agent.mts";
+import {
+  appendUpstreamJobResults,
+  waitForJobDependencies,
+} from "../job-dependencies.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
@@ -38,6 +44,9 @@ interface TaskWorkerDeps extends RunDelegateOnceDeps {
   cleanupIsolatedWorkspace?: (
     prepared: PreparedIsolatedWorkspace,
   ) => Promise<unknown>;
+  maxDependencyWaitMs?: number;
+  dependencyNowMs?: () => number;
+  poll?: (ms: number) => Promise<void>;
   [key: string]: unknown;
 }
 
@@ -93,6 +102,46 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
   } catch (error) {
     await cleanupPreparedWorkspace(isolatedWorkspace, deps);
     throw error;
+  }
+
+  if (jobRecord.afterJobIds?.length) {
+    const readJobRecord = deps.readJobRecord ?? readWorkspaceJobRecord;
+    let prerequisites: JobRecord[];
+    try {
+      prerequisites = await waitForJobDependencies({
+        jobIds: jobRecord.afterJobIds,
+        readRecord: (dependencyJobId) => readJobRecord(workspaceRoot, dependencyJobId),
+        maxWaitMs: deps.maxDependencyWaitMs,
+        nowMs: deps.dependencyNowMs,
+        poll: deps.poll,
+      });
+    } catch (error) {
+      const coded = error as { code?: string; message?: string };
+      const message = `${coded.code ?? "DEPENDENCY_WAIT_FAILED"}: ${coded.message ?? String(error)}`;
+      failJobRecord(jobRecord, { errorMessage: message, now: deps.now });
+      await writeJobRecord(workspaceRoot, jobId, jobRecord);
+      await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+      output.stderr(`${message}\n`);
+      return output.result(1);
+    }
+    const unsuccessful = prerequisites.filter(
+      (prerequisite) => prerequisite.status !== "completed",
+    );
+    if (unsuccessful.length > 0) {
+      const dependencySummary = unsuccessful
+        .map((prerequisite) => `${prerequisite.jobId} (${prerequisite.status})`)
+        .join(", ");
+      finalizeJobRecord(jobRecord, {
+        stopReason: "skipped",
+        errorMessage: `prerequisite Jobs did not complete successfully: ${dependencySummary}`,
+        now: deps.now,
+      });
+      await writeJobRecord(workspaceRoot, jobId, jobRecord);
+      await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+      return output.result(0);
+    }
+    jobRecord.prompt = appendUpstreamJobResults(jobRecord.prompt as string, prerequisites);
+    await writeJobRecord(workspaceRoot, jobId, jobRecord);
   }
 
   const loadProfiles = deps.loadProfiles ?? defaultLoadProfiles;
@@ -172,6 +221,15 @@ function validateJobRecord(record: unknown): string | null {
       typeof (record as JobRecord).isolatedWorkspace?.executionRoot !== "string")
   ) {
     return "missing isolatedWorkspace";
+  }
+  if (
+    (record as JobRecord).afterJobIds !== undefined &&
+    (!Array.isArray((record as JobRecord).afterJobIds) ||
+      (record as JobRecord).afterJobIds?.some(
+        (jobId) => typeof jobId !== "string" || jobId.length === 0,
+      ))
+  ) {
+    return "invalid afterJobIds";
   }
   return null;
 }

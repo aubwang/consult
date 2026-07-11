@@ -98,7 +98,7 @@ test("markJobRunning records running status and preserves an existing started ti
   assert.equal(record.startedAt, "2026-05-21T09:59:00.000Z");
 });
 
-test("finalizeJobRecord maps completed, cancelled, and failed stop reasons", () => {
+test("finalizeJobRecord maps completed, cancelled, failed, and skipped stop reasons", () => {
   const completed = finalizeJobRecord(
     { jobId: "job-completed" },
     {
@@ -125,6 +125,14 @@ test("finalizeJobRecord maps completed, cancelled, and failed stop reasons", () 
       now: () => "2026-05-21T10:04:00.000Z",
     },
   );
+  const skipped = finalizeJobRecord(
+    { jobId: "job-skipped" },
+    {
+      stopReason: "skipped",
+      errorMessage: "prerequisite failed",
+      now: () => "2026-05-21T10:05:00.000Z",
+    },
+  );
 
   assert.equal(completed.status, "completed");
   assert.equal(completed.completedAt, "2026-05-21T10:02:00.000Z");
@@ -133,6 +141,8 @@ test("finalizeJobRecord maps completed, cancelled, and failed stop reasons", () 
   assert.equal(cancelled.completedAt, "2026-05-21T10:03:00.000Z");
   assert.equal(failed.status, "failed");
   assert.equal(failed.errorMessage, "nope");
+  assert.equal(skipped.status, "skipped");
+  assert.equal(skipped.errorMessage, "prerequisite failed");
 });
 
 test("failJobRecord marks a record failed with the shared timestamp convention", () => {
@@ -157,10 +167,12 @@ test("failJobRecord marks a record failed with the shared timestamp convention",
 test("final status helpers centralize status conventions", () => {
   assert.equal(statusFromStopReason("cancelled"), "cancelled");
   assert.equal(statusFromStopReason("failed"), "failed");
+  assert.equal(statusFromStopReason("skipped"), "skipped");
   assert.equal(statusFromStopReason("end_turn"), "completed");
   assert.equal(isFinalStatus("completed"), true);
   assert.equal(isFinalStatus("cancelled"), true);
   assert.equal(isFinalStatus("failed"), true);
+  assert.equal(isFinalStatus("skipped"), true);
   assert.equal(isFinalStatus("running"), false);
 });
 

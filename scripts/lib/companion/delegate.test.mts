@@ -759,6 +759,80 @@ test("delegate rejects mutually exclusive background and wait flags", async () =
   assert.match(result.stderr, /--background and --wait are mutually exclusive/);
 });
 
+test("delegate requires background mode for Job dependencies", async () => {
+  const result = await runDelegate({
+    args: { positional: ["continue later"], flags: { after: "job-upstream" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--after requires --background\n");
+});
+
+test("delegate background records existing prerequisite Jobs", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeParentJob(workspaceRoot, { jobId: "job-research" });
+  await writeParentJob(workspaceRoot, { jobId: "job-review" });
+
+  const result = await runDelegate({
+    args: {
+      positional: ["synthesize the findings"],
+      flags: {
+        background: true,
+        after: ["job-research", "job-review", "job-research"],
+      },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-synthesis",
+      spawn: () => ({ unref() {} }),
+    }),
+  });
+
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-synthesis.json"), "utf8"),
+  );
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(record.afterJobIds, ["job-research", "job-review"]);
+});
+
+test("delegate rejects a missing prerequisite before creating a Job", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  let spawned = false;
+
+  const result = await runDelegate({
+    args: {
+      positional: ["synthesize the findings"],
+      flags: { background: true, after: "job-missing" },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      generateJobId: () => "job-must-not-exist",
+      spawn: () => {
+        spawned = true;
+        return { unref() {} };
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /dependency Job not found: job-missing/u);
+  assert.equal(spawned, false);
+  await assert.rejects(
+    fs.access(path.join(jobsDir(workspaceRoot), "job-must-not-exist.json")),
+  );
+});
+
 test("delegate background writes a queued record and spawns the task worker", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
