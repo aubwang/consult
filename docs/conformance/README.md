@@ -3,7 +3,7 @@
 Live conformance status for the implemented Consult Profiles.
 
 Job Authority confinement is now implemented for the built-in Codex and Claude
-Profile identities on native Linux/macOS, with exact live preflight deciding
+Profile identities on native Linux and Apple Silicon macOS, with exact live preflight deciding
 whether the current Host context is usable. The pinned runtime remains
 **rejected for the nested macOS Codex Host path** because it cannot establish
 its own proxy or Seatbelt boundary inside Codex's inherited sandbox. See the
@@ -124,6 +124,15 @@ substitute for the other. The positive packed fetch probe requires outbound
 reachability to public TCP/443 (`1.1.1.1:443`); failure of that external
 prerequisite is a failed release gate until it is rerun in a suitable network.
 
+## Historical cooperative and legacy-bubblewrap evidence
+
+The following table and linked Profile reports predate ADR-0027's default native
+Job Authority boundary. They document ACP permission/backstop behavior and the
+legacy `CONSULT_AGENT_SANDBOX=bwrap` path; statements there about missing hard
+filesystem enforcement, whole config mounts, or a Consult “plugin” are
+historical and do not describe the current Codex/Claude confined launch.
+OpenCode remains inherit-only.
+
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |
@@ -152,7 +161,7 @@ Both codex and claude shapes are unit-tested in `scripts/consult-broker.test.mts
 
 ## Job Authority confinement
 
-The cooperative ACP/backstop results above are not hard boundaries by
+The historical cooperative ACP/backstop results above are not hard boundaries by
 themselves. Current `delegate` and `review` requests default to canonical
 read-only confined Job Authority. Built-in Codex and Claude launches receive a
 private Job home/temp directory, a copied credential file or one selected
@@ -166,8 +175,8 @@ Whole Host config is not staged: Codex `config.toml` and Claude `settings.json`
 are absent. Exact Profile initialization happens before Job creation, and
 `consult doctor` runs that same live check. `--sandbox inherit` is an explicit
 ambient-authority escape hatch and is never an automatic retry. The opencode
-and custom Profile paths currently require inheritance; native Windows and
-confined nesting are unsupported.
+and custom Profile paths currently require inheritance; native Windows, Intel
+macOS, and confined nesting are unsupported.
 
 On macOS, Claude conformance requires a supported token environment variable or
 a stageable `.claude/.credentials.json`. A Keychain-only Claude login is not a

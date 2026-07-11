@@ -75,6 +75,8 @@ would confirm or falsify each one.
   context, report it; do not retry with `--sandbox inherit` silently.
 - Add `--allow-fetch` only when Claude itself needs task-specific public TCP/443
   research and the increased prompt-injection exfiltration risk is acceptable.
+- Keep Host-side delegate concurrency bounded. Confined Jobs have wall-clock
+  and log limits, not process-count, CPU, memory, disk, or global fan-out quotas.
 - Do not ask Claude to edit files unless the user explicitly asks for
   that.
 - Delegate to the `claude` Profile only; do not substitute a different

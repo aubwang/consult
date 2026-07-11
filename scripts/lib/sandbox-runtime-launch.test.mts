@@ -261,6 +261,47 @@ test("custom and opencode confined Profiles fail before runtime or proxy startup
   }
 });
 
+test("Intel macOS fails before runtime or proxy startup", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      cwd: fixture.workspace,
+      env: { OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "codex",
+    }, { ...harness.deps, platform: "darwin", arch: "x64" }),
+    /unsupported on Intel macOS/u,
+  );
+  assert.deepEqual(harness.events, []);
+});
+
+test("confined preflight reports Intel macOS as platform-unsupported", async (t) => {
+  const fixture = await makeFixture(t);
+  const result = await probeConfinedSandboxRuntime({
+    authority: authority(),
+    workspaceRoot: fixture.workspace,
+    profile: "codex",
+    profileRegistryId: "codex",
+    profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+    platform: "darwin",
+    arch: "x64",
+  }, {
+    startAgent: async () => {
+      throw new Error("Profile launch must not be reached");
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.code, "AUTHORITY_PLATFORM_UNSUPPORTED");
+    assert.match(result.diagnostic.message, /Intel macOS/u);
+  }
+});
+
 test("confined launch rejects Workspace glob metacharacters before runtime startup", async (t) => {
   const fixture = await makeFixture(t);
   const workspace = path.join(fixture.root, "workspace[1]");

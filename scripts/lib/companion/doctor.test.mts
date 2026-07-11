@@ -131,6 +131,7 @@ test("doctor marks default confinement unready with the probe diagnostic", async
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
       platform: "darwin",
+      arch: "arm64",
       probeConfined: async () => ({
         ok: false,
         diagnostic: {
@@ -152,6 +153,42 @@ test("doctor marks default confinement unready with the probe diagnostic", async
     "sandbox-exec: Operation not permitted",
   );
   assert.equal(report.authority.inherit.available, true);
+});
+
+test("doctor reports Intel macOS unsupported without an inheritance escape hatch", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "codex",
+    hostDefaults: {},
+    profiles: { codex: profile("codex") },
+  });
+
+  const result = await runDoctor({
+    args: { positional: [], flags: { json: true } },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "darwin",
+      arch: "x64",
+      probeConfined: async () => {
+        throw new Error("confined probe must not run");
+      },
+      probeInherited: async () => {
+        throw new Error("inherited probe must not run");
+      },
+    },
+  });
+
+  const report = JSON.parse(result.stdout) as DoctorReport;
+  assert.equal(result.exitCode, 1);
+  assert.equal(report.authority.arch, "x64");
+  assert.equal(report.authority.confined.ok, false);
+  assert.equal(
+    report.authority.confined.diagnostic?.code,
+    "AUTHORITY_PLATFORM_UNSUPPORTED",
+  );
+  assert.equal(report.authority.inherit.available, false);
 });
 
 test("doctor validates an explicitly inherited Profile even when default confinement is unavailable", async (t) => {

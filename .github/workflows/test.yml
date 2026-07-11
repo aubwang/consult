@@ -38,10 +38,7 @@ jobs:
         run: CONSULT_PACKAGE_SMOKE_CONFINED=1 bun run pack:check
 
   macos-confinement:
-    strategy:
-      matrix:
-        runner: [macos-latest, macos-15-intel]
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

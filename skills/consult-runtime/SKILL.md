@@ -48,9 +48,9 @@ returns an agent-only patch plus touched-files manifest.
 Job Authority schema v1 contains mode (`read-only | write`), confinement
 (`confined | inherit`), `allowFetch`, and `allowExecute`. The default is
 read-only confined with both grants false. Built-in `codex` and `claude`
-Profiles use Consult-managed native Linux/macOS confinement, a private Job
-home/temp directory, selected credentials only, direct-network denial, and an
-authenticated model-host proxy. `--allow-fetch` broadens that proxy to public
+Profiles use Consult-managed native Linux and Apple Silicon macOS confinement,
+a private Job home/temp directory, selected credentials only, direct-network
+denial, and an authenticated model-host proxy. `--allow-fetch` broadens that proxy to public
 TCP/443 (without TLS or application-protocol inspection) and therefore
 increases credential/data exfiltration risk.
 
@@ -61,6 +61,8 @@ one supported token environment variable or a stageable
 Preflight initializes the exact configured Profile before Job persistence and
 fails closed. Consult never changes a failed confined request to inheritance.
 `--sandbox inherit` is an explicit trusted-Host choice that adds no Consult OS
-boundary; custom and `opencode` Profiles require it. Confined nesting and
-native Windows are unsupported. `--allow-exec` remains unavailable pending
-execute resource containment and cross-Profile conformance.
+boundary; custom and `opencode` Profiles require it. Confined nesting, native
+Windows, and Intel macOS are unsupported. `--allow-exec` remains unavailable
+pending execute resource containment and cross-Profile conformance. Wall-clock
+and log limits ship, but process-count, CPU, memory, disk, and global fan-out
+quotas do not; the Host must bound concurrent delegation.

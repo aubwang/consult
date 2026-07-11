@@ -20,8 +20,9 @@ Open a new shell and confirm `node --version` before installing Consult.
 
 ## Native confinement prerequisites
 
-macOS uses the built-in Seatbelt runtime and needs no additional system
-package. Linux confinement requires `bwrap` (bubblewrap), `socat`, and `rg`
+Apple Silicon macOS uses the built-in Seatbelt runtime and needs no additional
+system package. Intel macOS is unsupported, including inherited mode. Linux
+confinement requires `bwrap` (bubblewrap), `socat`, and `rg`
 (ripgrep) on `PATH`. For example, on Debian or Ubuntu:
 
 ```sh

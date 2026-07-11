@@ -122,8 +122,9 @@ models advertised at Session start. OpenCode exact model ids use provider/model.
   seeded or captured. The original checkout stays unchanged;
   Job artifacts contain the Profile-only binary patch and touched-files list.
 - --sandbox confined (default): launch built-in codex or claude Profiles inside
-  Consult-managed native confinement on Linux or macOS. Direct networking is
-  blocked; model traffic uses an authenticated model-host allowlist proxy.
+  Consult-managed native confinement on Linux or Apple Silicon macOS. Direct
+  networking is blocked; model traffic uses an authenticated model-host
+  allowlist proxy.
 - --allow-fetch: additionally permit arbitrary public TCP/443 through that proxy
   for HTTPS-oriented research; Consult does not inspect the encrypted protocol.
   This is task-specific authority, not a harmless convenience: the Profile also
@@ -131,19 +132,24 @@ models advertised at Session start. OpenCode exact model ids use provider/model.
   readable data to a public host.
 - --sandbox inherit: deliberately add no Consult OS boundary and use only the
   trusted Host's ambient authority. Read-only/path checks are then cooperative
-  and detective, not OS-preventive. Consult never retries with inheritance implicitly.
+  and detective, not OS-preventive. Consult never retries with inheritance
+  implicitly.
 - --allow-exec: currently fails preflight while execute-specific resource and
   cross-Profile conformance work remains incomplete.
+- Confined Jobs have wall-clock and persisted-log limits, but no process-count,
+  CPU, memory, disk, or global fan-out quota. The trusted Host must bound
+  concurrent delegates.
 
 --write and --read-only are mutually exclusive. --isolated requires --write;
 --allow-fetch requires confinement; fetch and execute cannot be combined.
 Confined nesting is unsupported: have the trusted root Host create a sibling
 Job, or choose inheritance explicitly for a cooperative ambient chain.
 
-Native Windows is unsupported, including inheritance. Confined authority is
-currently implemented only for built-in codex and claude Profile identities;
-custom and opencode Profiles require explicit --sandbox inherit. Run
-consult doctor --agent <profile> before delegation to check the exact Profile
+Native Windows and Intel macOS are unsupported, including inheritance. Confined
+authority is currently implemented only for built-in codex and claude Profile
+identities on native Linux and Apple Silicon macOS; custom and opencode Profiles
+require explicit --sandbox inherit. Run consult doctor --agent <profile> before
+delegation to check the exact Profile
 launch in the current Host context. Doctor briefly stages the selected
 credential and initializes/disposes the Profile, but sends no model prompt. A
 failed preflight creates no Job.
@@ -178,7 +184,10 @@ Profile uses the portable delegate path.
 - Resume stays within one Profile; Consult does not convert native sessions
   between agent CLIs.
 - Nested delegation passes --parent-job <job-id>, or inherits
-  CONSULT_PARENT_JOB. A child cannot exceed its parent's permission mode.
+  CONSULT_PARENT_JOB. Linked children are policy-checked against the declared
+  parent's permission mode and a maximum depth of two. Parent linkage comes
+  from child-controlled arguments/environment, so this is cooperative product
+  policy rather than an authenticated OS security boundary.
 
 ## JSON
 

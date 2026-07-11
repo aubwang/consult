@@ -10,6 +10,7 @@ export interface JobAuthorityPreflightInput {
   authority: JobAuthority;
   parentJob?: unknown;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   workspaceRoot: string;
   /** Built-in Profile identity; configured aliases remain user-facing `profile`. */
   profileRegistryId?: string;
@@ -39,6 +40,7 @@ export interface JobAuthorityRuntimeBoundaryInput {
   authority: JobAuthority;
   parentJob?: unknown;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
 }
 
 export function validateJobAuthorityRuntimeBoundary(
@@ -50,11 +52,18 @@ export function validateJobAuthorityRuntimeBoundary(
   }
   const authority = requested.authority;
 
-  if ((input.platform ?? process.platform) === "win32") {
+  const platform = input.platform ?? process.platform;
+  const arch = input.arch ?? process.arch;
+  if (
+    (platform !== "linux" && platform !== "darwin") ||
+    (platform === "darwin" && arch !== "arm64")
+  ) {
     return failure(
       "AUTHORITY_PLATFORM_UNSUPPORTED",
-      "native Windows does not support Consult Job Authority confinement or inheritance",
-      "Run Consult on native Linux, WSL2, or macOS.",
+      platform === "darwin"
+        ? `Intel macOS (${arch}) does not support Consult Job Authority confinement or inheritance`
+        : `${platform === "win32" ? "native Windows" : platform} does not support Consult Job Authority confinement or inheritance`,
+      "Run Consult on native Linux, WSL2, or Apple Silicon macOS.",
     );
   }
 

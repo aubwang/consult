@@ -34,6 +34,7 @@ export interface DoctorDeps extends ResolveInvocationContextDeps {
   listWorkspaceJobRecords?: (workspaceRoot: string) => Promise<JobRecord[]>;
   pidAlive?: (pid: number) => Promise<boolean>;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   probeConfined?: typeof probeConfinedSandboxRuntime;
   probeInherited?: typeof probeInheritedProfileLaunch;
   resolveWorkspaceRoot?: () => Promise<string>;
@@ -85,6 +86,7 @@ interface BrokerSummaryReport {
 interface JobAuthorityDoctorReport {
   ok: boolean;
   platform: NodeJS.Platform;
+  arch: NodeJS.Architecture;
   defaultAuthority: JobAuthority;
   requestedAuthority: JobAuthority | null;
   requested: {
@@ -331,9 +333,12 @@ async function inspectAuthority({
   workspaceRoot: string;
 }): Promise<JobAuthorityDoctorReport> {
   const platform = deps.platform ?? process.platform;
-  const inheritAvailable = platform === "linux" || platform === "darwin";
+  const arch = deps.arch ?? process.arch;
+  const inheritAvailable =
+    platform === "linux" || (platform === "darwin" && arch === "arm64");
   const base = {
     platform,
+    arch,
     defaultAuthority: { ...DEFAULT_JOB_AUTHORITY },
     requestedAuthority: null,
     requested: {
@@ -400,6 +405,7 @@ async function inspectAuthority({
     const requested = await preflightJobAuthority({
       authority: requestedAuthority,
       platform,
+      arch,
       workspaceRoot,
       profile: selectedProfile,
       profileRegistryId: profileEntry.registryId,
@@ -417,6 +423,7 @@ async function inspectAuthority({
       : await (deps.probeConfined ?? probeConfinedSandboxRuntime)({
       authority: { ...DEFAULT_JOB_AUTHORITY },
       platform,
+      arch,
       workspaceRoot,
       profile: selectedProfile,
       profileRegistryId: profileEntry.registryId,
@@ -454,6 +461,7 @@ function authorityFailure(
   base: Pick<
     JobAuthorityDoctorReport,
     | "platform"
+    | "arch"
     | "defaultAuthority"
     | "requestedAuthority"
     | "requested"

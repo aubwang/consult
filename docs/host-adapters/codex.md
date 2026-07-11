@@ -38,6 +38,9 @@ unrestricted sibling terminal when a hard child boundary is required; use
 `--sandbox inherit` only when the trusted Host deliberately accepts ambient
 authority. Consult never retries with inheritance automatically.
 
+Native macOS support is Apple Silicon only. Intel macOS fails preflight,
+including inherited mode.
+
 ## Use
 
 Delegate work:
