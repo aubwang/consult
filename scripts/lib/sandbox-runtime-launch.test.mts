@@ -27,18 +27,24 @@ test("executable read scopes include only linked Homebrew runtime packages", asy
   const opensslPackage = path.join(root, "Cellar", "openssl@3", "3.5.1");
   const libuvAlias = path.join(root, "opt", "libuv");
   const opensslAlias = path.join(root, "opt", "openssl@3");
+  const caBundle = path.join(root, "etc", "ca-certificates", "cert.pem");
+  const opensslCaAlias = path.join(root, "etc", "openssl@3", "cert.pem");
   await Promise.all([
     fsp.mkdir(path.join(nodePackage, "bin"), { recursive: true }),
     fsp.mkdir(path.join(libuvPackage, "lib"), { recursive: true }),
     fsp.mkdir(path.join(opensslPackage, "lib"), { recursive: true }),
     fsp.mkdir(path.join(root, "opt"), { recursive: true }),
+    fsp.mkdir(path.dirname(caBundle), { recursive: true }),
+    fsp.mkdir(path.dirname(opensslCaAlias), { recursive: true }),
   ]);
   await Promise.all([
     fsp.writeFile(path.join(nodePackage, "bin", "node"), ""),
     fsp.writeFile(path.join(libuvPackage, "lib", "libuv.1.dylib"), ""),
     fsp.writeFile(path.join(opensslPackage, "lib", "libcrypto.3.dylib"), ""),
+    fsp.writeFile(caBundle, "fixture CA bundle"),
     fsp.symlink(libuvPackage, libuvAlias),
     fsp.symlink(opensslPackage, opensslAlias),
+    fsp.symlink(path.relative(path.dirname(opensslCaAlias), caBundle), opensslCaAlias),
   ]);
   const executable = path.join(nodePackage, "bin", "node");
   const scopes = executableReadScopes(executable, [
@@ -53,6 +59,9 @@ test("executable read scopes include only linked Homebrew runtime packages", asy
   assert.ok(scopes.includes(libuvPackage));
   assert.ok(scopes.includes(opensslAlias));
   assert.ok(scopes.includes(opensslPackage));
+  assert.ok(scopes.includes(caBundle));
+  assert.ok(scopes.includes(opensslCaAlias));
+  assert.equal(scopes.includes(path.dirname(caBundle)), false);
   assert.equal(scopes.includes(root), false);
   assert.equal(scopes.includes(path.join(root, "opt")), false);
   assert.equal(scopes.includes(path.join(root, "Cellar")), false);

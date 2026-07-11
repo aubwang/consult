@@ -770,7 +770,38 @@ export function executableReadScopes(
     addExecutableReadScopes(scopes, linkedRuntimePath);
     addSymlinkAncestorScopes(scopes, linkedRuntimePath);
   }
+  addHomebrewOpenSslDataReadScopes(scopes, linkedRuntimePaths);
   return [...scopes];
+}
+
+function addHomebrewOpenSslDataReadScopes(
+  scopes: Set<string>,
+  linkedRuntimePaths: readonly string[],
+): void {
+  const prefixes = new Set<string>();
+  for (const candidate of linkedRuntimePaths) {
+    const segments = candidate.split(path.sep);
+    const cellarIndex = segments.lastIndexOf("Cellar");
+    if (
+      cellarIndex < 1 ||
+      !/^openssl(?:@[^/]+)?$/u.test(segments[cellarIndex + 1] ?? "")
+    ) {
+      continue;
+    }
+    prefixes.add(path.join(path.parse(candidate).root, ...segments.slice(1, cellarIndex)));
+  }
+  for (const prefix of prefixes) {
+    for (const candidate of [
+      path.join(prefix, "etc", "openssl@3", "cert.pem"),
+      path.join(prefix, "etc", "ca-certificates", "cert.pem"),
+    ]) {
+      try {
+        if (fs.statSync(candidate).isFile()) scopes.add(candidate);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
 }
 
 function addExecutableReadScopes(scopes: Set<string>, executable: string): void {
