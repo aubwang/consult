@@ -36,6 +36,7 @@ interface ChainRollup {
 
 interface ChainRecord {
   jobId: string | null;
+  label: string | null;
   relations: string[];
   status: string | null;
   profile: string | null;
@@ -158,6 +159,7 @@ function chainRollup(
 function chainRecord(record: EnrichedJobRecord, rollup: ChainRollup, requestedJobId: string): ChainRecord {
   return {
     jobId: record.jobId ?? null,
+    label: record.label ?? null,
     relations: recordRelations(record, rollup, requestedJobId),
     status: record.status ?? null,
     profile: record.profile ?? null,
@@ -192,13 +194,14 @@ function recordRelations(record: EnrichedJobRecord, rollup: ChainRollup, request
 function renderChainTable(rollup: ChainRollup, records: ChainRecord[]): string {
   const lines = [
     `chain\t${rollup.chainId ?? "-"}\tjob\t${rollup.requestedJobId}\troot\t${rollup.rootJobId ?? "-"}\tparent\t${rollup.parentJobId ?? "-"}\tchildren\t${rollup.childJobIds.length > 0 ? rollup.childJobIds.join(",") : "-"}`,
-    "relation\tjobId\tstatus\tprofile\tdepth\tparentJobId\tchildren\tprompt\tfinalSummary",
+    "relation\tjobId\tlabel\tstatus\tprofile\tdepth\tparentJobId\tchildren\tprompt\tfinalSummary",
   ];
   for (const record of records) {
     lines.push(
       [
         record.relations.join(","),
         record.jobId ?? "-",
+        record.label ?? "-",
         record.status ?? "-",
         record.profile ?? "-",
         record.delegationDepth ?? "-",

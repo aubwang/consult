@@ -1,78 +1,36 @@
 ---
 name: ask-codex
-description: Ask a separate Codex Profile through Consult for a second review, critique, explanation, debugging hypothesis, or design opinion from the current Host. Use when the user says to consult Codex, ask another Codex, get a Codex review, or use Codex as a supporter.
-metadata:
-  "consult.disable-model-invocation": "true"
-  "consult.argument-hint": What should the separate Codex answer or review?
+description: Ask a separate configured Codex Profile through Consult for an independent review, explanation, debugging hypothesis, or design opinion. Use when the user asks to consult another Codex or get a Codex perspective.
 ---
 
 # Ask Codex Through Consult
 
-Use this skill when the user wants a separate Codex Profile opinion through
-Consult. This is useful as an independent reviewer even when the current Host
-is also Codex, because Consult runs it through the configured `codex` Profile.
+Give the separate Codex Profile one cold, self-contained prompt with the
+objective, exact Workspace paths, constraints, expected answer, and evidence
+requested.
 
-Run the separate Codex Profile through Consult in read-only mode
-by default:
-
-```sh
-consult delegate --agent codex --read-only -- "<prompt for Codex>"
-```
-
-Use background mode for longer reviews:
+Default to confined read-only authority:
 
 ```sh
-consult delegate --agent codex --read-only --background -- "<prompt for Codex>"
-consult wait <job-id>
+consult delegate --agent codex --read-only -- "<prompt>"
 ```
 
-When Codex's result should feed a predetermined later Job, the Host may use
-`--after <job-id>`. If seeing Codex's answer could change the next prompt or
-whether work should continue, wait and inspect it first.
+Use `consult review --agent codex [--base <ref>]` for the current Git change.
+Use `consult review --agent codex --job <id>` to review a completed isolated
+implementation Job without loading its patch into Host context.
 
-## Model And Effort
+For a longer second opinion, add `--background --label "<purpose>"`, then run
+`consult wait <job-id>`. Preserve a user-requested model, effort, or authority.
+Host `config.toml` is not copied into confinement, so pass `--model` when it
+controls the intended choice. Use `consult help --reference` rather than
+guessing model names.
 
-Default Codex model: leave `--model` unset to use the confined Codex runtime's
-default. Host `config.toml` is not copied; pass an explicit model when that
-file controls the intended choice.
+Ask reviews for prioritized actionable findings with file and line evidence.
+Ask debugging turns for ranked hypotheses and focused checks. Ask design turns
+to challenge the approach and identify simpler alternatives.
 
-If the user asks for a specific Codex model or reasoning effort, preserve it:
-
-```sh
-consult delegate --agent codex --read-only --model gpt-5.3-codex --effort high -- "<prompt for Codex>"
-```
-
-Useful variants are whatever the installed Codex Profile accepts. Do not invent
-model names; if unsure, omit `--model` and let the Profile default apply.
-
-## Prompt Shape
-
-For code review, ask:
-
-```text
-Review the current changes for bugs, regressions, missing tests, and risky
-assumptions. Prioritize actionable findings. Cite files/lines where possible.
-If you find no issues, say that clearly and note any residual risk.
-```
-
-For design questions, ask Codex to challenge the implementation approach and
-name simpler alternatives. For debugging questions, ask for ranked hypotheses
-and focused checks.
-
-## Rules
-
-- Default to `--read-only`.
-- Keep the default confined authority. If preflight fails in the current Host
-  context, report it; do not retry with `--sandbox inherit` silently.
-- Add `--allow-fetch` only when the delegated Codex itself needs task-specific
-  public TCP/443 research and the increased prompt-injection exfiltration risk is
-  acceptable.
-- Keep Host-side delegate concurrency bounded. Confined Jobs have wall-clock
-  and log limits, not process-count, CPU, memory, disk, or global fan-out quotas.
-- Do not ask the delegated Codex to edit files unless the user explicitly asks for
-  that.
-- Delegate to the `codex` Profile only; do not substitute a different
-  Profile.
-- Do not send secrets or PII in the prompt.
-- Report useful findings back to the user, but keep the current Host
-  responsible for deciding what to implement.
+- Keep the current Host responsible for conclusions and integration.
+- Do not request edits unless the user requested implementation.
+- Add `--allow-fetch` only when Codex itself needs public-web research.
+- Never retry failed confinement with inheritance automatically.
+- Never send secrets or PII.

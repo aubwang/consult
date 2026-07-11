@@ -98,7 +98,7 @@ test("macOS x64 Homebrew scopes do not widen to /usr/local", () => {
   assert.equal(scopes.includes("/usr/local/opt"), false);
 });
 
-test("confined launch stages minimal Codex state, sanitizes env, and removes Job state", async (t) => {
+test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient", async (t) => {
   const fixture = await makeFixture(t);
   const sourceAuth = path.join(fixture.home, ".codex", "auth.json");
   const sourceConfig = path.join(fixture.home, ".codex", "config.toml");
@@ -114,7 +114,7 @@ test("confined launch stages minimal Codex state, sanitizes env, and removes Job
     env: {
       PATH: `${fixture.bin}:/usr/bin:/bin`,
       CODEX_HOME: path.join(fixture.home, ".codex"),
-      OPENAI_API_KEY: "selected-key",
+      OPENAI_API_KEY: "project-key",
       GH_TOKEN: "must-not-leak",
       OP_SERVICE_ACCOUNT_TOKEN: "must-not-leak",
       HTTP_PROXY: "http://ambient.invalid",
@@ -183,7 +183,61 @@ test("confined launch stages minimal Codex state, sanitizes env, and removes Job
   assert.deepEqual(harness.events, ["initialize", "wrap", "cleanup", "reset", "proxy-close"]);
 });
 
-test("confined launch falls back to one credential environment variable", async (t) => {
+test("confined Codex launch uses CONSULT_OPENAI_API_KEY instead of auth.json", async (t) => {
+  const fixture = await makeFixture(t);
+  const sourceAuth = path.join(fixture.home, ".codex", "auth.json");
+  await privateFile(sourceAuth, '{"token":"host-only"}');
+  const harness = fakeRuntime();
+
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+      CONSULT_OPENAI_API_KEY: "explicit-key",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "codex",
+  }, harness.deps);
+
+  try {
+    assert.equal(lease.launch.env.OPENAI_API_KEY, "explicit-key");
+    await assert.rejects(
+      fsp.access(path.join(lease.launch.env.CODEX_HOME!, "auth.json")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+  } finally {
+    await lease.release();
+  }
+});
+
+test("confined Claude launch rejects ambiguous Consult credentials before runtime startup", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      args: [],
+      cwd: fixture.workspace,
+      env: {
+        PATH: "/usr/bin:/bin",
+        CONSULT_CLAUDE_API_KEY: "api-key",
+        CONSULT_CLAUDE_OAUTH_TOKEN: "oauth-token",
+      },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "claude",
+    }, harness.deps),
+    /multiple Consult credential variables are set for confined claude Profile/u,
+  );
+  assert.deepEqual(harness.events, []);
+});
+
+test("confined launch maps a Consult credential into the vendor environment", async (t) => {
   const fixture = await makeFixture(t);
   const harness = fakeRuntime();
   const lease = await acquireConfinedSandboxRuntimeLaunch({
@@ -194,7 +248,7 @@ test("confined launch falls back to one credential environment variable", async 
     env: {
       PATH: `${fixture.bin}:/usr/bin:/bin`,
       CODEX_HOME: path.join(fixture.home, ".codex"),
-      OPENAI_API_KEY: "selected-key",
+      CONSULT_OPENAI_API_KEY: "selected-key",
     },
     workspaceRoot: fixture.workspace,
     mode: "read-only",
@@ -212,6 +266,28 @@ test("confined launch falls back to one credential environment variable", async 
   }
 });
 
+test("confined launch does not use an ambient vendor API key when no credential file exists", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      args: [],
+      cwd: fixture.workspace,
+      env: {
+        PATH: `${fixture.bin}:/usr/bin:/bin`,
+        CODEX_HOME: path.join(fixture.home, ".codex"),
+        OPENAI_API_KEY: "project-key",
+      },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "codex",
+    }, harness.deps),
+    /no staged credential or Consult credential environment variable/u,
+  );
+});
+
 test("write and fetch authority only broaden Workspace writes and public TCP/443 proxying", async (t) => {
   const fixture = await makeFixture(t);
   const harness = fakeRuntime();
@@ -222,7 +298,7 @@ test("write and fetch authority only broaden Workspace writes and public TCP/443
     env: {
       PATH: `${fixture.bin}:/usr/bin:/bin`,
       CODEX_HOME: path.join(fixture.home, ".codex"),
-      OPENAI_API_KEY: "selected-key",
+      CONSULT_OPENAI_API_KEY: "selected-key",
     },
     workspaceRoot: fixture.workspace,
     mode: "write",
@@ -250,7 +326,7 @@ test("custom and opencode confined Profiles fail before runtime or proxy startup
         authority: authority(),
         binary: "/usr/bin/true",
         cwd: fixture.workspace,
-        env: { OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
+        env: { CONSULT_OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
         workspaceRoot: fixture.workspace,
         mode: "read-only",
         profileRegistryId,
@@ -269,7 +345,7 @@ test("macOS x64 processes fail before runtime or proxy startup", async (t) => {
       authority: authority(),
       binary: "/usr/bin/true",
       cwd: fixture.workspace,
-      env: { OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
+      env: { CONSULT_OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
       workspaceRoot: fixture.workspace,
       mode: "read-only",
       profileRegistryId: "codex",
@@ -314,7 +390,7 @@ test("confined launch rejects Workspace glob metacharacters before runtime start
       cwd: workspace,
       env: {
         PATH: `${fixture.bin}:/usr/bin:/bin`,
-        OPENAI_API_KEY: "selected-key",
+        CONSULT_OPENAI_API_KEY: "selected-key",
       },
       workspaceRoot: workspace,
       mode: "read-only",
@@ -336,7 +412,7 @@ test("generated-policy rejection cleans the manager, proxy, and temporary Job ro
       env: {
         PATH: `${fixture.bin}:/usr/bin:/bin`,
         CODEX_HOME: path.join(fixture.home, ".codex"),
-        OPENAI_API_KEY: "selected-key",
+        CONSULT_OPENAI_API_KEY: "selected-key",
       },
       workspaceRoot: fixture.workspace,
       mode: "read-only",
@@ -449,7 +525,7 @@ test("dependency failures preserve actionable messages", async (t) => {
       authority: authority(),
       binary: "/usr/bin/true",
       cwd: fixture.workspace,
-      env: { OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
+      env: { CONSULT_OPENAI_API_KEY: "selected-key", PATH: "/usr/bin:/bin" },
       workspaceRoot: fixture.workspace,
       mode: "read-only",
       profileRegistryId: "codex",
@@ -486,6 +562,68 @@ test("confined claude launch rejects expired OAuth credential before runtime or 
   assert.deepEqual(harness.events, []);
 });
 
+test("confined Claude launch uses CONSULT_CLAUDE_OAUTH_TOKEN despite an expired OAuth file", async (t) => {
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const sourceCredential = path.join(fixture.home, ".claude", ".credentials.json");
+  await privateFile(
+    sourceCredential,
+    JSON.stringify({
+      claudeAiOauth: { accessToken: "REDACTED", expiresAt: now - 60_000 },
+    }),
+  );
+  const harness = fakeRuntime();
+
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: "/usr/bin:/bin",
+      CONSULT_CLAUDE_OAUTH_TOKEN: "explicit-token",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "claude",
+  }, { ...harness.deps, now: () => now });
+
+  try {
+    assert.equal(lease.launch.env.CLAUDE_CODE_OAUTH_TOKEN, "explicit-token");
+    await assert.rejects(
+      fsp.access(path.join(lease.launch.env.CLAUDE_CONFIG_DIR!, ".credentials.json")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+  } finally {
+    await lease.release();
+  }
+});
+
+test("confined Claude launch maps CONSULT_CLAUDE_API_KEY to ANTHROPIC_API_KEY", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: "/usr/bin:/bin",
+      CONSULT_CLAUDE_API_KEY: "explicit-key",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "claude",
+  }, harness.deps);
+
+  try {
+    assert.equal(lease.launch.env.ANTHROPIC_API_KEY, "explicit-key");
+    assert.equal(lease.launch.env.CONSULT_CLAUDE_API_KEY, undefined);
+  } finally {
+    await lease.release();
+  }
+});
+
 test("confined preflight surfaces a specific re-authentication remediation for expired Claude OAuth", async (t) => {
   const fixture = await makeFixture(t);
   const now = 2_000_000_000_000;
@@ -510,6 +648,7 @@ test("confined preflight surfaces a specific re-authentication remediation for e
     assert.equal(result.diagnostic.code, "AUTHORITY_PREFLIGHT_FAILED");
     assert.match(result.diagnostic.message, /Claude OAuth credential is expired/u);
     assert.match(result.diagnostic.remediation, /complete sign-in/iu);
+    assert.match(result.diagnostic.remediation, /CONSULT_CLAUDE_OAUTH_TOKEN/u);
     assert.match(result.diagnostic.remediation, /will not refresh/iu);
     assert.doesNotMatch(result.diagnostic.remediation, /consult doctor/u);
   }
@@ -534,7 +673,7 @@ test("a new confined launch sweeps an old root whose owner is gone", async (t) =
     binary: "/usr/bin/true",
     cwd: fixture.workspace,
     env: {
-      OPENAI_API_KEY: "selected-key",
+      CONSULT_OPENAI_API_KEY: "selected-key",
       PATH: `${fixture.bin}:/usr/bin:/bin`,
     },
     workspaceRoot: fixture.workspace,

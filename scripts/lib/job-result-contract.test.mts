@@ -11,6 +11,7 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       kind: "delegate",
       status: "completed",
       profile: "codex",
+      label: "parser cleanup",
       mode: "write",
       host: "terminal",
       hostSessionId: "terminal-1",
@@ -22,6 +23,7 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       effort: "high",
       afterJobIds: ["job-research", "job-review", 42 as unknown as string],
       resumeSessionId: "session-previous",
+      reviewOfJobId: "job-implementation",
       baseRef: "origin/main",
       includeDiff: true,
       isolated: true,
@@ -61,6 +63,7 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       kind: "delegate",
       status: "completed",
       profile: "codex",
+      label: "parser cleanup",
       mode: "write",
       host: "terminal",
       hostSessionId: "terminal-1",
@@ -72,6 +75,7 @@ test("job result envelope exposes a stable versioned shape without internal fiel
       effort: "high",
       afterJobIds: ["job-research", "job-review"],
       resumeSessionId: "session-previous",
+      reviewOfJobId: "job-implementation",
       baseRef: "origin/main",
       includeDiff: true,
       isolated: true,
@@ -115,8 +119,10 @@ test("job result envelope uses explicit nulls and empty artifact lists", () => {
   assert.equal(envelope.schemaVersion, 1);
   assert.equal(envelope.job.id, "job-queued");
   assert.equal(envelope.job.profile, null);
+  assert.equal(envelope.job.label, null);
   assert.equal(envelope.job.mode, null);
   assert.equal(envelope.job.includeDiff, false);
+  assert.equal(envelope.job.reviewOfJobId, null);
   assert.deepEqual(envelope.job.afterJobIds, []);
   assert.deepEqual(envelope.job.authority, {
     schemaVersion: 1,

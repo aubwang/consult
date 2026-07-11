@@ -11,7 +11,10 @@ import { createOutput } from "./output.mts";
 import type { CommandResult, OutputDeps } from "./output.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { pollUntilFinalRecord } from "./job-poll.mts";
+import { boolFlag, stringFlag } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
+
+const DEFAULT_LOG_TAIL_LINES = 20;
 
 export interface LogsDeps extends OutputDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
@@ -50,6 +53,10 @@ export async function runLogs({
   if (args.flags?.follow && args.flags?.json) {
     return { exitCode: 2, stdout: "", stderr: "--json is not supported with --follow\n" };
   }
+  const tail = resolveTailLines(args);
+  if (!tail.ok) {
+    return { exitCode: 2, stdout: "", stderr: `${tail.error}\n` };
+  }
 
   try {
     await readJobRecord(workspaceRoot, jobId, deps);
@@ -58,7 +65,7 @@ export async function runLogs({
   }
 
   if (args.flags?.follow) {
-    return await followLogs(workspaceRoot, jobId, deps);
+    return await followLogs(workspaceRoot, jobId, tail.value, deps);
   }
 
   let parsed: ParsedLog;
@@ -71,8 +78,8 @@ export async function runLogs({
   return {
     exitCode: 0,
     stdout: args.flags?.json
-      ? `${JSON.stringify(parsed.entries)}\n`
-      : renderLogEntries(parsed.entries),
+      ? `${JSON.stringify(tailEntries(parsed.entries, tail.value))}\n`
+      : tailRenderedText(renderLogEntries(parsed.entries), tail.value),
     stderr: "",
   };
 }
@@ -83,12 +90,17 @@ export async function runLogs({
 async function followLogs(
   workspaceRoot: string,
   jobId: string,
+  tailLines: number | null,
   deps: LogsDeps,
 ): Promise<CommandResult> {
   const output = createOutput(deps);
   let renderedLineCount = 0;
 
   try {
+    const initial = await readParsedLog(workspaceRoot, jobId, deps, { dropPartialTail: true });
+    const initialText = tailRenderedText(renderLogEntries(initial.entries), tailLines);
+    if (initialText) output.stdout(initialText);
+    renderedLineCount = initial.entries.length;
     await pollUntilFinalRecord({
       readRecord: () => readJobRecord(workspaceRoot, jobId, deps),
       onRecord: async () => {
@@ -135,7 +147,8 @@ async function appendNewLogText(
   output: { stdout(text: string): void },
 ): Promise<number> {
   const parsed = await readParsedLog(workspaceRoot, jobId, deps, { dropPartialTail: true });
-  output.stdout(renderLogEntries(parsed.entries.slice(renderedLineCount)));
+  const newText = renderLogEntries(parsed.entries.slice(renderedLineCount));
+  if (newText) output.stdout(newText);
   return parsed.entries.length;
 }
 
@@ -211,6 +224,41 @@ function renderLogEntry(entry: unknown): string {
     return renderSessionUpdate((entry as { params?: unknown }).params as never);
   }
   return renderSessionUpdate(entry as never);
+}
+
+function resolveTailLines(args: ParsedArgs):
+  | { ok: true; value: number | null }
+  | { ok: false; error: string } {
+  if (boolFlag(args.flags?.all)) {
+    if (args.flags?.tail !== undefined) {
+      return { ok: false, error: "--all and --tail are mutually exclusive" };
+    }
+    return { ok: true, value: null };
+  }
+  if (args.flags?.tail === undefined) {
+    return { ok: true, value: DEFAULT_LOG_TAIL_LINES };
+  }
+  const raw = stringFlag(args.flags.tail);
+  const value = raw === undefined ? Number.NaN : Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    return { ok: false, error: "--tail must be a non-negative integer" };
+  }
+  return { ok: true, value };
+}
+
+function tailRenderedText(text: string, lineCount: number | null): string {
+  if (lineCount === null || text === "") return text;
+  if (lineCount === 0) return "";
+  const endsWithNewline = text.endsWith("\n");
+  const lines = (endsWithNewline ? text.slice(0, -1) : text).split("\n");
+  const tailed = lines.slice(-lineCount).join("\n");
+  return endsWithNewline ? `${tailed}\n` : tailed;
+}
+
+function tailEntries(entries: unknown[], lineCount: number | null): unknown[] {
+  if (lineCount === null) return entries;
+  if (lineCount === 0) return [];
+  return entries.slice(-lineCount);
 }
 
 function logReadErrorResult(error: unknown): CommandResult {

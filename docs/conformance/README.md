@@ -73,7 +73,7 @@ or a stageable credential file without printing the token:
 
 ```sh
 test -f "$HOME/.claude/.credentials.json" || \
-  test -n "${ANTHROPIC_API_KEY:-}${ANTHROPIC_AUTH_TOKEN:-}${CLAUDE_CODE_OAUTH_TOKEN:-}"
+  test -n "${CONSULT_CLAUDE_API_KEY:-}${CONSULT_CLAUDE_OAUTH_TOKEN:-}"
 ```
 
 Keychain-only login is insufficient. The same prerequisite must be present in
@@ -164,8 +164,9 @@ Both codex and claude shapes are unit-tested in `scripts/consult-broker.test.mts
 The historical cooperative ACP/backstop results above are not hard boundaries by
 themselves. Current `delegate` and `review` requests default to canonical
 read-only confined Job Authority. Built-in Codex and Claude launches receive a
-private Job home/temp directory, a copied credential file or one selected
-credential environment variable, Workspace access according to mode, and no
+private Job home/temp directory, one Profile-specific Consult credential
+variable when supplied or otherwise a copied credential file, Workspace access
+according to mode, and no
 direct network. Model traffic uses an authenticated pinned-address proxy;
 `--allow-fetch` deliberately broadens it to public TCP/443. That supports normal
 HTTPS clients, but the proxy does not terminate TLS or prove the tunneled

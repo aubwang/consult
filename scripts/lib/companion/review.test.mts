@@ -9,7 +9,7 @@ test("review with codex profile calls the codex adapter", async () => {
   let adapterArgs: Record<string, unknown> | undefined;
   let diffCalls = 0;
   const result = await runReview({
-    args: { positional: [], flags: { agent: "codex" } },
+    args: { positional: [], flags: { agent: "codex", label: "security review" } },
     env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
     deps: quietDeps({
       resolveWorkspaceRoot: async () => "/workspace",
@@ -33,6 +33,7 @@ test("review with codex profile calls the codex adapter", async () => {
   assert.equal(adapterArgs?.host, "claude-code");
   assert.equal(adapterArgs?.hostSessionId, "claude-1");
   assert.equal(adapterArgs?.kind, "review");
+  assert.equal(adapterArgs?.label, "security review");
   assert.equal(adapterArgs?.diff, "pinned diff");
   assert.equal(diffCalls, 1);
 });
@@ -91,6 +92,156 @@ test("review with a Profile lacking native review runs a read-only pinned-diff J
   assert.equal(queued.mode, "read-only");
   assert.equal(queued.includeDiff, true);
   assert.equal((queued.prompt as string).includes("diff --git"), false);
+});
+
+test("review --job reviews a completed isolated Job artifact without reading the Host diff", async () => {
+  const client = new FakeBrokerClient();
+  const writtenRecords: Array<Record<string, unknown>> = [];
+  let diffCalls = 0;
+  const resultPromise = runReview({
+    args: {
+      positional: [],
+      flags: { agent: "claude", job: "job-implementation", label: "artifact review" },
+    },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      readJobRecord: async () => ({
+        jobId: "job-implementation",
+        label: "parser cleanup",
+        kind: "delegate",
+        status: "completed",
+        isolated: true,
+        prompt: "Implement the parser cleanup and test it.",
+        finalText: "Status: DONE\nEvidence: focused tests pass.",
+        patchPath: "/state/job-implementation/changes.patch",
+        touchedFiles: ["src/parser.ts", "src/parser.test.ts"],
+      }),
+      readArtifact: async () => "diff --git a/src/parser.ts b/src/parser.ts\n+fixed();\n",
+      getDiff: async () => {
+        diffCalls += 1;
+        return "wrong diff";
+      },
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-artifact-review",
+      writeJobRecord: async (_workspaceRoot, _jobId, record) => {
+        writtenRecords.push(structuredClone(record));
+      },
+      appendLogLine: async () => {},
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-artifact-review",
+    stopReason: "end_turn",
+    sessionId: "session-review",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(diffCalls, 0);
+  assert.equal(writtenRecords.at(0)?.reviewOfJobId, "job-implementation");
+  assert.equal(writtenRecords.at(0)?.label, "artifact review");
+  assert.match(request.params.prompt as string, /Implement the parser cleanup and test it\./u);
+  assert.match(request.params.prompt as string, /Status: DONE/u);
+  assert.match(request.params.prompt as string, /src\/parser\.test\.ts/u);
+  assert.match(request.params.prompt as string, /\+fixed\(\);/u);
+  assert.match(request.params.prompt as string, /UNTRUSTED CODE\/DATA/u);
+});
+
+test("review --job rejects incompatible sources before artifact or Profile execution", async () => {
+  let artifactRead = false;
+  const result = await runReview({
+    args: { positional: [], flags: { agent: "claude", job: "job-in-place" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      readJobRecord: async () => ({
+        jobId: "job-in-place",
+        status: "completed",
+        isolated: false,
+      }),
+      readArtifact: async () => {
+        artifactRead = true;
+        return "unexpected";
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /requires an isolated write Job/u);
+  assert.equal(artifactRead, false);
+});
+
+test("review --job rejects a patch path outside Consult-owned Job state", async () => {
+  const result = await runReview({
+    args: { positional: [], flags: { agent: "claude", job: "job-tampered" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => process.cwd(),
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      readJobRecord: async () => ({
+        jobId: "job-tampered",
+        status: "completed",
+        isolated: true,
+        patchPath: "/etc/passwd",
+      }),
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /does not match Consult-owned isolated Job state/u);
+});
+
+test("review --job preflights authority before reading its patch artifact", async () => {
+  let artifactRead = false;
+  const result = await runReview({
+    args: { positional: [], flags: { agent: "claude", job: "job-isolated" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      readJobRecord: async () => ({
+        jobId: "job-isolated",
+        status: "completed",
+        isolated: true,
+        patchPath: "/state/changes.patch",
+      }),
+      preflightAuthority: async () => ({
+        ok: false,
+        diagnostic: {
+          code: "AUTHORITY_PREFLIGHT_FAILED",
+          message: "review confinement unavailable",
+          remediation: "Run Doctor.",
+        },
+      }),
+      readArtifact: async () => {
+        artifactRead = true;
+        return "unexpected";
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(artifactRead, false);
+  assert.match(result.stderr, /review confinement unavailable/u);
+});
+
+test("review rejects combining --job with --base before Workspace discovery", async () => {
+  const result = await runReview({
+    args: { positional: [], flags: { job: "job-one", base: "main" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--job and --base are mutually exclusive\n");
 });
 
 test("generic review pins the requested base and records its metadata", async () => {

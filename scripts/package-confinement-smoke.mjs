@@ -234,6 +234,9 @@ async function createHarness(binary, temporaryRoot, installer, profile) {
     HOME: home,
     CONSULT_DATA_DIR: data,
     CONSULT_PACKAGE_SECRET: "must-not-reach-profile",
+    CONSULT_OPENAI_API_KEY: undefined,
+    CONSULT_CLAUDE_API_KEY: undefined,
+    CONSULT_CLAUDE_OAUTH_TOKEN: undefined,
     ...profileEnv,
     PATH: [fakeBin, path.dirname(process.execPath), process.env.PATH]
       .filter(Boolean)

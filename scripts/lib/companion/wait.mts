@@ -15,6 +15,7 @@ import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspac
 import { runCancel } from "./cancel.mts";
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 import type { CommandResult } from "./output.mts";
+import { briefText } from "./brief-text.mts";
 
 export interface WaitDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
@@ -58,9 +59,12 @@ export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<
 }
 
 export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<CommandResult> {
-  const unsupported = unsupportedFlagError(args.flags, ["json", "keep-running"]);
+  const unsupported = unsupportedFlagError(args.flags, ["json", "summary", "keep-running"]);
   if (unsupported) {
     return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  if (boolFlag(args.flags?.summary) && boolFlag(args.flags?.json)) {
+    return { exitCode: 2, stdout: "", stderr: "--summary is not supported with --json\n" };
   }
   const jobIds = [...new Set(args.positional ?? [])];
   if (jobIds.length === 0) {
@@ -126,7 +130,9 @@ export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<Comm
   }
   return {
     exitCode: 0,
-    stdout: renderWaitResults(payloads),
+    stdout: boolFlag(args.flags?.summary)
+      ? renderWaitSummaries(payloads)
+      : renderWaitResults(payloads),
     stderr: "",
   };
 }
@@ -208,4 +214,25 @@ function renderWaitResults(payloads: ReturnType<typeof jobResultPayload>[]): str
       ].join("\n");
     })
     .join("\n\n")}\n`;
+}
+
+function renderWaitSummaries(payloads: ReturnType<typeof jobResultPayload>[]): string {
+  return `${payloads
+    .map((payload) => {
+      const detail = payload.outcome.finalText
+        ? `result: ${briefText(payload.outcome.finalText)}`
+        : payload.outcome.errorMessage
+          ? `error: ${briefText(payload.outcome.errorMessage)}`
+          : null;
+      const fields = [
+        `${payload.job.id}${payload.job.label ? ` [${payload.job.label}]` : ""} ${payload.job.status}`,
+        detail,
+        payload.artifacts.patchPath ? `patch: ${payload.artifacts.patchPath}` : null,
+        payload.artifacts.touchedFilesPath
+          ? `files: ${payload.artifacts.touchedFilesPath}`
+          : null,
+      ].filter((field): field is string => field !== null);
+      return fields.join(" | ");
+    })
+    .join("\n")}\n`;
 }
