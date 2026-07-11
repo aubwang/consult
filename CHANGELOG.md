@@ -6,9 +6,7 @@
 ### Bug Fixes
 
 * harden delegation cleanup and improve onboarding ([55bda77](https://github.com/aubwang/consult/commit/55bda77baf209d497239daeb6605bd2b35265b91))
-* improve delegation reliability and onboarding ([c1e22c2](https://github.com/aubwang/consult/commit/c1e22c2de1fb497d26ef94210f0757490b39cece))
 * retry transient package smoke cleanup races ([855411c](https://github.com/aubwang/consult/commit/855411cb40cb0ac154f73e36747db5d635134823))
-* retry transient package smoke cleanup races ([eb1e695](https://github.com/aubwang/consult/commit/eb1e695cc520b586a3edc7b22b9625190646a530))
 
 ## [0.2.0](https://github.com/aubwang/consult/compare/v0.1.3...v0.2.0) (2026-07-11)
 
