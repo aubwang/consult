@@ -52,9 +52,13 @@ passed. The harness emitted the following redacted evidence:
 {"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"terminal-or-explicit","agent":"claude","expectation":"ready","direct":{"ok":true,"markerMatched":true,"stopReason":"end_turn"},"doctor":{"exitCode":0,"selectedProfile":"claude","profileRegistryId":"claude","confinedReady":true,"diagnostic":null},"turn":{"jobId":"[redacted]","status":"completed","model":null,"stopReason":"end_turn","sourceAcknowledged":true,"sessionStateArchived":true,"resumedJobId":"[redacted]","restoredSecretMatched":true},"background":{"jobId":"[redacted]","queued":true,"completed":true,"resultMatched":true,"sessionStateArchived":true}}
 ```
 
-The normally sandboxed Codex Host control for the Claude Profile remains to be
-run from a separate sandboxed task with the supported Claude credential token
-present in that task's launch environment.
+The normally sandboxed Codex Host control for the Claude Profile also passed
+from a separate `workspace-write` Codex task with the supported credential
+token present only in that task's launch environment:
+
+```json
+{"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"claude","expectation":"unsupported","direct":null,"doctor":{"exitCode":1,"selectedProfile":"claude","profileRegistryId":"claude","confinedReady":false,"diagnostic":{"code":"AUTHORITY_PREFLIGHT_FAILED","message":"confined authority preflight failed: listen EPERM: operation not permitted 127.0.0.1","remediation":"Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created."}},"turn":null,"background":null}
+```
 
 The deterministic packed npm Codex and Claude matrices and Bun Doctor controls
 also passed with Homebrew Node 24.18.0. The real Claude controls used an
