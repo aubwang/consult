@@ -3,6 +3,7 @@ name: consult-runtime
 description: Internal contract for the Consult CLI and Broker handoff.
 metadata:
   "consult.disable-model-invocation": "true"
+  internal: true
 ---
 
 # Consult Runtime
