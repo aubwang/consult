@@ -459,6 +459,63 @@ test("dependency failures preserve actionable messages", async (t) => {
   assert.deepEqual(harness.events, []);
 });
 
+test("confined claude launch rejects expired OAuth credential before runtime or proxy startup", async (t) => {
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const sourceCredential = path.join(fixture.home, ".claude", ".credentials.json");
+  await privateFile(
+    sourceCredential,
+    JSON.stringify({
+      claudeAiOauth: { accessToken: "REDACTED", expiresAt: now - 60_000 },
+    }),
+  );
+  const harness = fakeRuntime();
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      args: [],
+      cwd: fixture.workspace,
+      env: { PATH: "/usr/bin:/bin" },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "claude",
+    }, { ...harness.deps, now: () => now }),
+    /Claude OAuth credential is expired/u,
+  );
+  assert.deepEqual(harness.events, []);
+});
+
+test("confined preflight surfaces a specific re-authentication remediation for expired Claude OAuth", async (t) => {
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const sourceCredential = path.join(fixture.home, ".claude", ".credentials.json");
+  await privateFile(
+    sourceCredential,
+    JSON.stringify({
+      claudeAiOauth: { accessToken: "REDACTED", expiresAt: now - 60_000 },
+    }),
+  );
+  const harness = fakeRuntime();
+  const result = await probeConfinedSandboxRuntime({
+    authority: authority(),
+    workspaceRoot: fixture.workspace,
+    profile: "claude",
+    profileRegistryId: "claude",
+    profileLaunch: { binary: "/usr/bin/true", args: [], env: {} },
+  }, { ...harness.deps, now: () => now });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.code, "AUTHORITY_PREFLIGHT_FAILED");
+    assert.match(result.diagnostic.message, /Claude OAuth credential is expired/u);
+    assert.match(result.diagnostic.remediation, /complete sign-in/iu);
+    assert.match(result.diagnostic.remediation, /will not refresh/iu);
+    assert.doesNotMatch(result.diagnostic.remediation, /consult doctor/u);
+  }
+  assert.deepEqual(harness.events, []);
+});
+
 test("a new confined launch sweeps an old root whose owner is gone", async (t) => {
   const fixture = await makeFixture(t);
   const staleRoot = await fsp.mkdtemp("/tmp/consult-srt-job-stale-");
