@@ -13,17 +13,20 @@ stays in charge while Consult runs the delegated agent behind a common CLI.
 
 ```text
 ┌──────────────────────────────┐
-│ Your current Host            │
-│ Codex / Claude Code /        │
-│ opencode                     │
+│ Your Host agent              │
+│ Codex                        │
 └──────────────┬───────────────┘
-               │ consult delegate
-               ▼
-┌──────────────────────────────┐
-│ The subagent you choose      │
-│ Claude Code / Codex /        │
-│ opencode                     │
-└──────────────────────────────┘
+               │
+          consult delegate
+               │
+               ├──▶ Claude Code · Haiku
+               │    Fast research
+               │
+               ├──▶ Codex · GPT
+               │    Focused implementation
+               │
+               └──▶ opencode · Grok
+                    Independent second opinion
 ```
 
 Keep a strong model in the driver's seat while cheaper or faster models handle
