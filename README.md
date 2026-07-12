@@ -1,95 +1,138 @@
 # Consult
 
-**One CLI for your coding agent to delegate to other coding agents.**
+**Cross-agent delegation that returns the result, not the working context.**
 
-Consult lets Codex, Claude Code, opencode, or a terminal call in the right
-subagent for a task. It uses the agent installations and authentication you
-already have—no Consult plugin, second agent stack, or new set of accounts.
+Long implementation threads consume the same context your strongest model
+needs for decomposition, review, and product decisions. Consult gives that
+model a boundary: hand one cold, self-contained Job to another coding agent,
+then bring back the answer, review, or patch artifact.
 
-In concrete terms: **while you are working inside Codex, Claude Code, or opencode, your current agent can invoke any of the others as a subagent and use the result in the same session.** The spawning agent stays in charge while Consult runs the selected agent behind one common CLI.
+Codex, Claude Code, opencode, and a plain terminal can all use the same CLI.
+Consult reuses the agent installations and authentication you already have,
+while keeping each Job's read, write, and network authority explicit. No new
+agent platform or second set of accounts.
 
-```text
-┌──────────────────────────────┐
-│ Your Host agent              │
-│ Codex                        │
-└──────────────┬───────────────┘
-               │
-          consult delegate
-               │
-               ├──▶ Claude Code · Haiku
-               │    Fast research
-               │
-               ├──▶ Codex · GPT
-               │    Focused implementation
-               │
-               └──▶ opencode · Grok
-                    Independent second opinion
+## Try one Job
+
+Install Consult, configure one Profile, and delegate from any Git repository:
+
+```sh
+$ npm install --global @aubwang/consult
+$ consult setup --install claude
+$ consult doctor --agent claude
+
+$ consult delegate --agent claude --read-only --background \
+  --label "retry inspection" -- \
+  "Inspect the retry logic in scripts/. Return likely failure modes with file paths."
+consult delegate job-a1b2 queued
+consult status job-a1b2
+
+$ consult wait --summary job-a1b2
+job-a1b2 [retry inspection] completed | result: Found a cleanup race after cancellation.
 ```
 
-Keep a strong model in the driver's seat while cheaper or faster models handle
-focused work. Run specialists in parallel, bring in a different agent when you
-want another perspective, and keep control of what each one can read, change,
-or fetch.
+The Profile starts cold. It receives the prompt, repository instructions, and
+the Job Authority—not the Host's conversation. The bounded wait returns a result
+preview while tool activity stays in the Job log; `consult result job-a1b2`
+retrieves the full final answer when the Host needs it.
 
 ## Why Consult?
 
-- **Use any configured agent from any Host.** The same command works from
-  Codex, Claude Code, opencode, and an ordinary shell.
-- **Route work instead of paying one model to do everything.** Send routine
-  investigation to a fast model and save heavyweight models for the decisions
-  that need them.
-- **Get a genuinely different second opinion.** Ask Claude to review Codex's
-  patch, or have Codex challenge an opencode investigation.
-- **Keep the spawning agent in control.** Delegates default to read-only. The
-  Host can opt into isolated writes, public-web research, background work,
-  cancellation, or resume.
-- **Know what happened.** Each delegated turn has a durable status, log, result,
-  and—when it writes—an optional patch artifact.
-- **Chain predictable work without babysitting it.** Let cheap research Jobs
-  feed a later synthesis Job, then wait once for the finished pipeline.
+- **Keep working detail out of the Host context.** Profiles receive cold,
+  self-contained prompts. The Host can collect bounded summaries, final
+  answers, or patch artifacts without importing the delegate's tool transcript.
+- **Cross agent boundaries without replacing your stack.** Invoke Claude from
+  Codex, Codex from Claude Code, or either from opencode using the local agents
+  and authentication you already configured.
+- **Send authority with the Job.** Delegation defaults to read-only. Writes,
+  transactional isolated worktrees, public-web research, and ambient authority
+  inheritance are separate, explicit choices.
+- **Review work without pulling it through the orchestrator.** One Profile can
+  implement in a disposable worktree and another can review the resulting
+  Consult-owned patch by Job id. The Host receives the review, not the diff.
+- **Run orchestration as durable work.** Background Jobs have status, logs,
+  results, cancellation, dependencies, and resume. Wait once for known work
+  instead of spending model turns polling it.
+- **Route by capability, speed, or cost when useful.** Keep the strongest model
+  on the decisions that need it and hand well-scoped work to another Profile.
 
 Consult is deliberately a CLI, not another agent platform. If your coding agent
 can run a command, it can use Consult.
 
+## How the boundary works
+
+The invoking environment is the **Host**. A configured coding agent is a
+**Profile**. Each delegation creates one durable **Job** for one prompt turn.
+Built-in Claude and Codex Profiles support Consult-managed confinement;
+opencode currently requires explicit `--sandbox inherit`.
+
+```text
+┌──────────────────────────────┐
+│ Host context                 │
+│ Decisions and decomposition  │
+└──────────────┬───────────────┘
+               │  cold prompt + Job Authority
+        ┌──────┼──────┐
+        ▼      ▼      ▼
+     Claude  Codex  opencode
+        │      │      │
+        └──────┼──────┘
+               │  result, review, or patch artifact
+               ▼
+┌──────────────────────────────┐
+│ Host context                 │
+│ Integration and decisions    │
+└──────────────────────────────┘
+```
+
+Cold does not mean context-free: the Host is responsible for naming the
+relevant paths, constraints, and acceptance checks. That prompt-writing cost is
+the tradeoff for a deliberate context boundary. Consult provides bounded
+inspection and artifact surfaces, but the Host must choose them; foreground
+delegation deliberately streams progress.
+
 ## A delegated session
 
-Suppose a Host agent is tracking down a flaky test. It can split the work
-without sharing its entire conversation with every subagent:
+Suppose a Host is tracking down a flaky test. It can split investigation and
+implementation without sharing its conversation with either Profile:
 
 ```sh
-# A fast model traces the failure while another agent works on a fix.
+# A fast Profile traces the failure while another works on a fix.
 $ consult delegate --agent claude --model haiku --read-only --background -- \
     "Trace the flaky cancellation tests. Return likely causes with file paths."
 consult delegate job-a1b2 queued
+consult status job-a1b2
 
-$ consult delegate --agent codex --model gpt-5.4-mini \
-    --write --isolated --background -- \
+$ consult delegate --agent codex --write --isolated --background -- \
     "Reproduce the cancellation race, add a regression test, and fix it."
 consult delegate job-c3d4 queued
+consult status job-c3d4
 
-$ consult wait job-a1b2 job-c3d4
-job-a1b2 completed
-Found a cleanup race after cancellation acknowledgement.
+$ consult wait --summary job-a1b2 job-c3d4
+job-a1b2 completed | result: Found a cleanup race after cancellation acknowledgement.
+job-c3d4 completed | result: Added a regression test and fixed the cancellation race.
 
-job-c3d4 completed
-Added a regression test and fixed the cancellation cleanup race.
-
-# Before accepting the patch, call in a heavyweight second opinion.
-$ consult delegate --agent claude --model opus --read-only --include-diff -- \
-    "Review this fix. Look for lifecycle gaps and tests that can pass falsely."
+# Review the isolated patch without loading it into the Host context.
+$ consult review --agent claude --job job-c3d4
+No findings. The regression test exercises the cancellation boundary.
 ```
 
-The Host remains the orchestrator. Each subagent receives one cold,
-self-contained prompt, does its part, and returns a result the Host can inspect
-or combine with the others.
+The Host remains the orchestrator: it decomposes the work, chooses each
+Profile and Job Authority, then decides what to accept.
 
-## Get started
+## Setup details
 
-Consult requires Node.js 24 or newer, and is supported on Linux and Apple Silicon (M-Series) macOS devices
+Consult requires Node.js 24 or newer. Native support covers Linux and Apple
+Silicon macOS.
+
+Global npm installs go under the active runtime's `npm prefix --global`.
+If the machine has Homebrew, nvm, mise, or another Node manager, install and
+update Consult through one chosen global prefix; otherwise multiple `consult`
+executables can shadow one another on `PATH`. Use `type -a consult` and
+`npm prefix --global` to diagnose this. See [Installation](docs/INSTALL.md) for
+details.
 
 ```sh
-npm install --global @aubwang/consult
-
 consult setup
 consult setup --install claude
 consult setup --install codex
@@ -135,8 +178,8 @@ Install them for the current project with the standard Skills CLI:
 npx skills add aubwang/consult
 ```
 
-The installer asks which Consult skill and detected coding agent to use. To
-make your selection available across projects instead, add `--global`:
+The package exposes the four skill folders above. To make a selected skill
+available across projects instead, add `--global`:
 
 ```sh
 npx skills add aubwang/consult --global
@@ -231,7 +274,7 @@ public-web access are explicit grants. Consult never silently falls back to the
 Host's ambient authority.
 
 Confinement narrows filesystem and network access; it does not make untrusted
-content harmless. OpenCode and custom Profiles currently require explicit
+content harmless. opencode and custom Profiles currently require explicit
 inheritance, and native Windows and Intel macOS are unsupported. See
 [Job Authority](docs/USAGE.md#job-authority) for the full boundary and the
 [conformance reports](docs/conformance/README.md) for the tested matrix.
