@@ -327,10 +327,13 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     });
 
     const executableScopes = [
-      ...executableReadScopes(require.resolve("@anthropic-ai/sandbox-runtime")),
-      ...executableReadScopes(resolvedBinary),
+      ...runtimeExecutableReadScopes(
+        require.resolve("@anthropic-ai/sandbox-runtime"),
+        platform,
+      ),
+      ...runtimeExecutableReadScopes(resolvedBinary, platform),
       ...[...runtimeExecutables.values()].flatMap((executable) =>
-        executableReadScopes(executable),
+        runtimeExecutableReadScopes(executable, platform),
       ),
     ];
     const readPaths = existingPaths([
@@ -821,6 +824,32 @@ export function executableReadScopes(
   return [...scopes];
 }
 
+export function linuxExecutableReadScopes(
+  executable: string,
+  linkedRuntimePaths: readonly string[] = linkedElfRuntimePaths(executable),
+): string[] {
+  const scopes = new Set(executableReadScopes(executable, []));
+  const inspectedPaths: string[] = [];
+  for (const dependency of linkedRuntimePaths) {
+    scopes.add(dependency);
+    addSymlinkAncestorScopes(scopes, dependency);
+    const canonical = fs.realpathSync(dependency);
+    inspectedPaths.push(dependency, canonical);
+    addExecutableReadScopes(scopes, canonical);
+  }
+  addHomebrewOpenSslDataReadScopes(scopes, inspectedPaths);
+  return [...scopes];
+}
+
+function runtimeExecutableReadScopes(
+  executable: string,
+  platform: SupportedPlatform,
+): string[] {
+  return platform === "linux"
+    ? linuxExecutableReadScopes(executable)
+    : executableReadScopes(executable);
+}
+
 function addHomebrewOpenSslDataReadScopes(
   scopes: Set<string>,
   linkedRuntimePaths: readonly string[],
@@ -906,6 +935,55 @@ function linkedMachORuntimePaths(executable: string): string[] {
   return [...linked];
 }
 
+function linkedElfRuntimePaths(executable: string): string[] {
+  if (!isElf(executable)) return [];
+  const ldd = ["/usr/bin/ldd", "/bin/ldd"].find((candidate) => {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!ldd) {
+    throw new Error(`failed to inspect linked runtime dependencies for ${executable}: ldd not found`);
+  }
+  let output: string;
+  try {
+    // Confined Profile executables are trusted Host configuration. ldd is used
+    // only before sandbox launch to resolve their exact runtime closure.
+    output = execFileSync(ldd, [executable], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      timeout: 5_000,
+    });
+  } catch (error) {
+    const detail = [
+      (error as { stdout?: unknown }).stdout,
+      (error as { stderr?: unknown }).stderr,
+    ].filter((value): value is string => typeof value === "string").join("\n");
+    if (/not a dynamic executable|statically linked/iu.test(detail)) return [];
+    throw new Error(`failed to inspect linked runtime dependencies for ${executable}`);
+  }
+  return parseLinuxLddPaths(output);
+}
+
+export function parseLinuxLddPaths(output: string): string[] {
+  const dependencies = new Set<string>();
+  for (const rawLine of output.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    const arrow = /^(.*?)\s+=>\s+(.*?)\s+\(0x[0-9a-f]+\)$/iu.exec(line);
+    if (arrow) {
+      if (path.isAbsolute(arrow[1])) dependencies.add(path.resolve(arrow[1]));
+      if (path.isAbsolute(arrow[2])) dependencies.add(path.resolve(arrow[2]));
+      continue;
+    }
+    const direct = /^(.*?)\s+\(0x[0-9a-f]+\)$/iu.exec(line);
+    if (direct && path.isAbsolute(direct[1])) dependencies.add(path.resolve(direct[1]));
+  }
+  return [...dependencies];
+}
+
 function addSymlinkAncestorScopes(scopes: Set<string>, candidate: string): void {
   const segments = candidate.split(path.sep);
   let current = path.parse(candidate).root;
@@ -936,6 +1014,17 @@ function isMachO(candidate: string): boolean {
       "cafebabf",
       "bfbafeca",
     ]).has(magic.toString("hex"));
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
+function isElf(candidate: string): boolean {
+  const handle = fs.openSync(candidate, "r");
+  try {
+    const magic = Buffer.alloc(4);
+    return fs.readSync(handle, magic, 0, magic.length, 0) === magic.length &&
+      magic.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
   } finally {
     fs.closeSync(handle);
   }
