@@ -46,6 +46,17 @@ test("Codex registry entry installs the current ACP shim", async () => {
   assert.equal(codex.install.version, "v0.16.0");
 });
 
+test("Claude registry entry installs the maintained ACP package", async () => {
+  const registry = await loadRegistry();
+  const claude = findRegistryEntry(registry, "claude")!;
+
+  assert.equal(claude.install.type, "npm");
+  assert.equal(
+    claude.install.cmd,
+    "npm install -g @agentclientprotocol/claude-agent-acp",
+  );
+});
+
 test("loadRegistry returns non-empty notes for every shipped registry entry", async () => {
   const registry = await loadRegistry();
 

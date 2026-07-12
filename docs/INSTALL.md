@@ -57,6 +57,31 @@ This installs the `consult` command and its JavaScript runtime dependencies.
 Re-run the same command to update to the latest published release. Linux system
 prerequisites are installed separately as described above.
 
+### Choose one global npm prefix
+
+Global npm packages belong to the Node runtime that installed them. Homebrew,
+nvm, mise, and system Node can each have a different global prefix, so running
+`npm install --global` under more than one runtime can create several
+`consult` executables with different versions.
+
+Before installing or updating, check the selected prefix:
+
+```sh
+npm prefix --global
+type -a consult
+```
+
+Use one prefix consistently for global developer CLIs. For example, a machine
+that uses Homebrew Node as its default should install and update Consult with
+that npm. Keep version managers such as nvm for project-specific runtimes, and
+avoid installing global CLIs while a project Node version is active.
+
+If duplicates already exist, update the copy under the chosen prefix, remove
+the redundant npm-global package from the other prefix, start a fresh shell,
+and verify `type -a consult` again. Consult is an npm package even when the
+chosen Node/npm installation lives under a Homebrew directory; it is not
+installed as a Homebrew formula.
+
 To develop Consult itself, clone the repository and link the checkout. Bun owns
 the development lockfile and package installation; Node still executes the CLI
 and tests:

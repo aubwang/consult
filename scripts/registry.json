@@ -23,7 +23,7 @@
       "notes": "Uses the Claude Code CLI's auth under the hood. Run `claude /login` first, or set CONSULT_CLAUDE_API_KEY or CONSULT_CLAUDE_OAUTH_TOKEN.",
       "binary": "claude-agent-acp",
       "args": [],
-      "install": { "type": "npm", "cmd": "npm install -g @zed-industries/claude-agent-acp" },
+      "install": { "type": "npm", "cmd": "npm install -g @agentclientprotocol/claude-agent-acp" },
       "supports": { "resume": true, "load": true }
     },
     {
