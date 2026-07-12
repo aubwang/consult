@@ -13,6 +13,8 @@ import {
   MACOS_READ_PATHS,
   acquireConfinedSandboxRuntimeLaunch,
   executableReadScopes,
+  linuxExecutableReadScopes,
+  parseLinuxLddPaths,
   probeConfinedSandboxRuntime,
 } from "./sandbox-runtime-launch.mts";
 
@@ -96,6 +98,64 @@ test("macOS x64 Homebrew scopes do not widen to /usr/local", () => {
   assert.equal(scopes.includes("/usr/local"), false);
   assert.equal(scopes.includes("/usr/local/Cellar"), false);
   assert.equal(scopes.includes("/usr/local/opt"), false);
+});
+
+test("Linux executable scopes include exact Homebrew ELF dependencies without broad roots", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-linuxbrew-scopes-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const nodePackage = path.join(root, "Cellar", "node", "26.5.0");
+  const zlibPackage = path.join(root, "Cellar", "zlib-ng-compat", "2.2.4");
+  const glibcPackage = path.join(root, "Cellar", "glibc", "2.39");
+  const executable = path.join(nodePackage, "bin", "node");
+  const zlib = path.join(zlibPackage, "lib", "libz.so.1.3");
+  const zlibAlias = path.join(root, "opt", "zlib-ng-compat");
+  const zlibSoname = path.join(zlibAlias, "lib", "libz.so.1");
+  const loader = path.join(glibcPackage, "lib", "ld-linux-x86-64.so.2");
+  const loaderAlias = path.join(root, "lib", "ld.so");
+  await Promise.all([
+    fsp.mkdir(path.dirname(executable), { recursive: true }),
+    fsp.mkdir(path.dirname(zlib), { recursive: true }),
+    fsp.mkdir(path.dirname(loader), { recursive: true }),
+    fsp.mkdir(path.join(root, "opt"), { recursive: true }),
+    fsp.mkdir(path.join(root, "lib"), { recursive: true }),
+  ]);
+  await Promise.all([
+    fsp.writeFile(executable, ""),
+    fsp.writeFile(zlib, ""),
+    fsp.writeFile(loader, ""),
+    fsp.symlink(zlibPackage, zlibAlias),
+    fsp.symlink("libz.so.1.3", path.join(zlibPackage, "lib", "libz.so.1")),
+    fsp.symlink(path.relative(path.dirname(loaderAlias), loader), loaderAlias),
+  ]);
+
+  const scopes = linuxExecutableReadScopes(executable, [zlibSoname, loaderAlias]);
+
+  assert.ok(scopes.includes(nodePackage));
+  assert.ok(scopes.includes(zlibSoname));
+  assert.ok(scopes.includes(zlibAlias));
+  assert.ok(scopes.includes(zlibPackage));
+  assert.ok(scopes.includes(loaderAlias));
+  assert.ok(scopes.includes(glibcPackage));
+  assert.equal(scopes.includes(root), false);
+  assert.equal(scopes.includes(path.join(root, "Cellar")), false);
+  assert.equal(scopes.includes(path.join(root, "opt")), false);
+  assert.equal(scopes.includes(path.join(root, "lib")), false);
+});
+
+test("Linux ldd parsing keeps only absolute dependency paths", () => {
+  assert.deepEqual(parseLinuxLddPaths(`
+linux-vdso.so.1 (0x00007fff)
+libnode.so.147 => /home/linuxbrew/.linuxbrew/Cellar/node/26.5.0/lib/libnode.so.147 (0x1)
+libnode-dot.so => /home/linuxbrew/.linuxbrew/Cellar/node/26.5.0/bin/../lib/libnode-dot.so (0x1)
+libmissing.so => not found
+/home/linuxbrew/.linuxbrew/lib/ld.so => /lib64/ld-linux-x86-64.so.2 (0x2)
+statically linked
+`), [
+    "/home/linuxbrew/.linuxbrew/Cellar/node/26.5.0/lib/libnode.so.147",
+    "/home/linuxbrew/.linuxbrew/Cellar/node/26.5.0/lib/libnode-dot.so",
+    "/home/linuxbrew/.linuxbrew/lib/ld.so",
+    "/lib64/ld-linux-x86-64.so.2",
+  ]);
 });
 
 test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient", async (t) => {
