@@ -442,6 +442,76 @@ test("cancel marks an active job cancelled when the broker is unreachable", asyn
   assert.equal(record.completedAt, "2026-05-14T10:01:00.000Z");
 });
 
+test("cancel re-reads before writing and preserves a concurrently stamped worker pid", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-cancel-race",
+    status: "queued",
+    profile: "codex",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+  });
+  const terminated: number[] = [];
+
+  const result = await runCancel({
+    args: { positional: ["job-cancel-race"], flags: {} },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      connectBrokerSession: async () => {
+        await writeJob(workspaceRoot, {
+          jobId: "job-cancel-race",
+          status: "queued",
+          profile: "codex",
+          submittedAt: "2026-05-14T10:00:00.000Z",
+          workerPid: 24680,
+          runnerStartTime: "12345",
+        });
+        const error = new Error("unreachable") as NodeJS.ErrnoException;
+        error.code = "BROKER_UNREACHABLE";
+        throw error;
+      },
+      pidIsAlive: (pid) => pid === 24680,
+      terminateProcessTree: async (pid) => { terminated.push(pid); },
+    },
+  });
+
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-cancel-race.json"), "utf8"),
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.workerPid, 24680);
+  assert.equal(record.runnerStartTime, "12345");
+  assert.deepEqual(terminated, [24680]);
+});
+
+test("cancel rejects an aliased lookup whose record jobId does not match", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-alias-source",
+    status: "running",
+    profile: "codex",
+  });
+  await fs.rename(
+    path.join(jobsDir(workspaceRoot), "job-alias-source.json"),
+    path.join(jobsDir(workspaceRoot), "job-alias-target.json"),
+  );
+
+  const result = await runCancel({
+    args: { positional: ["job-alias-target"], flags: {} },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      connectBrokerSession: async () => {
+        throw new Error("broker must not be contacted for an aliased record");
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /job (?:id mismatch|not found)/u);
+});
+
 test("cancel exits 2 for an unknown job id", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

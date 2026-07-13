@@ -23,8 +23,9 @@ import {
 } from "./lib/job-authority.mts";
 import type { JobAuthority } from "./lib/job-authority.mts";
 import { readJsonlMessages } from "./lib/jsonl-framing.mts";
-import { processStartTime } from "./lib/process-identity.mts";
+import { pidMatchesStartTime, processStartTime } from "./lib/process-identity.mts";
 import { normalizeAgentSandbox } from "./lib/process-sandbox.mts";
+import { pidIsAlive } from "./lib/process.mts";
 import { supportsLoad, supportsResume } from "./lib/session-controls.mts";
 import { atomicWriteJson } from "./lib/state.mts";
 
@@ -166,7 +167,8 @@ export async function serveBroker(
     profile: config.profile,
   });
   const jobRecordsDir = jobsDir(config.cwd);
-  const brokerState = {
+  const brokerLockPath = `${statePath}.lock`;
+  const brokerState: Record<string, unknown> & { pid: number } = {
     endpoint: config.endpoint,
     pid: process.pid,
     pidStartTime: await processStartTime(process.pid).catch(() => null),
@@ -179,6 +181,7 @@ export async function serveBroker(
   };
   let shuttingDown = false;
   let agent: AgentHandle | null | undefined;
+  let agentStarting: Promise<AgentHandle> | null = null;
   let capabilities: AgentCapabilities | null = null;
   let agentAuthority: JobAuthority | null = null;
   let idleTimer: NodeJS.Timeout | null = null;
@@ -249,19 +252,33 @@ export async function serveBroker(
   await fsp.mkdir(path.dirname(config.endpoint), { recursive: true });
   await fsp.mkdir(path.dirname(statePath), { recursive: true });
   await fsp.mkdir(jobRecordsDir, { recursive: true });
-  if (config.pidFile) {
-    await fsp.mkdir(path.dirname(config.pidFile), { recursive: true });
-    await atomicWriteJson(config.pidFile, brokerState);
-  }
-  await atomicWriteJson(statePath, brokerState);
-  await listen(server, config.endpoint);
-  // No peer auth exists on the socket (which may live in a shared tmpdir);
-  // restrict it to the owning user.
-  await fsp.chmod(config.endpoint, 0o600).catch((error: CodedError) => {
-    if (error.code !== "ENOENT") {
-      throw error;
+  await acquireBrokerLock(brokerLockPath, brokerState);
+  try {
+    if (config.pidFile) {
+      await fsp.mkdir(path.dirname(config.pidFile), { recursive: true });
+      await atomicWriteJson(config.pidFile, brokerState);
     }
-  });
+    await atomicWriteJson(statePath, brokerState);
+    await listen(server, config.endpoint);
+    // No peer auth exists on the socket (which may live in a shared tmpdir);
+    // restrict it to the owning user.
+    await fsp.chmod(config.endpoint, 0o600).catch((error: CodedError) => {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    });
+  } catch (error) {
+    if (server.listening) {
+      await closeServer(server);
+    }
+    await fsp.unlink(config.endpoint).catch(() => {});
+    await unlinkOwnedBrokerState(statePath, process.pid);
+    if (config.pidFile) {
+      await unlinkOwnedBrokerState(config.pidFile, process.pid);
+    }
+    await unlinkOwnedBrokerState(brokerLockPath, process.pid);
+    throw error;
+  }
   scheduleIdleShutdown();
 
   async function shutdown(code = 0): Promise<{ code: number }> {
@@ -277,14 +294,15 @@ export async function serveBroker(
     for (const socket of sockets) {
       socket.destroy();
     }
-    await disposeAgent();
+    await disposeAgent().catch(() => {});
     runtime.clearSessions();
     await closeServer(server);
     await fsp.unlink(config.endpoint).catch(() => {});
     if (config.pidFile) {
-      await fsp.unlink(config.pidFile).catch(() => {});
+      await unlinkOwnedBrokerState(config.pidFile, process.pid);
     }
-    await fsp.unlink(statePath).catch(() => {});
+    await unlinkOwnedBrokerState(statePath, process.pid);
+    await unlinkOwnedBrokerState(brokerLockPath, process.pid);
     closeResolve({ code });
     return closed;
   }
@@ -319,7 +337,10 @@ export async function serveBroker(
     if (agent) {
       return agent;
     }
-    agent = await startJobAgent({
+    if (agentStarting) {
+      return await agentStarting;
+    }
+    const starting = startJobAgent({
       binary: config.binary,
       args: config.args,
       env: config.env,
@@ -332,14 +353,36 @@ export async function serveBroker(
       resumeSessionId,
       parentJobId,
       model,
+      onSpawn: async (pid) => {
+        if (shuttingDown) {
+          throw new Error("broker is shutting down");
+        }
+        brokerState.agentPid = pid;
+        brokerState.agentPidStartTime = await processStartTime(pid).catch(() => null);
+        await atomicWriteJson(statePath, brokerState);
+        if (config.pidFile) {
+          await atomicWriteJson(config.pidFile, brokerState);
+        }
+      },
       runtime,
     });
-    agentAuthority = authority;
-    capabilities = agent.capabilities;
-    return agent;
+    agentStarting = starting.then((started) => {
+      agent = started;
+      agentAuthority = authority;
+      capabilities = started.capabilities;
+      return started;
+    });
+    try {
+      return await agentStarting;
+    } finally {
+      if (agentStarting) {
+        agentStarting = null;
+      }
+    }
   }
 
   async function disposeAgent(terminalJob: BrokerJob | null = null): Promise<void> {
+    await agentStarting?.catch(() => {});
     const current = agent;
     if (!current) {
       return;
@@ -358,6 +401,14 @@ export async function serveBroker(
     socketSessions.clear();
     socketSessionState.clear();
     runtime.clearSessions();
+    delete brokerState.agentPid;
+    delete brokerState.agentPidStartTime;
+    if (!shuttingDown) {
+      await atomicWriteJson(statePath, brokerState);
+      if (config.pidFile) {
+        await atomicWriteJson(config.pidFile, brokerState);
+      }
+    }
   }
 
   function scheduleIdleShutdown() {
@@ -734,6 +785,72 @@ async function closeServer(server: net.Server): Promise<void> {
   });
 }
 
+async function acquireBrokerLock(
+  lockPath: string,
+  owner: Record<string, unknown> & { pid: number },
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const candidatePath = `${lockPath}.${process.pid}.${Date.now()}.${attempt}`;
+    try {
+      await fsp.writeFile(candidatePath, `${JSON.stringify(owner)}\n`, {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600,
+      });
+      await fsp.link(candidatePath, lockPath);
+      return;
+    } catch (error) {
+      if ((error as CodedError).code !== "EEXIST") {
+        throw error;
+      }
+      const existing = await readBrokerOwner(lockPath);
+      if (
+        existing?.pid &&
+        (existing.pidStartTime
+          ? await pidMatchesStartTime(existing.pid, existing.pidStartTime)
+          : pidIsAlive(existing.pid))
+      ) {
+        const collision = new Error(
+          "broker identity is already owned by a live process",
+        ) as CodedError;
+        collision.code = "EADDRINUSE";
+        throw collision;
+      }
+      await fsp.unlink(lockPath).catch((unlinkError: CodedError) => {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      });
+    } finally {
+      await fsp.unlink(candidatePath).catch(() => {});
+    }
+  }
+  const error = new Error("could not acquire broker identity lock") as CodedError;
+  error.code = "EADDRINUSE";
+  throw error;
+}
+
+async function unlinkOwnedBrokerState(filePath: string, pid: number): Promise<void> {
+  const owner = await readBrokerOwner(filePath);
+  if (owner?.pid !== pid) {
+    return;
+  }
+  await fsp.unlink(filePath).catch((error: CodedError) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
+async function readBrokerOwner(
+  filePath: string,
+): Promise<{ pid?: number; pidStartTime?: string | null } | null> {
+  try {
+    return JSON.parse(await fsp.readFile(filePath, "utf8"));
+  } catch (error) {
+    if ((error as CodedError).code === "ENOENT") {
+      return null;
+    }
+    return null;
+  }
+}
+
 export function parseArgs(argv: string[]): ServeBrokerOptions {
   const [command, ...tokens] = argv;
   if (command !== "serve") {
@@ -775,8 +892,8 @@ export function parseArgs(argv: string[]): ServeBrokerOptions {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const broker = await serveBroker(parseArgs(process.argv.slice(2)));
-    process.once("SIGTERM", () => broker.shutdown(0));
-    process.once("SIGINT", () => broker.shutdown(0));
+    process.once("SIGTERM", () => { void broker.shutdown(0).catch(() => {}); });
+    process.once("SIGINT", () => { void broker.shutdown(0).catch(() => {}); });
     const { code } = await broker.closed;
     process.exit(code);
   } catch (error) {

@@ -141,5 +141,8 @@ function withDataDir(t: { after: (fn: () => void) => void }, dataDir: string) {
 async function writeJob(workspaceRoot: string, record: Record<string, string>) {
   const dir = jobsDir(workspaceRoot);
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, `${record.jobId}.json`), JSON.stringify(record));
+  await fs.writeFile(
+    path.join(dir, `${record.jobId}.json`),
+    JSON.stringify({ kind: "delegate", ...record }),
+  );
 }

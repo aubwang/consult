@@ -180,6 +180,144 @@ test("finalize refuses an untracked symlink created by the delegated agent", asy
   await assert.rejects(fs.access(path.join(prepared.artifactsDir, "changes.patch")));
 });
 
+test("finalize refuses a tracked file replaced by a symlink", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink creation is permission-dependent on Windows");
+    return;
+  }
+  const fixture = await makeRepository(t);
+  const prepared = await prepareIsolatedWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    jobId: "job-tracked-symlink",
+  });
+  fixture.prepared.push(prepared);
+  const trackedPath = path.join(prepared.executionRoot, "staged.txt");
+  await fs.rm(trackedPath);
+  await fs.symlink(os.tmpdir(), trackedPath);
+
+  await assert.rejects(
+    finalizeIsolatedWorkspace(prepared),
+    (error: IsolatedWorkspaceError) => error.code === "UNTRACKED_SYMLINK",
+  );
+  await assert.rejects(fs.access(path.join(prepared.artifactsDir, "changes.patch")));
+});
+
+test("isolated Git commands ignore hostile diff, apply, and hook configuration", async (t) => {
+  const fixture = await makeRepository(t);
+  await git(fixture.workspaceRoot, "config", "diff.noprefix", "true");
+  await git(fixture.workspaceRoot, "config", "apply.whitespace", "error");
+  await fs.writeFile(path.join(fixture.workspaceRoot, "staged.txt"), "user staged trailing  \n");
+  await git(fixture.workspaceRoot, "add", "staged.txt");
+  await fs.writeFile(path.join(fixture.workspaceRoot, "unstaged.txt"), "user unstaged trailing  \n");
+  const hookPath = path.join(fixture.workspaceRoot, ".git", "hooks", "post-checkout");
+  await fs.writeFile(hookPath, "#!/bin/sh\nexit 42\n", { mode: 0o700 });
+
+  const prepared = await prepareIsolatedWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    jobId: "job-hostile-git-config",
+  });
+  fixture.prepared.push(prepared);
+  assert.equal(
+    await fs.readFile(path.join(prepared.executionRoot, "staged.txt"), "utf8"),
+    "user staged trailing  \n",
+  );
+  assert.equal(
+    await fs.readFile(path.join(prepared.executionRoot, "unstaged.txt"), "utf8"),
+    "user unstaged trailing  \n",
+  );
+
+  await fs.writeFile(path.join(prepared.executionRoot, "staged.txt"), "agent final\n");
+  const finalized = await finalizeIsolatedWorkspace(prepared);
+  const patch = await fs.readFile(finalized.patchPath, "utf8");
+  assert.match(patch, /^diff --git a\/staged\.txt b\/staged\.txt$/mu);
+});
+
+test("prepare seeds against the pinned commit when HEAD advances after resolution", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("the deterministic Git race harness uses a POSIX wrapper");
+    return;
+  }
+  const fixture = await makeRepository(t);
+  await fs.writeFile(path.join(fixture.workspaceRoot, "racing.txt"), "landed commit\n");
+  await git(fixture.workspaceRoot, "add", "racing.txt");
+  const wrapperDir = path.join(fixture.root, "git-wrapper");
+  const wrapperPath = path.join(wrapperDir, "git");
+  const markerPath = path.join(wrapperDir, "advanced");
+  await fs.mkdir(wrapperDir);
+  const { stdout: gitPathOutput } = await execFileAsync("which", ["git"], { encoding: "utf8" });
+  const realGit = gitPathOutput.trim();
+  await fs.writeFile(wrapperPath, `#!/bin/sh
+case " $* " in
+  *" rev-parse --verify HEAD "*)
+    if [ ! -e ${JSON.stringify(markerPath)} ]; then
+      ${JSON.stringify(realGit)} "$@" > ${JSON.stringify(`${markerPath}.head`)} || exit $?
+      : > ${JSON.stringify(markerPath)}
+      ${JSON.stringify(realGit)} -c core.hooksPath=/dev/null commit -m "advance during prepare" >/dev/null || exit $?
+      exec /bin/cat ${JSON.stringify(`${markerPath}.head`)}
+    fi
+    ;;
+esac
+exec ${JSON.stringify(realGit)} "$@"
+`, { mode: 0o700 });
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${previousPath ?? ""}`;
+  let prepared: PreparedIsolatedWorkspace;
+  try {
+    prepared = await prepareIsolatedWorkspace({
+      workspaceRoot: fixture.workspaceRoot,
+      jobId: "job-pinned-head",
+    });
+  } finally {
+    process.env.PATH = previousPath;
+  }
+  fixture.prepared.push(prepared);
+
+  assert.equal(
+    await fs.readFile(path.join(prepared.executionRoot, "racing.txt"), "utf8"),
+    "landed commit\n",
+  );
+  assert.ok(prepared.seeded.stagedPatchBytes > 0);
+  assert.notEqual(prepared.headCommit, (await gitText(fixture.workspaceRoot, "rev-parse", "HEAD")).trim());
+});
+
+test("prepare refuses repositories with submodule metadata", async (t) => {
+  const fixture = await makeRepository(t);
+  await fs.writeFile(
+    path.join(fixture.workspaceRoot, ".gitmodules"),
+    '[submodule "vendor/example"]\n\tpath = vendor/example\n\turl = https://example.invalid/repo.git\n',
+  );
+
+  await assert.rejects(
+    prepareIsolatedWorkspace({
+      workspaceRoot: fixture.workspaceRoot,
+      jobId: "job-submodule",
+    }),
+    (error: IsolatedWorkspaceError) => {
+      assert.equal(error.code, "ISOLATED_WORKSPACE_SUBMODULES_UNSUPPORTED");
+      assert.match(error.message, /do not support repositories with \.gitmodules/u);
+      return true;
+    },
+  );
+});
+
+test("finalize records both paths of a rename without rename heuristics", async (t) => {
+  const fixture = await makeRepository(t);
+  const prepared = await prepareIsolatedWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    jobId: "job-rename",
+  });
+  fixture.prepared.push(prepared);
+  await git(prepared.executionRoot, "mv", "staged.txt", "renamed.txt");
+
+  const finalized = await finalizeIsolatedWorkspace(prepared);
+
+  assert.deepEqual(finalized.touchedFiles, ["renamed.txt", "staged.txt"]);
+  const patch = await fs.readFile(finalized.patchPath, "utf8");
+  assert.doesNotMatch(patch, /^rename (?:from|to) /mu);
+  assert.match(patch, /^deleted file mode /mu);
+  assert.match(patch, /^new file mode /mu);
+});
+
 test("job ids cannot traverse Consult-owned state", async (t) => {
   const fixture = await makeRepository(t);
   await assert.rejects(

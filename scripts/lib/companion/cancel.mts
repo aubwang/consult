@@ -134,7 +134,7 @@ async function cancelOneRecord({
       (error as NodeJS.ErrnoException).code === "BROKER_STATE_MALFORMED" ||
       (error as NodeJS.ErrnoException).code === "ENOENT"
     ) {
-      await markCancelledAtCancelTime({ workspaceRoot, jobId, record, deps });
+      record = await markCancelledAtCancelTime({ workspaceRoot, jobId, deps });
       const workerOutput = await terminateWorkerIfAlive(record, deps);
       return {
         exitCode: 0,
@@ -148,7 +148,10 @@ async function cancelOneRecord({
     throw error;
   }
   const cancelResult = await client.request("consult/cancel", { jobId });
-  const workerOutput = await terminateWorkerIfAlive(record, deps);
+  const latestRecord = await readWorkspaceJobRecord(workspaceRoot, jobId as string).catch(
+    () => record,
+  );
+  const workerOutput = await terminateWorkerIfAlive(latestRecord, deps);
   return { exitCode: 0, stdout: `${JSON.stringify(cancelResult)}\n${workerOutput}`, stderr: "" };
 }
 
@@ -201,7 +204,6 @@ async function cancelInlineJob({
   await markCancelledAtCancelTime({
     workspaceRoot,
     jobId,
-    record,
     deps,
     errorMessage: "inline runner not running at cancel time",
   });
@@ -219,22 +221,34 @@ function defaultSignalPid(pid: number, signal: NodeJS.Signals): void {
 async function markCancelledAtCancelTime({
   workspaceRoot,
   jobId,
-  record,
   deps,
   errorMessage = "broker not running at cancel time",
 }: {
   workspaceRoot: string;
   jobId: string | undefined;
-  record: JobRecord;
   deps: CancelDeps;
   errorMessage?: string;
-}): Promise<void> {
+}): Promise<JobRecord> {
+  const record = await readWorkspaceJobRecord(workspaceRoot, jobId as string);
   finalizeJobRecord(record, {
     now: deps.now,
     stopReason: "cancelled",
     errorMessage,
   });
   await writeJobRecord(workspaceRoot, jobId as string, record);
+  const latest = await readWorkspaceJobRecord(workspaceRoot, jobId as string);
+  if (latest.status === "cancelled") {
+    return latest;
+  }
+  // The worker may have stamped its pid from a stale queued snapshot between
+  // our first read and write. Merge that runtime identity and assert cancel once more.
+  finalizeJobRecord(latest, {
+    now: deps.now,
+    stopReason: "cancelled",
+    errorMessage,
+  });
+  await writeJobRecord(workspaceRoot, jobId as string, latest);
+  return latest;
 }
 
 async function terminateWorkerIfAlive(record: JobRecord, deps: CancelDeps): Promise<string> {

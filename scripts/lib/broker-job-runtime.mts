@@ -9,7 +9,7 @@ import {
   failedBrokerJobRecord,
   finalizedBrokerJobRecord,
   readWorkspaceJobRecord,
-  writeJobRecord as persistJobRecord,
+  writeJobRecord as defaultPersistJobRecord,
 } from "./job-records.mts";
 import type { BrokerJobSnapshot, FinalizedJobOutcome } from "./job-records.mts";
 import { isInsideWorkspaceSync } from "./path-safety.mts";
@@ -136,6 +136,7 @@ export interface CreateBrokerJobRuntimeOptions {
   ensureAgent(authority: JobAuthority): Promise<BrokerAgentHandle>;
   hashRunPayload(params: ConsultRunParams): string;
   writeNotification(socket: BrokerJobSocketLike, method: string, params: unknown): void;
+  persistJobRecord?(workspaceRoot: string, jobId: string, record: Record<string, unknown>): Promise<void>;
   beforeTerminal?(job: BrokerJob): Promise<void>;
   onActivity?(): void;
   onTerminal?(job: BrokerJob): void;
@@ -178,6 +179,7 @@ export function createBrokerJobRuntime({
   ensureAgent,
   hashRunPayload,
   writeNotification,
+  persistJobRecord = defaultPersistJobRecord,
   beforeTerminal,
   onActivity = () => {},
   onTerminal = () => {},
@@ -288,7 +290,7 @@ export function createBrokerJobRuntime({
         for (const update of job.pendingUpdates) {
           writeNotification(targetSocket, "consult/update", update);
         }
-      if (job.status === "finalized") {
+      if (job.status === "finalized" && job.finalized) {
         writeNotification(targetSocket, "consult/finalized", {
           jobId: job.jobId,
           ...job.finalized,
@@ -342,10 +344,13 @@ export function createBrokerJobRuntime({
       }
     },
     async finalizeJob(job, finalized) {
-      job.status = "finalized";
-      const preparedFinalized = await prepareTerminalOutcome(job, finalized);
       clearCancelAckTimer(job);
       clearWallClockTimer(job);
+      if (job.status === "finalized") {
+        return;
+      }
+      job.status = "finalized";
+      const preparedFinalized = await prepareTerminalOutcome(job, finalized);
       job.finalized = boundedFinalized(job, preparedFinalized);
       job.completedAt = new Date().toISOString();
       sessionJobs.delete(job.sessionId);
@@ -353,7 +358,9 @@ export function createBrokerJobRuntime({
       // Persisted terminal state and finalized notifications are readiness
       // boundaries: observers may immediately submit the next Job.
       busy = false;
-      await writeJobRecord(job, job.finalized);
+      await writeJobRecord(job, job.finalized).catch((error) => {
+        job.finalized = terminalWriteFailure(job, error);
+      });
       // Keep finalized jobs for this daemon lifetime; eviction is deferred for v1.
       notifyFinalized(job, job.finalized);
       onActivity();
@@ -375,7 +382,9 @@ export function createBrokerJobRuntime({
       job.finalized = boundedFinalized(job, preparedFinalized);
       sessionJobs.delete(job.sessionId);
       busy = false;
-      await writeFailedJobRecord(job);
+      await writeFailedJobRecord(job).catch((error) => {
+        job.finalized = terminalWriteFailure(job, error);
+      });
       notifyFinalized(job, job.finalized);
       onActivity();
       onTerminal(job);
@@ -383,6 +392,10 @@ export function createBrokerJobRuntime({
     async cancelJob(job) {
       job.cancelRequested = true;
       if (!job.sessionId) {
+        await this.finalizeJob(job, {
+          stopReason: "cancelled",
+          sessionId: null,
+        });
         return;
       }
       startCancelAckTimer(job);
@@ -406,7 +419,6 @@ export function createBrokerJobRuntime({
       for (const job of activeJobs.values()) {
         job.subscribers.delete(socket);
         if (job.originatorSocket === socket && job.status === "running") {
-          startCancelAckTimer(job);
           this.cancelJob(job).catch(() => {});
         }
       }
@@ -553,24 +565,22 @@ export function createBrokerJobRuntime({
   }
 
   async function finalizeUnacknowledgedCancel(job: BrokerJob): Promise<void> {
-    if (job.status === "running") {
-      clearWallClockTimer(job);
-      job.status = "finalized";
-      const preparedFinalized = await prepareTerminalOutcome(job, {
-        stopReason: "failed",
-        sessionId: job.sessionId,
-        errorMessage: "agent did not acknowledge cancel",
-      });
-      job.completedAt = new Date().toISOString();
-      job.finalized = boundedFinalized(job, preparedFinalized);
-      sessionJobs.delete(job.sessionId);
-      await writeFailedJobRecord(job).catch(() => {});
-      busy = false;
-      notifyFinalized(job, job.finalized);
+    if (job.status !== "running") {
+      return;
     }
-    // The job may already be finalized (policy violation) while its prompt
-    // turn is still unsettled; an unacknowledged cancel always taints.
+    clearWallClockTimer(job);
+    job.status = "finalized";
+    const preparedFinalized = await prepareTerminalOutcome(job, {
+      stopReason: "failed",
+      sessionId: job.sessionId,
+      errorMessage: "agent did not acknowledge cancel",
+    });
+    job.completedAt = new Date().toISOString();
+    job.finalized = boundedFinalized(job, preparedFinalized);
+    sessionJobs.delete(job.sessionId);
+    await writeFailedJobRecord(job).catch(() => {});
     busy = false;
+    notifyFinalized(job, job.finalized);
     tainted = true;
     onActivity();
     onTerminal(job);
@@ -650,6 +660,14 @@ export function createBrokerJobRuntime({
       }
       throw error;
     }
+  }
+
+  function terminalWriteFailure(job: BrokerJob, error: unknown): BrokerJobFinalized {
+    return {
+      stopReason: "failed",
+      sessionId: job.sessionId,
+      errorMessage: `job record write failed: ${errorMessage(error)}`,
+    };
   }
 }
 

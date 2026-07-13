@@ -458,6 +458,7 @@ test("nested Claude delegate never refreshes the Host credential", async (t) => 
   withDataDir(t, dataDir);
   await writeParentJob(workspaceRoot, {
     jobId: "job-claude-parent",
+    status: "running",
     chainId: "job-claude-parent",
     delegationDepth: 0,
     mode: "read-only",
@@ -507,6 +508,7 @@ test("delegate resume uses the latest finalized session for the selected profile
     path.join(jobsDir(workspaceRoot), "job-old.json"),
     JSON.stringify({
       jobId: "job-old",
+      kind: "delegate",
       status: "completed",
       host: "claude-code",
       hostSessionId: "claude-1",
@@ -519,6 +521,7 @@ test("delegate resume uses the latest finalized session for the selected profile
     path.join(jobsDir(workspaceRoot), "job-new.json"),
     JSON.stringify({
       jobId: "job-new",
+      kind: "delegate",
       status: "failed",
       host: "claude-code",
       hostSessionId: "claude-1",
@@ -531,6 +534,7 @@ test("delegate resume uses the latest finalized session for the selected profile
     path.join(jobsDir(workspaceRoot), "job-other.json"),
     JSON.stringify({
       jobId: "job-other",
+      kind: "delegate",
       status: "completed",
       host: "claude-code",
       hostSessionId: "claude-1",
@@ -574,6 +578,7 @@ test("delegate resume ignores newer jobs from other Host sessions", async (t) =>
     path.join(jobsDir(workspaceRoot), "job-current-chat.json"),
     JSON.stringify({
       jobId: "job-current-chat",
+      kind: "delegate",
       status: "completed",
       host: "claude-code",
       hostSessionId: "claude-1",
@@ -586,6 +591,7 @@ test("delegate resume ignores newer jobs from other Host sessions", async (t) =>
     path.join(jobsDir(workspaceRoot), "job-other-chat.json"),
     JSON.stringify({
       jobId: "job-other-chat",
+      kind: "delegate",
       status: "completed",
       host: "claude-code",
       hostSessionId: "claude-2",
@@ -628,6 +634,7 @@ test("delegate resume-job resumes an explicit job across Host sessions", async (
     path.join(jobsDir(workspaceRoot), "job-other-chat.json"),
     JSON.stringify({
       jobId: "job-other-chat",
+      kind: "delegate",
       status: "completed",
       host: "claude-code",
       hostSessionId: "claude-2",
@@ -671,6 +678,7 @@ test("confined resume rejects an unavailable archive before creating a Job", asy
     path.join(jobsDir(workspaceRoot), "job-source.json"),
     JSON.stringify({
       jobId: "job-source",
+      kind: "delegate",
       status: "completed",
       profile: "codex",
       completedAt: "2026-05-14T10:00:00.000Z",
@@ -709,6 +717,7 @@ test("delegate resume-job rejects jobs from another profile", async (t) => {
     path.join(jobsDir(workspaceRoot), "job-claude.json"),
     JSON.stringify({
       jobId: "job-claude",
+      kind: "delegate",
       status: "completed",
       host: "claude-code",
       hostSessionId: "claude-1",
@@ -1203,6 +1212,7 @@ test("delegate defaults the parent job from CONSULT_PARENT_JOB when the flag is 
   withDataDir(t, dataDir);
   await writeParentJob(workspaceRoot, {
     jobId: "job-env-parent",
+    status: "running",
     chainId: "job-env-parent",
     delegationDepth: 0,
     mode: "write",
@@ -1247,12 +1257,14 @@ test("delegate prefers an explicit --parent-job flag over CONSULT_PARENT_JOB", a
   withDataDir(t, dataDir);
   await writeParentJob(workspaceRoot, {
     jobId: "job-env-parent",
+    status: "running",
     chainId: "job-env-parent",
     delegationDepth: 0,
     mode: "write",
   });
   await writeParentJob(workspaceRoot, {
     jobId: "job-flag-parent",
+    status: "running",
     chainId: "job-flag-parent",
     delegationDepth: 0,
     mode: "write",
@@ -1334,7 +1346,7 @@ test("delegate child job inherits lineage and read-only permission ceiling from 
     JSON.stringify({
       jobId: "job-parent",
       kind: "delegate",
-      status: "completed",
+      status: "running",
       submittedAt: "2026-05-14T09:00:00.000Z",
       chainId: "job-root",
       parentJobId: "job-root",
@@ -1387,6 +1399,7 @@ test("delegate child job rejects explicit write under read-only parent", async (
   withDataDir(t, dataDir);
   await writeParentJob(workspaceRoot, {
     jobId: "job-parent",
+    status: "running",
     chainId: "job-parent",
     delegationDepth: 0,
     mode: "read-only",
@@ -1418,6 +1431,7 @@ test("delegate child job rejects depth beyond the delegation cap", async (t) => 
   withDataDir(t, dataDir);
   await writeParentJob(workspaceRoot, {
     jobId: "job-parent",
+    status: "running",
     chainId: "job-root",
     delegationDepth: 2,
     mode: "write",

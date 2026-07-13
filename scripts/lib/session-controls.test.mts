@@ -6,6 +6,7 @@ import {
   applySessionControls,
   normalizeModelControl,
   openResumedSession,
+  resolveFamilyLatest,
   supportsLoad,
   supportsResume,
 } from "./session-controls.mts";
@@ -16,7 +17,18 @@ test("supportsResume accepts legacy and current capability shapes", () => {
     true,
   );
   assert.equal(supportsResume({ agentCapabilities: { sessions: { resume: true } } }), true);
+  assert.equal(
+    supportsResume({ agentCapabilities: { sessionCapabilities: { resume: null } } }),
+    false,
+  );
   assert.equal(supportsResume({ agentCapabilities: {} }), false);
+});
+
+test("resolveFamilyLatest ignores digits in model decorations", () => {
+  assert.equal(
+    resolveFamilyLatest("sonnet", ["claude-sonnet-4-5", "claude-sonnet-4-5[1m]"]),
+    "claude-sonnet-4-5",
+  );
 });
 
 test("supportsLoad reads the loadSession capability", () => {

@@ -11,6 +11,7 @@ import type { TestContext } from "node:test";
 import { promisify } from "node:util";
 
 import { brokersDir, jobsDir } from "./broker-endpoint.mts";
+import type { StartedAgent } from "./acp-client.mts";
 import { jobLogPath } from "./job-records.mts";
 import type { JobRecord } from "./job-records.mts";
 import { runCancel } from "./companion/cancel.mts";
@@ -118,6 +119,72 @@ test("inline runner rejects stale canonical authority before Profile launch", as
     },
   );
   assert.equal(process.listenerCount("SIGINT"), beforeSigintListeners);
+});
+
+test("inline preflight preserves the original error when agent disposal rejects", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = createInlineClient({
+    workspaceRoot,
+    host: "terminal",
+    hostSessionId: "default",
+    profile: "codex",
+    authority: authority(),
+    profileEntry: profileEntryFixture("exit"),
+    startAgent: async () => ({
+      connection: {},
+      capabilities: {},
+      dispose: async () => { throw new Error("dispose failed"); },
+    } as unknown as StartedAgent),
+  });
+
+  await assert.rejects(
+    client.request("consult/run", {
+      jobId: "job-inline-dispose-preflight",
+      prompt: "resume",
+      profile: "codex",
+      authority: authority(),
+      resume: "session-1",
+    }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "RESUME_UNSUPPORTED");
+      assert.doesNotMatch((error as Error).message, /dispose failed/u);
+      return true;
+    },
+  );
+});
+
+test("inline async failure contains a rejecting agent disposal", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = createInlineClient({
+    workspaceRoot,
+    host: "terminal",
+    hostSessionId: "default",
+    profile: "codex",
+    authority: authority(),
+    profileEntry: profileEntryFixture("exit"),
+    startAgent: async () => ({
+      connection: {
+        newSession: async () => { throw new Error("session failed"); },
+      },
+      capabilities: {},
+      dispose: async () => { throw new Error("dispose failed"); },
+    } as unknown as StartedAgent),
+  });
+  const finalized = new Promise<any>((resolve) => client.on("consult/finalized", resolve));
+
+  await client.request("consult/run", {
+    jobId: "job-inline-dispose-async",
+    prompt: "run",
+    profile: "codex",
+    authority: authority(),
+  });
+
+  const notification = await finalized;
+  assert.equal(notification.stopReason, "failed");
+  assert.match(notification.errorMessage, /PROFILE_CLEANUP_UNCONFIRMED: dispose failed/u);
+  await new Promise((resolve) => setImmediate(resolve));
 });
 
 test("inline wall-clock limit cancels and disposes the Profile before finalizing failed", async (t) => {

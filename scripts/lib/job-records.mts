@@ -214,7 +214,16 @@ export async function writeJobRecord(
 ): Promise<void> {
   const dir = jobsDir(workspaceRoot);
   await fs.mkdir(dir, { recursive: true });
-  await atomicWriteJson(jobRecordPath(workspaceRoot, jobId), record);
+  let selected = record;
+  if (record.status !== JOB_STATUS.CANCELLED) {
+    const existing = await readWorkspaceJobRecord(workspaceRoot, jobId).catch(() => null);
+    if (existing?.status === JOB_STATUS.CANCELLED) {
+      // Cross-process cancellation is terminal. Preserve the cancellation fields
+      // while retaining any runtime identity the stale writer just discovered.
+      selected = { ...record, ...existing };
+    }
+  }
+  await atomicWriteJson(jobRecordPath(workspaceRoot, jobId), selected);
 }
 
 export async function appendJobLogLine(

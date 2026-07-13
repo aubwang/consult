@@ -242,6 +242,42 @@ test("teardownBrokerSession falls back to SIGTERM when shutdown RPC is unreachab
   assert.equal(await fileExists(pidFile), false);
 });
 
+test("teardownBrokerSession also terminates the detached agent recorded by the Broker", async (t) => {
+  const harness = await createHarness(t);
+  const brokerSleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const agentSleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const brokerExited = once(brokerSleeper, "exit");
+  const agentExited = once(agentSleeper, "exit");
+  t.after(() => {
+    if (isPidAlive(brokerSleeper.pid)) process.kill(-(brokerSleeper.pid as number), "SIGKILL");
+    if (isPidAlive(agentSleeper.pid)) process.kill(-(agentSleeper.pid as number), "SIGKILL");
+  });
+  await fsp.mkdir(path.dirname(harness.brokerFile), { recursive: true });
+  await atomicWriteJson(harness.brokerFile, {
+    endpoint: path.join(harness.dir, "missing.sock"),
+    pid: brokerSleeper.pid,
+    pidStartTime: await processStartTime(brokerSleeper.pid),
+    agentPid: agentSleeper.pid,
+    agentPidStartTime: await processStartTime(agentSleeper.pid),
+  });
+
+  const result = await teardownBrokerSession({
+    ...harness.input,
+    options: { shutdownTimeoutMs: 25, sigtermTimeoutMs: 200 },
+  });
+
+  assert.equal(result.teardown, "sigterm-tree");
+  await Promise.all([brokerExited, agentExited]);
+  assert.equal(isPidAlive(brokerSleeper.pid), false);
+  assert.equal(isPidAlive(agentSleeper.pid), false);
+});
+
 test("teardownBrokerSession does not signal a mismatched reused pid", async (t) => {
   const harness = await createHarness(t);
   const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {

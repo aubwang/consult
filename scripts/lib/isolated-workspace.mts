@@ -116,6 +116,7 @@ export async function prepareIsolatedWorkspace({
 
   try {
     const headCommit = await resolveHeadCommit(originalRoot, maxBufferBytes);
+    await assertSubmodulesUnsupported(originalRoot);
     const stagedPatch = (await runGit(originalRoot, [
       "diff",
       "--cached",
@@ -123,7 +124,7 @@ export async function prepareIsolatedWorkspace({
       "--full-index",
       "--no-ext-diff",
       "--no-textconv",
-      "HEAD",
+      headCommit,
       "--",
     ], { maxBufferBytes })).stdout;
     const unstagedPatch = (await runGit(originalRoot, [
@@ -221,6 +222,7 @@ export async function finalizeIsolatedWorkspace(
     patch = (await runGit(prepared.executionRoot, [
       "diff",
       "--cached",
+      "--no-renames",
       "--binary",
       "--full-index",
       "--no-ext-diff",
@@ -231,9 +233,23 @@ export async function finalizeIsolatedWorkspace(
       env: indexEnv,
       maxBufferBytes: prepared.maxBufferBytes,
     })).stdout;
+    const rawChanges = (await runGit(prepared.executionRoot, [
+      "diff",
+      "--cached",
+      "--raw",
+      "--no-renames",
+      "-z",
+      prepared.baselineTree,
+      "--",
+    ], {
+      env: indexEnv,
+      maxBufferBytes: prepared.maxBufferBytes,
+    })).stdout;
+    assertNoAddedSymlinks(rawChanges);
     const names = (await runGit(prepared.executionRoot, [
       "diff",
       "--cached",
+      "--no-renames",
       "--name-only",
       "-z",
       prepared.baselineTree,
@@ -357,6 +373,19 @@ async function resolveHeadCommit(
   }
 }
 
+async function assertSubmodulesUnsupported(workspaceRoot: string): Promise<void> {
+  try {
+    await fs.lstat(path.join(workspaceRoot, ".gitmodules"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw isolatedWorkspaceError(
+    "ISOLATED_WORKSPACE_SUBMODULES_UNSUPPORTED",
+    "isolated write Jobs do not support repositories with .gitmodules; run without --isolated or remove submodules",
+  );
+}
+
 async function applySeedPatch(
   executionRoot: string,
   artifactsDir: string,
@@ -469,6 +498,17 @@ function decodeNulPathList(output: Buffer): string[] {
     start = index + 1;
   }
   return files;
+}
+
+function assertNoAddedSymlinks(output: Buffer): void {
+  for (const entry of output.toString("utf8").split("\0")) {
+    if (!/^:\d{6} 120000 /u.test(entry)) continue;
+    const relativePath = entry.slice(entry.indexOf("\t") + 1);
+    throw isolatedWorkspaceError(
+      "UNTRACKED_SYMLINK",
+      `symlink changes are not supported in isolated workspaces: ${relativePath}`,
+    );
+  }
 }
 
 function validateRelativeWorkspacePath(relativePath: string): void {
@@ -653,10 +693,19 @@ async function runGit(
   args: string[],
   { env = process.env, maxBufferBytes }: RunGitOptions,
 ): Promise<GitCommandOutput> {
+  const isolatedArgs = [
+    "-c",
+    "diff.noprefix=false",
+    "-c",
+    "apply.whitespace=nowarn",
+    "-c",
+    "core.hooksPath=/dev/null",
+    ...args,
+  ];
   return await new Promise((resolve, reject) => {
     execFile(
       "git",
-      args,
+      isolatedArgs,
       {
         cwd,
         env,

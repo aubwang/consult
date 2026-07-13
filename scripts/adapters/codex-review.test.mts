@@ -56,6 +56,44 @@ test("runCodexReview streams a codex review when review is advertised", async ()
   assert.equal(result.stdout, "review output\nconsult review job-review completed\n");
 });
 
+test("runCodexReview inherits delegation lineage from its parent", async () => {
+  const client = new FakeBrokerClient();
+  const resultPromise = runCodexReview({
+    profile: "codex",
+    profileEntry: profileEntryFixture(),
+    workspaceRoot: "/workspace",
+    host: "codex",
+    hostSessionId: "thread-1",
+    parentJobId: "job-parent",
+    diff: "pinned diff",
+    deps: quietDeps({
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-nested-review",
+      readJobRecord: async () => ({
+        jobId: "job-parent",
+        status: "running",
+        chainId: "job-root",
+        delegationDepth: 0,
+        mode: "write",
+      }),
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/update", availableCommandsUpdate(["review"]));
+  client.notify("consult/finalized", {
+    jobId: "job-nested-review",
+    stopReason: "end_turn",
+    sessionId: "session-review",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal((request.params as Record<string, unknown>).chainId, "job-root");
+  assert.equal((request.params as Record<string, unknown>).parentJobId, "job-parent");
+  assert.equal((request.params as Record<string, unknown>).delegationDepth, 1);
+});
+
 test("runCodexReview emits the versioned Job envelope with --json", async () => {
   const client = new FakeBrokerClient();
   const resultPromise = runCodexReview({

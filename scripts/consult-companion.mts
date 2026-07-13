@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 
-import { boolFlag, parseArgs } from "./lib/args.mts";
+import { boolFlag, invalidBooleanFlagValueError, parseArgs } from "./lib/args.mts";
 import type { ParsedArgs } from "./lib/args.mts";
 import type { CliResult } from "./lib/companion/job-record-errors.mts";
 import * as agents from "./lib/companion/agents.mts";
@@ -243,6 +243,10 @@ export async function dispatch(
   subcommand: string | undefined,
   parsedArgs: ParsedArgs,
 ): Promise<CliResult> {
+  const invalidBoolean = invalidBooleanFlagValueError(parsedArgs?.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
   if (!subcommand || subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
     return {
       exitCode: 0,

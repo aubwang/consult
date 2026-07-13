@@ -317,6 +317,11 @@ function handleMessage(message: FakeAgentMessage): void {
     if (scenario === "prompt-pre-resolve-update") {
       writeUpdate(message.params.sessionId, "before-response");
     }
+    if (scenario === "prompt-update-then-error") {
+      writeUpdate(message.params.sessionId, "before-error");
+      writeError(message.id, -32603, "original prompt failure");
+      return;
+    }
     if (scenario === "prompt-permission-edit" || scenario === "prompt-permission-execute") {
       const kind = scenario === "prompt-permission-execute" ? "execute" : "edit";
       callClient("session/request_permission", {

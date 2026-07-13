@@ -94,6 +94,49 @@ test("review with a Profile lacking native review runs a read-only pinned-diff J
   assert.equal((queued.prompt as string).includes("diff --git"), false);
 });
 
+test("nested generic review inherits its delegation lineage", async () => {
+  const client = new FakeBrokerClient();
+  const writtenRecords: Array<Record<string, unknown>> = [];
+  const resultPromise = runReview({
+    args: { positional: [], flags: { agent: "claude" } },
+    env: { CONSULT_PARENT_JOB: "job-parent" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      getDiff: async () => "pinned diff",
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-nested-review",
+      readJobRecord: async () => ({
+        jobId: "job-parent",
+        status: "running",
+        chainId: "job-root",
+        delegationDepth: 0,
+        mode: "write",
+      }),
+      writeJobRecord: async (_workspaceRoot, _jobId, record) => {
+        writtenRecords.push(structuredClone(record));
+      },
+      appendLogLine: async () => {},
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-nested-review",
+    stopReason: "end_turn",
+    sessionId: "session-review",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(request.params.chainId, "job-root");
+  assert.equal(request.params.parentJobId, "job-parent");
+  assert.equal(request.params.delegationDepth, 1);
+  assert.equal(writtenRecords[0]?.chainId, "job-root");
+  assert.equal(writtenRecords[0]?.parentJobId, "job-parent");
+});
+
 test("review --job reviews a completed isolated Job artifact without reading the Host diff", async () => {
   const client = new FakeBrokerClient();
   const writtenRecords: Array<Record<string, unknown>> = [];

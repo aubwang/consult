@@ -13,8 +13,12 @@ import {
   MACOS_READ_PATHS,
   acquireConfinedSandboxRuntimeLaunch,
   executableReadScopes,
+  inspectMachODependencies,
+  isMacosSystemRuntimePath,
   linuxExecutableReadScopes,
+  macosExecutableReadScopes,
   parseLinuxLddPaths,
+  parseMachOOtoolLoadCommands,
   probeConfinedSandboxRuntime,
 } from "./sandbox-runtime-launch.mts";
 
@@ -33,6 +37,86 @@ test("macOS system reads exclude the user-managed /usr/local subtree", () => {
   for (const required of ["/usr/bin", "/usr/lib", "/usr/libexec", "/usr/sbin", "/usr/share"]) {
     assert.ok(scopes.includes(required));
   }
+  assert.equal(isMacosSystemRuntimePath("/usr/local/lib/libcustom.dylib"), false);
+  assert.equal(isMacosSystemRuntimePath("/usr/lib/libSystem.B.dylib"), true);
+});
+
+test("Mach-O load command parsing keeps dependencies, weak links, and rpaths", () => {
+  assert.deepEqual(parseMachOOtoolLoadCommands(`
+Load command 11
+          cmd LC_RPATH
+      cmdsize 40
+         path @loader_path/../lib (offset 12)
+Load command 12
+          cmd LC_LOAD_DYLIB
+      cmdsize 56
+         name @rpath/libexample.dylib (offset 24)
+   time stamp 2 Thu Jan  1 00:00:02 1970
+      current version 1.0.0
+compatibility version 1.0.0
+Load command 13
+          cmd LC_LOAD_WEAK_DYLIB
+      cmdsize 64
+         name @loader_path/liboptional.dylib (offset 24)
+`), {
+    dependencies: [
+      { installName: "@rpath/libexample.dylib", weak: false },
+      { installName: "@loader_path/liboptional.dylib", weak: true },
+    ],
+    rpaths: ["@loader_path/../lib"],
+  });
+});
+
+test("macOS executable scopes resolve rpaths and tolerate missing weak links", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-macho-scopes-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "bin", "agent");
+  const dependency = path.join(root, "lib", "libexample.dylib");
+  await Promise.all([
+    fsp.mkdir(path.dirname(executable), { recursive: true }),
+    fsp.mkdir(path.dirname(dependency), { recursive: true }),
+  ]);
+  const machOMagic = Buffer.from("feedfacf", "hex");
+  await Promise.all([
+    fsp.writeFile(executable, machOMagic),
+    fsp.writeFile(dependency, machOMagic),
+  ]);
+  const warnings: string[] = [];
+  const inspected: string[] = [];
+
+  const scopes = macosExecutableReadScopes(executable, (candidate) => {
+    inspected.push(candidate);
+    return candidate === executable
+      ? {
+          dependencies: [
+            { installName: "@rpath/libexample.dylib", weak: false },
+            { installName: "@loader_path/liboptional.dylib", weak: true },
+          ],
+          rpaths: ["@loader_path/../lib"],
+        }
+      : { dependencies: [], rpaths: [] };
+  }, (message) => warnings.push(message));
+
+  assert.ok(scopes.includes(dependency));
+  assert.deepEqual(inspected, [executable, dependency]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /missing weak-linked macOS runtime dependency/u);
+});
+
+test("missing otool reports the Xcode Command Line Tools remediation", async (t) => {
+  if (process.platform === "darwin") {
+    t.skip("the real macOS runner supplies /usr/bin/otool");
+    return;
+  }
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-missing-otool-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "agent");
+  await fsp.writeFile(executable, Buffer.from("feedfacf", "hex"));
+
+  assert.throws(
+    () => inspectMachODependencies(executable),
+    /install Xcode Command Line Tools with 'xcode-select --install'/u,
+  );
 });
 
 test("executable read scopes include only linked Homebrew runtime packages", async (t) => {

@@ -76,6 +76,22 @@ test("readJobRecord reads a job record by id", async () => {
   assert.deepEqual(record, { jobId: "job-1", status: "completed" });
 });
 
+test("readJobRecord rejects a safe-segment alias with a different stored job id", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-state-"));
+  const jobsDir = path.join(dir, "jobs");
+  await fs.mkdir(jobsDir);
+  await fs.writeFile(
+    path.join(jobsDir, "job_alias.json"),
+    JSON.stringify({ jobId: "job alias", status: "completed" }),
+  );
+
+  await assert.rejects(readJobRecord(jobsDir, "job/alias"), (error: JobRecordError) => {
+    assert.equal(error.code, "ENOENT");
+    assert.equal(error.message, "Job record not found: job/alias");
+    return true;
+  });
+});
+
 test("readJobRecord rejects malformed JSON with a named error", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-state-"));
   const jobsDir = path.join(dir, "jobs");

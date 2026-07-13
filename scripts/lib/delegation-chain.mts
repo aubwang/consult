@@ -1,7 +1,9 @@
 import { readWorkspaceJobRecord } from "./job-records.mts";
 import type { JobRecord } from "./job-records.mts";
+import { jobAuthorityFromRecord } from "./job-authority.mts";
 
 export const DEFAULT_MAX_DELEGATION_DEPTH = 2;
+const ACTIVE_PARENT_STATUSES = new Set(["queued", "running"]);
 
 export type ReadJobRecordFn = (
   workspaceRoot: string,
@@ -101,6 +103,11 @@ export async function resolveParentJobRecord({
   if (parent.jobId !== parentJobId) {
     return { error: `parent job record mismatch: ${parentJobId}` };
   }
+  if (!ACTIVE_PARENT_STATUSES.has(parent.status as string)) {
+    return {
+      error: `parent job is not active: ${parentJobId} (${parent.status ?? "unknown"})`,
+    };
+  }
   return { parent };
 }
 
@@ -128,9 +135,10 @@ export function resolveLineage(
     };
   }
 
-  const parentDepth = Number.isInteger(parent.delegationDepth)
-    ? (parent.delegationDepth as number)
-    : 0;
+  if (!Number.isInteger(parent.delegationDepth) || (parent.delegationDepth as number) < 0) {
+    return { error: `parent job has invalid delegation depth: ${String(parent.delegationDepth)}` };
+  }
+  const parentDepth = parent.delegationDepth as number;
   const delegationDepth = parentDepth + 1;
   if (delegationDepth > maxDepth) {
     return {
@@ -162,7 +170,14 @@ export function resolvePermissionCeiling({
   writeExplicit,
   parent,
 }: PermissionCeilingOptions): PermissionCeilingResolution {
-  if (!parent || parent.mode !== "read-only") {
+  if (!parent) {
+    return { mode: requestedMode };
+  }
+  const parentAuthority = jobAuthorityFromRecord(parent);
+  if (!parentAuthority.ok) {
+    return { error: `parent job has invalid authority: ${parentAuthority.diagnostic.message}` };
+  }
+  if (parentAuthority.authority.mode !== "read-only") {
     return { mode: requestedMode };
   }
   if (writeExplicit) {

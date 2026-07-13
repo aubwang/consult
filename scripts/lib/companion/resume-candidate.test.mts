@@ -10,6 +10,7 @@ test("findResumeCandidate returns the latest resumable job in scope", async () =
     { ...resumableJob("job-other-host", "codex", "session-other", "2026-05-21T12:00:00.000Z"), host: "other" },
     { ...resumableJob("job-running", "codex", "session-running", "2026-05-21T13:00:00.000Z"), status: "running" },
     resumableJob("job-claude", "claude", "session-claude", "2026-05-21T14:00:00.000Z"),
+    { ...resumableJob("job-review", "codex", "session-review", "2026-05-21T15:00:00.000Z"), kind: "review" },
   ];
 
   assert.equal(
@@ -46,6 +47,12 @@ test("findResumeJobCandidate validates profile ownership and resumability", asyn
     }),
     { error: "resume job 'job-3' is not resumable" },
   );
+  assert.deepEqual(
+    await findResumeJobCandidate("/workspace", "job-review", "codex", {
+      readJobRecord: async () => ({ ...resumableJob("job-review", "codex", "session-review"), kind: "review" }),
+    }),
+    { error: "resume job 'job-review' is not a delegate Job" },
+  );
 });
 
 function resumableJob(
@@ -56,6 +63,7 @@ function resumableJob(
 ) {
   return {
     jobId,
+    kind: "delegate",
     profile,
     sessionId,
     completedAt,

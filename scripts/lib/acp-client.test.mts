@@ -140,6 +140,33 @@ test("startAgent terminates the process group before releasing its launch lease"
   assert.deepEqual(events, ["terminate", "release"]);
 });
 
+test("startAgent disposes the child when the spawn callback fails", async () => {
+  let spawnedPid: number | undefined;
+  let releases = 0;
+
+  await assert.rejects(
+    startAgent({
+      binary: process.execPath,
+      args: [fixturePath, "happy"],
+      cwd: path.dirname(fixturePath),
+      clientHandlers: {},
+      onSpawn: async (pid) => {
+        spawnedPid = pid;
+        throw new Error("agent pid persistence failed");
+      },
+    }, {
+      acquireLaunch: async (options) => leaseFor(options, async () => {
+        releases += 1;
+      }),
+    }),
+    /agent pid persistence failed/u,
+  );
+
+  assert.notEqual(spawnedPid, undefined);
+  assert.equal(pidIsAlive(spawnedPid!), false);
+  assert.equal(releases, 1);
+});
+
 test("startAgent archives Session state after termination and before releasing its launch lease", async () => {
   const events: string[] = [];
   const agent = await startAgent({
@@ -396,6 +423,32 @@ test("promptTurn buffers updates sent before the prompt response resolves", asyn
       },
       { type: "stop", stopReason: "end_turn" },
     ]);
+  } finally {
+    await agent.dispose();
+  }
+});
+
+test("promptTurn preserves a prompt error after draining a queued update", async () => {
+  const agent = await startAgent({
+    binary: process.execPath,
+    args: [fixturePath, "sessions", "prompt-update-then-error"],
+    cwd: path.dirname(fixturePath),
+    clientHandlers: {},
+  });
+
+  try {
+    const events: PromptTurnEvent[] = [];
+    await assert.rejects(async () => {
+      for await (const event of promptTurn(agent.connection, {
+        sessionId: "sess-1",
+        prompt: "hello",
+      })) {
+        events.push(event);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }, /original prompt failure/u);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.type, "update");
   } finally {
     await agent.dispose();
   }
