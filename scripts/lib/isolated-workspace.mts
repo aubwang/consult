@@ -501,12 +501,13 @@ function decodeNulPathList(output: Buffer): string[] {
 }
 
 function assertNoAddedSymlinks(output: Buffer): void {
-  for (const entry of output.toString("utf8").split("\0")) {
-    if (!/^:\d{6} 120000 /u.test(entry)) continue;
-    const relativePath = entry.slice(entry.indexOf("\t") + 1);
+  // `--raw -z --no-renames` emits NUL-separated meta/path field pairs.
+  const fields = output.toString("utf8").split("\0");
+  for (let index = 0; index + 1 < fields.length; index += 2) {
+    if (!/^:\d{6} 120000 /u.test(fields[index])) continue;
     throw isolatedWorkspaceError(
       "UNTRACKED_SYMLINK",
-      `symlink changes are not supported in isolated workspaces: ${relativePath}`,
+      `symlink changes are not supported in isolated workspaces: ${fields[index + 1]}`,
     );
   }
 }

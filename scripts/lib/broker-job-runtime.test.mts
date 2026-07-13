@@ -594,6 +594,38 @@ test("normal finalization clears the wall-clock guard", async (t: TestContext) =
   assert.deepEqual(clearedTimers, [timer]);
 });
 
+test("policy violation with an unsettled turn releases and taints after the cancel-ack timeout", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const runtime = createBrokerJobRuntime({
+    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 20 },
+    ensureAgent: async () => ({ connection: { cancel: async () => {} } } as unknown as BrokerAgentHandle),
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+  });
+  const job = runtime.createJob(
+    { jobId: "job-policy-unsettled", profile: "codex", mode: "read-only", prompt: "inspect" },
+    fakeSocket("originator"),
+  );
+  runtime.trackSession("session-1", job);
+  runtime.setBusy(true);
+
+  await runtime.handleSessionUpdate({
+    sessionId: "session-1",
+    update: { sessionUpdate: "tool_call", rawInput: { auto_approved: true } },
+  });
+
+  assert.equal(job.status, "finalized");
+  // The violated turn has not settled: busy is deliberately held until the
+  // agent responds or the cancel-ack timer gives up.
+  assert.equal(runtime.isBusy(), true);
+  assert.equal(runtime.isTainted(), false);
+
+  await waitFor(() => runtime.isTainted());
+  assert.equal(runtime.isBusy(), false);
+  assert.equal((await readWorkspaceJobRecord(workspaceRoot, job.jobId)).status, "failed");
+});
+
 interface FakeSocket extends BrokerJobSocketLike {
   name: string;
 }

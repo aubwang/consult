@@ -1203,7 +1203,9 @@ test("a concurrent Broker for the same identity cannot replace the live owner", 
     hostSessionId: "lock-test",
     idleTimeoutMs: 0,
   };
-  const owner = await serveBroker(options);
+  const owner = await serveBroker(options, {
+    listen: (server, socketPath) => listenWithFallback(t, server, socketPath),
+  });
   const statePath = brokerFilePath({
     workspaceRoot: workspace,
     jobId: null,
