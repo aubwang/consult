@@ -135,6 +135,7 @@ test("startJobAgent acquires the confined runtime lease only for confined author
     cwd: "/workspace",
     authority: authority(),
     profileRegistryId: "claude",
+    model: "fable",
     runtime: runtimeHooks(authority()),
   }, {
     startAgent: fakeStartAgent,
@@ -154,9 +155,11 @@ test("startJobAgent acquires the confined runtime lease only for confined author
     mode: capturedOptions!.mode,
     sandbox: capturedOptions!.sandbox,
     profileRegistryId: capturedOptions!.profileRegistryId,
+    requestedModel: capturedOptions!.requestedModel,
   });
   assert.equal(confinedInput?.authority.confinement, "confined");
   assert.equal(confinedInput?.profileRegistryId, "claude");
+  assert.equal(confinedInput?.requestedModel, "claude-fable-5");
 
   capturedDeps = undefined;
   const inherited = authority({ confinement: "inherit" });
@@ -170,6 +173,40 @@ test("startJobAgent acquires the confined runtime lease only for confined author
   }, { startAgent: fakeStartAgent });
   assert.equal((capturedDeps as StartAgentDeps | undefined)?.acquireLaunch, undefined);
   assert.equal(capturedOptions?.sandbox, "off");
+});
+
+test("startJobAgent does not promote unknown Claude models into the confined launch", async () => {
+  let confinedInput: ConfinedSandboxRuntimeLaunchInput | undefined;
+  await startJobAgent({
+    binary: "/profile-agent",
+    cwd: "/workspace",
+    env: { ANTHROPIC_MODEL: "ambient-model" },
+    authority: authority(),
+    profileRegistryId: "claude",
+    model: "unknown-model-9",
+    runtime: runtimeHooks(authority()),
+  }, {
+    startAgent: async (options, deps) => {
+      await deps!.acquireLaunch!({
+        binary: options.binary,
+        args: [],
+        cwd: options.cwd,
+        env: options.env ?? {},
+        workspaceRoot: options.workspaceRoot,
+        mode: options.mode,
+        sandbox: options.sandbox,
+        profileRegistryId: options.profileRegistryId,
+        requestedModel: options.requestedModel,
+      });
+      return {} as StartedAgent;
+    },
+    acquireConfinedLaunch: async (input) => {
+      confinedInput = input;
+      return lease(input);
+    },
+  });
+
+  assert.equal(confinedInput?.requestedModel, undefined);
 });
 
 test("startJobAgent exposes the fetch grant to ACP permission decisions", async () => {

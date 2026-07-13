@@ -139,7 +139,10 @@ credential and initializes/disposes the Profile, but sends no model prompt. A
 failed preflight creates no Job. CONSULT_OPENAI_API_KEY,
 CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN explicitly override the
 corresponding Profile file; ambient vendor variables do not. Consult never
-refreshes vendor credentials.
+retries with ambient credentials or inheritance. A trusted root Claude
+delegate or review automatically makes one no-prompt Host OAuth refresh attempt
+when the staged file is expired, then reruns exact preflight. Nested Jobs and
+diagnostic commands never mutate Host credentials.
 
 ## Pinned diffs and review
 

@@ -403,6 +403,15 @@ macOS must therefore receive one supported token environment variable or a
 stageable `.claude/.credentials.json`; a Keychain-only Claude login cannot be
 copied into the private Job home.
 
+Before a trusted root Claude `delegate` or `review` stages an expired regular
+OAuth file, Consult automatically initializes the exact configured ACP Profile
+against the Host credential store, opens no model turn, disposes it, and reruns
+the same confined preflight exactly once. This Host-side refresh is separate
+from Job launch and is enabled by default without a user option. Nested Jobs,
+Doctor, and other diagnostic paths cannot trigger it. A failed or unchanged
+refresh creates no Job and never falls back to ambient inheritance; explicit
+Consult credential variables continue to bypass the Host OAuth file.
+
 In particular, confined Codex does not copy Host `config.toml`, and confined
 Claude does not copy Host `settings.json`. Model/provider preferences that
 exist only in those files can therefore differ from inherited launches; the

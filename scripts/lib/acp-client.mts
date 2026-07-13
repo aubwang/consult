@@ -67,6 +67,7 @@ export interface StartAgentOptions {
   workspaceRoot?: string;
   mode?: string;
   profileRegistryId?: string;
+  requestedModel?: string;
 }
 
 export interface AgentLaunchLease {
@@ -240,6 +241,7 @@ export async function startAgent(
     workspaceRoot = cwd,
     mode = "read-only",
     profileRegistryId,
+    requestedModel,
   }: StartAgentOptions,
   deps: StartAgentDeps = {},
 ): Promise<StartedAgent> {
@@ -253,6 +255,7 @@ export async function startAgent(
     mode,
     sandbox,
     profileRegistryId,
+    requestedModel,
   });
   const { launch } = lease;
   let releasePromise: Promise<void> | undefined;

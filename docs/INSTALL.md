@@ -120,14 +120,18 @@ environment, or a stageable
 passed only to the Job process tree; do not put it in project files or command
 arguments.
 
-If a stageable Claude OAuth credential has expired, confined preflight fails
-before starting the proxy or Profile. Consult does not refresh the credential
-and does not retry with inherited authority. Open Claude Code on the Host,
-complete sign-in there, then retry the Consult command. Alternatively, supply
-`CONSULT_CLAUDE_OAUTH_TOKEN` or `CONSULT_CLAUDE_API_KEY` to the Host
-environment; the Consult-specific credential takes precedence over the expired
-file. Ambient `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` variables are
-not selected as confined Profile credentials.
+If a stageable Claude OAuth credential has expired, a trusted root
+`delegate` or `review` invocation automatically initializes the exact Claude
+Profile against the Host credential store without sending a model prompt. It
+then reruns confined preflight once and continues the original command when
+the credential is fresh. There is no refresh flag or confirmation step.
+Nested Jobs and diagnostic commands never mutate Host credentials. If the
+single automatic attempt cannot refresh the login, run `claude auth login`
+once and retry. Alternatively, supply `CONSULT_CLAUDE_OAUTH_TOKEN` or
+`CONSULT_CLAUDE_API_KEY` to the Host environment; the Consult-specific
+credential takes precedence over the expired file. Ambient
+`ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` variables are not selected as
+confined Profile credentials. Consult never retries with inherited authority.
 
 If the shell cannot find `consult` after installation, inspect npm's global
 prefix with `npm prefix --global` and ensure its executable directory is on
