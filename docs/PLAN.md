@@ -432,6 +432,14 @@ risk; Consult deliberately does not add a credential broker in this version.
 ACP file handlers and permission-bearing paths remain realpath-confined to the
 Execution Workspace and reject symlink escapes:
 
+Profile adapters own the ACP `session/prompt` terminal boundary. Consult does
+not infer provider-internal background-task completion after a Profile has
+returned a stop reason. For the maintained Claude adapter's known pre-0.59.0
+async-subagent defect, Consult recognizes an explicit background `Agent`/`Task`
+launch and rejects an early stop with a stable compatibility diagnostic. This
+guard is feature-scoped: ordinary turns are not blanket-rejected by adapter
+version, and 0.59.0+ retains lifecycle ownership in the Profile.
+
 | Request kind | Read-only | Write | Write + fetch | `--allow-exec` requested |
 | --- | --- | --- | --- | --- |
 | read/search/think | allow, path-confined | allow, path-confined | allow, path-confined | allow, path-confined |

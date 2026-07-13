@@ -112,6 +112,18 @@ consult doctor --agent codex
 `node --version` must report version 24 or newer. `consult setup` lists the
 available Profiles and whether their agent executables are installed.
 
+Claude background subagents require the maintained ACP adapter 0.59.0 or
+newer. Update it through the same global npm prefix, then rerun Doctor:
+
+```sh
+npm install --global @agentclientprotocol/claude-agent-acp@^0.59.0
+consult doctor --agent claude
+```
+
+Older versions continue to support normal Claude turns, but Consult fails an
+affected asynchronous turn with `CLAUDE_ASYNC_FINALIZATION_UNSUPPORTED` rather
+than treating an interim "waiting" message as the completed Job Result.
+
 Confined Claude on macOS cannot read a login stored only in the macOS Keychain,
 because Consult deliberately does not broker Keychain credentials. Supply
 `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN` to the Host

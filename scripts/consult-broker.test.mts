@@ -87,6 +87,60 @@ test("consult/run accepts a job and streams update and finalized notifications",
   }
 });
 
+test("consult/run does not accept an early terminal response from vulnerable Claude ACP after an async subagent launch", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "claude",
+    agentArgs: ["sessions", "prompt-claude-async-subagent-early-stop"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    assert.deepEqual(
+      await client.request("consult/run", {
+        jobId: "job-claude-async-early-stop",
+        prompt: "launch a background subagent",
+        profile: "claude",
+        mode: "read-only",
+      }),
+      { accepted: true, jobId: "job-claude-async-early-stop" },
+    );
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /CLAUDE_ASYNC_FINALIZATION_UNSUPPORTED/u);
+    assert.match(finalized.errorMessage, /@agentclientprotocol\/claude-agent-acp@\^0\.59\.0/u);
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/run leaves fixed Claude ACP async-subagent finalization under Profile ownership", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "claude",
+    agentArgs: ["sessions", "prompt-claude-async-subagent-fixed"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-claude-async-fixed",
+      prompt: "launch a background subagent",
+      profile: "claude",
+      mode: "read-only",
+    });
+
+    assert.deepEqual(await finalizedPromise, {
+      jobId: "job-claude-async-fixed",
+      stopReason: "end_turn",
+      sessionId: "sess-1",
+    });
+  } finally {
+    await client.close();
+  }
+});
+
 test("consult/run projects a legacy payload to inherited canonical authority", async (t) => {
   const harness = await startBroker(t);
   const client = await connectBroker(harness.endpoint);
@@ -1799,6 +1853,7 @@ interface StartBrokerOptions {
   workspaceRoot?: string;
   sandbox?: string;
   authority?: JobAuthority;
+  profile?: string;
 }
 
 async function startBroker(
@@ -1818,6 +1873,7 @@ async function startBroker(
     workspaceRoot,
     sandbox,
     authority,
+    profile = "codex",
   }: StartBrokerOptions = {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "consult-broker-"));
@@ -1852,7 +1908,7 @@ async function startBroker(
     {
       endpoint,
       cwd: workspace,
-      profile: "codex",
+      profile,
       binary: process.execPath,
       args: [fakeAgentPath, ...agentArgs],
       env: {
@@ -1896,7 +1952,7 @@ async function startBroker(
       workspaceRoot: workspace,
       jobId,
       host,
-      profile: "codex",
+      profile,
       hostSessionId: brokerSessionId,
     }),
   };
