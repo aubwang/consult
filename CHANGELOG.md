@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/aubwang/consult/compare/v0.5.0...v0.5.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* guard Claude async finalization ([39bba28](https://github.com/aubwang/consult/commit/39bba28a7adf3475d49d81b99afc05db4ace17f1))
+
 ## [0.5.0](https://github.com/aubwang/consult/compare/v0.4.0...v0.5.0) (2026-07-13)
 
 
