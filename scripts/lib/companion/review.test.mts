@@ -343,6 +343,57 @@ test("review fails authority preflight before diff capture or adapter work", asy
   assert.equal(adapterCalled, false);
 });
 
+test("root Claude review automatically refreshes once before diff capture", async () => {
+  let preflightCalls = 0;
+  let refreshCalls = 0;
+  const result = await runReview({
+    args: { positional: [], flags: { agent: "claude" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      preflightAuthority: async (input) => {
+        preflightCalls += 1;
+        return preflightCalls === 1
+          ? expiredClaudePreflight()
+          : { ok: true as const, authority: input.authority };
+      },
+      refreshClaudeHostOauth: async (input) => {
+        assert.equal(input.profileRegistryId, "claude");
+        refreshCalls += 1;
+      },
+      getDiff: async () => {
+        throw new Error("stop after refresh proof");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.match(result.stderr, /stop after refresh proof/u);
+  assert.equal(preflightCalls, 2);
+  assert.equal(refreshCalls, 1);
+});
+
+test("nested Claude review never refreshes the Host credential", async () => {
+  let refreshCalls = 0;
+  const result = await runReview({
+    args: { positional: [], flags: { agent: "claude" } },
+    env: { CONSULT_PARENT_JOB: "job-parent" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => "/workspace",
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture("claude"),
+      preflightAuthority: async () => expiredClaudePreflight(),
+      refreshClaudeHostOauth: async () => {
+        refreshCalls += 1;
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(refreshCalls, 0);
+});
+
 test("review reads advertisesReview from the registry instead of hardcoding codex", async () => {
   let adapterRan = false;
   const result = await runReview({
@@ -478,6 +529,21 @@ function profileEntry(registryId: string): ProfileRecord {
     args: [],
     env: {},
     installedAt: "2026-05-14T09:00:00.000Z",
+  };
+}
+
+function expiredClaudePreflight() {
+  return {
+    ok: false as const,
+    diagnostic: {
+      code: "AUTHORITY_PREFLIGHT_FAILED" as const,
+      message: "Claude OAuth credential is expired",
+      remediation: "Sign in.",
+      details: {
+        credentialKind: "claude-oauth",
+        credentialState: "expired",
+      },
+    },
   };
 }
 

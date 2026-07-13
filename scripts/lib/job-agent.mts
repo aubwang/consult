@@ -17,7 +17,11 @@ import { normalizeAgentSandbox } from "./process-sandbox.mts";
 import { acquireConfinedSandboxRuntimeLaunch } from "./sandbox-runtime-launch.mts";
 import { readWorkspaceJobRecord } from "./job-records.mts";
 import { validateJobAuthorityRuntimeBoundary } from "./job-authority-preflight.mts";
-import { applySessionControls, openResumedSession } from "./session-controls.mts";
+import {
+  applySessionControls,
+  knownClaudeModelControl,
+  openResumedSession,
+} from "./session-controls.mts";
 import type { BrokerJob, BrokerSessionUpdate } from "./broker-job-runtime.mts";
 
 import type { ConsultRunParams } from "../consult-broker.mts";
@@ -54,6 +58,7 @@ export interface StartJobAgentOptions {
   resumeSourceJobId?: string | null;
   resumeSessionId?: string | null;
   parentJobId?: string | null;
+  model?: string | null;
   runtime: JobAgentRuntimeHooks;
 }
 
@@ -76,6 +81,7 @@ export async function startJobAgent(
     resumeSourceJobId = null,
     resumeSessionId = null,
     parentJobId = null,
+    model = null,
     runtime,
   }: StartJobAgentOptions,
   deps: StartJobAgentDeps = {},
@@ -122,6 +128,10 @@ export async function startJobAgent(
     mode: canonicalAuthority.mode,
     sandbox: sandboxMode,
     profileRegistryId,
+    requestedModel:
+      profileRegistryId === "claude" && model
+        ? knownClaudeModelControl(model) ?? undefined
+        : undefined,
     clientHandlers: {
       sessionUpdate: async ({ sessionId, update }) =>
         await runtime.handleSessionUpdate({ sessionId, update }),
@@ -170,6 +180,7 @@ export interface AgentTurnContext {
     resumeSourceJobId?: string | null,
     resumeSessionId?: string | null,
     parentJobId?: string | null,
+    model?: string | null,
   ): Promise<StartedAgent>;
   getSession(): string | undefined;
   getSessionState?(): AgentSessionState | undefined;
@@ -191,6 +202,7 @@ export async function runAgentJobTurn(
     canonicalParams.resumeJobId,
     canonicalParams.resume,
     canonicalParams.parentJobId,
+    canonicalParams.model,
   );
   let sessionId: string | undefined;
   let sessionState: AgentSessionState | null = null;

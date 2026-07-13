@@ -263,6 +263,11 @@ export function normalizeModelControl(profile: string, model: string): string {
   return model;
 }
 
+export function knownClaudeModelControl(model: string): string | null {
+  const normalized = model.toLowerCase().replaceAll("_", "-");
+  return CLAUDE_MODEL_ALIASES[normalized] ?? null;
+}
+
 const CLAUDE_MODEL_ALIASES: Record<string, string> = {
   opus: "claude-opus-4-8",
   "claude-opus": "claude-opus-4-8",

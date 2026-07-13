@@ -129,7 +129,15 @@ staged:
 Ambient vendor variables are ignored for Profile authentication, so a
 project's `OPENAI_API_KEY` does not replace the ChatGPT login represented by
 `auth.json`. Setting both Claude-specific Consult variables is an error.
-Consult never refreshes Profile credentials automatically.
+
+A trusted root `delegate` or `review` using a stageable Claude OAuth file
+automatically makes one no-prompt Host refresh attempt when that file is
+expired, then reruns exact confined preflight once. The attempt uses the exact
+configured Claude ACP Profile against the Host credential store; it never
+copies credentials back from a Job-private home and never sends a model
+prompt. Nested Jobs and diagnostic commands do not refresh Host credentials.
+If the Host is fully logged out, the command fails before Job creation with
+`claude auth login` remediation. No flag or setting is required.
 
 Confined launch does not copy Codex `config.toml` or Claude `settings.json`.
 Pass `--model` explicitly when Host configuration controls model or provider
@@ -333,8 +341,9 @@ consult brokers --cleanup
 If authentication fails, sign in with the Profile's native CLI first, then
 rerun `consult doctor --agent <profile>`. For an expired Claude OAuth file, an
 explicit `CONSULT_CLAUDE_OAUTH_TOKEN` or `CONSULT_CLAUDE_API_KEY` bypasses the
-file. Consult does not refresh vendor
-credentials or retry with ambient inheritance automatically.
+file. A trusted root Claude `delegate` or `review` automatically tries one
+Host refresh and reruns exact preflight; Doctor and nested Jobs remain
+diagnostic-only. Consult never retries with ambient inheritance automatically.
 
 ## Optional agent skills
 

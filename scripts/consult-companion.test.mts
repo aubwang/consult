@@ -113,7 +113,8 @@ test("help documents the extended exit codes, lineage env, and json coverage", a
   assert.match(result.stdout, /CONSULT_OPENAI_API_KEY/);
   assert.match(result.stdout, /ambient vendor variables do not/);
   assert.match(result.stdout, /ambient Host\s+environment without confined credential translation/);
-  assert.match(result.stdout, /never\s+refreshes vendor credentials/);
+  assert.match(result.stdout, /one no-prompt Host OAuth refresh attempt/);
+  assert.match(result.stdout, /Nested Jobs and\s+diagnostic commands never mutate Host credentials/);
   assert.doesNotMatch(result.stdout, /latest finalized delegate Session/);
 });
 

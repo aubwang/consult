@@ -8,6 +8,10 @@ import {
   unsupportedFlagError,
 } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
+import {
+  preflightWithClaudeHostRefresh,
+  refreshClaudeHostOauth as defaultRefreshClaudeHostOauth,
+} from "../claude-host-auth.mts";
 import { resolveNewJobChain } from "../delegation-chain.mts";
 import {
   appendPinnedDiff,
@@ -76,6 +80,7 @@ export interface DelegateDeps
   preflightAuthority?: (
     input: JobAuthorityPreflightInput,
   ) => Promise<JobAuthorityPreflightResult>;
+  refreshClaudeHostOauth?: typeof defaultRefreshClaudeHostOauth;
   validateSessionStateArchive?: typeof defaultValidateConfinedSessionStateArchive;
   [key: string]: unknown;
 }
@@ -199,14 +204,7 @@ export async function runDelegate({
     ...(validated.authority as JobAuthority),
     mode: chain.mode as JobAuthority["mode"],
   };
-  const preflight = await (
-    deps.preflightAuthority ??
-    ((input: JobAuthorityPreflightInput) =>
-      defaultPreflightJobAuthority(input, {
-        probeConfined: probeConfinedSandboxRuntime,
-        probeInherited: probeInheritedProfileLaunch,
-      }))
-  )({
+  const preflightInput: JobAuthorityPreflightInput = {
     authority,
     parentJob: chain.parent,
     workspaceRoot,
@@ -219,6 +217,17 @@ export async function runDelegate({
           env: selected.profileEntry.env,
         }
       : undefined,
+  };
+  const preflight = await preflightWithClaudeHostRefresh(preflightInput, {
+    allowHostRefresh: chain.parent == null,
+    preflight:
+      deps.preflightAuthority ??
+      ((input: JobAuthorityPreflightInput) =>
+        defaultPreflightJobAuthority(input, {
+          probeConfined: probeConfinedSandboxRuntime,
+          probeInherited: probeInheritedProfileLaunch,
+        })),
+    refresh: deps.refreshClaudeHostOauth ?? defaultRefreshClaudeHostOauth,
   });
   if (!preflight.ok) {
     writeAuthorityDiagnostic(output, preflight.diagnostic, validated.json === true);
