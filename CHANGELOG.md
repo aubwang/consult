@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/aubwang/consult/compare/v0.4.0...v0.5.0) (2026-07-13)
+
+
+### Features
+
+* improve confined Claude startup ([9c3530b](https://github.com/aubwang/consult/commit/9c3530b94a30b3dff61b0e26b525075562e5c0e5))
+
+
+### Bug Fixes
+
+* migrate Codex ACP adapter ([ec56bcc](https://github.com/aubwang/consult/commit/ec56bcc3759c0b1f855ace7e0950fe45f47f2d30))
+* support Homebrew Node in Linux confinement ([b19e3fe](https://github.com/aubwang/consult/commit/b19e3fe0b894f5671d5896eac2f01ece54aceaf5))
+* use maintained Claude ACP package ([51b6291](https://github.com/aubwang/consult/commit/51b6291cd7be4d322763231e1a119ad1c0de222c))
+
 ## [0.4.0](https://github.com/aubwang/consult/compare/v0.3.0...v0.4.0) (2026-07-11)
 
 
