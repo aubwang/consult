@@ -3,17 +3,11 @@
   "agents": [
     {
       "id": "codex",
-      "label": "OpenAI Codex (ACP shim: codex-acp)",
-      "notes": "Wraps the codex CLI. Run `codex login` first to authenticate with OpenAI (or set CONSULT_OPENAI_API_KEY).",
+      "label": "OpenAI Codex (ACP adapter: codex-acp)",
+      "notes": "Includes a compatible Codex CLI. Run `codex login` first to authenticate with OpenAI (or set CONSULT_OPENAI_API_KEY).",
       "binary": "codex-acp",
       "args": [],
-      "install": {
-        "type": "github-release",
-        "repo": "zed-industries/codex-acp",
-        "version": "v0.16.0",
-        "assetTemplate": "codex-acp-{versionNoV}-{target}.{ext}",
-        "binaryInArchive": "codex-acp"
-      },
+      "install": { "type": "npm", "cmd": "npm install -g @agentclientprotocol/codex-acp" },
       "advertisesReview": true,
       "supports": { "resume": true, "load": true }
     },

@@ -197,6 +197,44 @@ test("applySessionControls resolves advertised GPT-5.6 tier aliases", async () =
   ]);
 });
 
+test("applySessionControls preserves the current effort for decorated Codex model ids", async () => {
+  const calls: unknown[] = [];
+  const connection = {
+    async unstable_setSessionModel(params: unknown) {
+      calls.push(params);
+    },
+  } as unknown as AcpConnection;
+  const sessionState = {
+    models: {
+      availableModels: [
+        modelInfo("gpt-5.6-sol[low]"),
+        modelInfo("gpt-5.6-sol[high]"),
+        modelInfo("gpt-5.4-mini[medium]"),
+        modelInfo("gpt-5.4-mini[high]"),
+      ],
+      currentModelId: "gpt-5.6-sol[high]",
+    },
+  };
+
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState,
+    model: "sol",
+    profile: "codex",
+  });
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState,
+    model: "gpt-5.4-mini",
+    profile: "codex",
+  });
+
+  assert.deepEqual(calls, [
+    { sessionId: "session-1", modelId: "gpt-5.6-sol[high]" },
+    { sessionId: "session-1", modelId: "gpt-5.4-mini[high]" },
+  ]);
+});
+
 test("applySessionControls never sends bare Codex tier aliases as model ids", async () => {
   const calls: unknown[] = [];
   const connection = {

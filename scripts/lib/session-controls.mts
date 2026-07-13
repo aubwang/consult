@@ -128,8 +128,13 @@ async function applyModelControl(
   const normalizedModel = normalizeModelControl(profile, model);
   const requestedModel = profile === "codex" ? normalizedModel : model;
   if (sessionState?.models) {
+    const advertised = advertisedModelIds(sessionState.models);
     const modelId =
-      resolveAdvertisedModel(requestedModel, advertisedModelIds(sessionState.models)) ??
+      resolveAdvertisedModel(
+        requestedModel,
+        advertised,
+        currentAdvertisedModelId(sessionState.models),
+      ) ??
       normalizedModel;
     await setSessionModel(connection, { sessionId, modelId });
     return sessionState;
@@ -173,7 +178,16 @@ function advertisedModelIds(models: unknown): string[] {
   });
 }
 
-function resolveAdvertisedModel(requested: string, advertised: string[]): string | null {
+function currentAdvertisedModelId(models: unknown): string | null {
+  const currentModelId = (models as { currentModelId?: unknown } | null)?.currentModelId;
+  return typeof currentModelId === "string" ? currentModelId : null;
+}
+
+function resolveAdvertisedModel(
+  requested: string,
+  advertised: string[],
+  currentModelId: string | null,
+): string | null {
   if (advertised.includes(requested)) {
     return requested;
   }
@@ -182,7 +196,23 @@ function resolveAdvertisedModel(requested: string, advertised: string[]): string
   if (relaxed) {
     return relaxed;
   }
+  const decorated = advertised.filter(
+    (id) => decoratedModelId(id)?.model.toLowerCase() === normalized,
+  );
+  if (decorated.length > 0) {
+    const currentEffort = currentModelId === null
+      ? null
+      : decoratedModelId(currentModelId)?.effort ?? null;
+    return decorated.find((id) => decoratedModelId(id)?.effort === currentEffort) ?? decorated[0];
+  }
   return resolveFamilyLatest(requested, advertised);
+}
+
+function decoratedModelId(modelId: string): { model: string; effort: string } | null {
+  const match = /^(?<model>.+)\[(?<effort>[^\]]+)\]$/u.exec(modelId);
+  return match?.groups
+    ? { model: match.groups.model, effort: match.groups.effort }
+    : null;
 }
 
 // A family or tier alias is a bare name with no version digits ("sonnet",

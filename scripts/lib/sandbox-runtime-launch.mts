@@ -111,7 +111,7 @@ export const CONFINED_PROFILE_POLICIES: Readonly<
       "chatgpt.com",
       "auth.openai.com",
     ]),
-    requiredCommands: Object.freeze(["codex"]),
+    requiredCommands: Object.freeze([]),
   }),
   claude: Object.freeze({
     credentialEnv: Object.freeze({
