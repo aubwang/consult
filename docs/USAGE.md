@@ -191,6 +191,24 @@ bounded untrusted input. The review does not apply the patch. `--job` and
 
 ## Background Jobs
 
+Claude background subagents require
+`@agentclientprotocol/claude-agent-acp` 0.59.0 or newer. Earlier maintained
+adapter versions can return `end_turn` immediately after launching an async
+`Agent`/`Task`, before its result and follow-up message arrive. Consult detects
+that exact incompatible turn and finalizes it as
+`CLAUDE_ASYNC_FINALIZATION_UNSUPPORTED` instead of recording the interim text
+as a successful Job Result. Update the Profile and retry:
+
+```sh
+npm install --global @agentclientprotocol/claude-agent-acp@^0.59.0
+consult doctor --agent claude
+```
+
+Normal Claude turns, including synchronous tool use and synchronous
+subagents, remain available on older adapter versions. Consult does not
+reimplement the Claude SDK's background-task lifecycle; compatible Profile
+adapters own the terminal `session/prompt` boundary.
+
 ```sh
 consult delegate --agent opencode --read-only --sandbox inherit \
   --background -- "Trace the bug."

@@ -18,6 +18,11 @@ interface AgentCapabilities {
   sessionCapabilities: Record<string, unknown>;
 }
 
+interface AgentInfo {
+  name: string;
+  version: string;
+}
+
 interface SessionConfigOption {
   type: string;
   id: string;
@@ -134,6 +139,7 @@ fs.writeSync(
     result: {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: capabilitiesForScenario(scenario),
+      ...agentInfoForScenario(scenario),
     },
   })}\n`,
 );
@@ -157,6 +163,7 @@ function handleMessage(message: FakeAgentMessage): void {
       result: {
         protocolVersion: PROTOCOL_VERSION,
         agentCapabilities: capabilitiesForScenario(scenario),
+        ...agentInfoForScenario(scenario),
       },
     });
     return;
@@ -233,6 +240,36 @@ function handleMessage(message: FakeAgentMessage): void {
       }
       writeUpdate(message.params.sessionId, "slow");
       cancellablePrompt = message;
+      return;
+    }
+    if (
+      scenario === "prompt-claude-async-subagent-early-stop" ||
+      scenario === "prompt-claude-async-subagent-fixed"
+    ) {
+      writeMessage({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "async-agent-1",
+            kind: "think",
+            title: "Explore workspace",
+            rawInput: {
+              subagent_type: "Explore",
+              run_in_background: true,
+            },
+            _meta: { claudeCode: { toolName: "Agent" } },
+          },
+        },
+      });
+      writeUpdate(message.params.sessionId, "WAITING_FOR_SUBAGENT");
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
       return;
     }
     if (scenario === "prompt-first-resolve-second-cancel-ack") {
@@ -442,6 +479,23 @@ function capabilitiesForScenario(currentScenario: string): AgentCapabilities {
       resume: {},
     },
   };
+}
+
+function agentInfoForScenario(currentScenario: string): { agentInfo?: AgentInfo } {
+  if (
+    currentScenario === "prompt-claude-async-subagent-early-stop" ||
+    currentScenario === "prompt-claude-async-subagent-fixed"
+  ) {
+    return {
+      agentInfo: {
+        name: "@agentclientprotocol/claude-agent-acp",
+        version: currentScenario === "prompt-claude-async-subagent-fixed"
+          ? "0.59.0"
+          : "0.58.1",
+      },
+    };
+  }
+  return {};
 }
 
 function sessionControlsForScenario(currentScenario: string): SessionControls {
