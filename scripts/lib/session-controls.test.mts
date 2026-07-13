@@ -29,6 +29,10 @@ test("resolveFamilyLatest ignores digits in model decorations", () => {
     resolveFamilyLatest("sonnet", ["claude-sonnet-4-5", "claude-sonnet-4-5[1m]"]),
     "claude-sonnet-4-5",
   );
+  assert.equal(
+    resolveFamilyLatest("sonnet", ["claude-sonnet-4-5[1m]", "claude-sonnet-4-5"]),
+    "claude-sonnet-4-5",
+  );
 });
 
 test("supportsLoad reads the loadSession capability", () => {

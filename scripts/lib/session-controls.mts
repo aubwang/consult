@@ -230,9 +230,16 @@ export function resolveFamilyLatest(requested: string, candidates: string[]): st
   if (matches.length === 0) {
     return null;
   }
-  return matches.reduce((newest, candidate) =>
-    compareModelVersions(candidate, newest) > 0 ? candidate : newest,
-  );
+  return matches.reduce((newest, candidate) => {
+    const comparison = compareModelVersions(candidate, newest);
+    if (comparison !== 0) {
+      return comparison > 0 ? candidate : newest;
+    }
+    // Same version: prefer the undecorated id over a decorated variant.
+    return MODEL_DECORATION.test(newest) && !MODEL_DECORATION.test(candidate)
+      ? candidate
+      : newest;
+  });
 }
 
 function compareModelVersions(a: string, b: string): number {
@@ -248,8 +255,10 @@ function compareModelVersions(a: string, b: string): number {
   return 0;
 }
 
+const MODEL_DECORATION = /\[[^\]]*\]$/u;
+
 function versionSegments(id: string): number[] {
-  const undecorated = id.replace(/\[[^\]]*\]$/u, "");
+  const undecorated = id.replace(MODEL_DECORATION, "");
   return (undecorated.match(/\d+/g) ?? []).map(Number);
 }
 

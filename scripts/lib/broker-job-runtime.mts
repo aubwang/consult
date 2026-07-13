@@ -119,6 +119,7 @@ export interface BrokerJob {
   finalized: BrokerJobFinalized | null;
   originatorSocket: BrokerJobSocketLike;
   cancelRequested: boolean;
+  awaitingViolatedTurn: boolean;
   cancelAckTimer: NodeJS.Timeout | null;
   wallClockTimer: NodeJS.Timeout | null;
   persistedLogBytes: number;
@@ -246,6 +247,7 @@ export function createBrokerJobRuntime({
         finalized: null,
         originatorSocket,
         cancelRequested: false,
+        awaitingViolatedTurn: false,
         cancelAckTimer: null,
         wallClockTimer: null,
         persistedLogBytes: 0,
@@ -412,6 +414,7 @@ export function createBrokerJobRuntime({
       return descendants.map((candidate) => candidate.jobId);
     },
     noteTurnSettled(job) {
+      job.awaitingViolatedTurn = false;
       clearCancelAckTimer(job);
       clearWallClockTimer(job);
     },
@@ -504,6 +507,7 @@ export function createBrokerJobRuntime({
     if (preparesTerminalBoundary) {
       busy = false;
     } else {
+      job.awaitingViolatedTurn = true;
       startCancelAckTimer(job);
       ensureAgent(job.authority)
         .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
@@ -537,6 +541,7 @@ export function createBrokerJobRuntime({
     job.finalized = boundedFinalized(job, preparedFinalized);
     sessionJobs.delete(job.sessionId);
     if (job.sessionId && !preparesTerminalBoundary) {
+      job.awaitingViolatedTurn = true;
       startCancelAckTimer(job);
       ensureAgent(job.authority)
         .then((agent) => cancelPrompt(agent.connection, { sessionId: job.sessionId as string }))
@@ -566,6 +571,16 @@ export function createBrokerJobRuntime({
 
   async function finalizeUnacknowledgedCancel(job: BrokerJob): Promise<void> {
     if (job.status !== "running") {
+      if (!job.awaitingViolatedTurn) {
+        return;
+      }
+      // A violated turn never settled: release the broker it still holds and
+      // taint, matching the failed record its finalization already wrote.
+      job.awaitingViolatedTurn = false;
+      busy = false;
+      tainted = true;
+      onActivity();
+      onTerminal(job);
       return;
     }
     clearWallClockTimer(job);

@@ -197,7 +197,8 @@ test("finalize refuses a tracked file replaced by a symlink", async (t) => {
 
   await assert.rejects(
     finalizeIsolatedWorkspace(prepared),
-    (error: IsolatedWorkspaceError) => error.code === "UNTRACKED_SYMLINK",
+    (error: IsolatedWorkspaceError) =>
+      error.code === "UNTRACKED_SYMLINK" && error.message.includes("staged.txt"),
   );
   await assert.rejects(fs.access(path.join(prepared.artifactsDir, "changes.patch")));
 });
