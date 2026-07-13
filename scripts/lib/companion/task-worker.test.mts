@@ -9,6 +9,7 @@ import type {
   FinalizedIsolatedWorkspace,
   PreparedIsolatedWorkspace,
 } from "../isolated-workspace.mts";
+import type { JobRecord } from "../job-records.mts";
 import { runTaskWorker } from "./task-worker.mts";
 
 test("task-worker runs a queued delegate job and finalizes its record", async (t) => {
@@ -53,6 +54,79 @@ test("task-worker runs a queued delegate job and finalizes its record", async (t
   assert.equal(record.status, "completed");
   assert.equal(record.sessionId, "session-worker");
   assert.equal(record.finalText, "done");
+});
+
+test("task-worker does not start an already-cancelled Job", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-cancelled-before-worker",
+    kind: "delegate",
+    status: "cancelled",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "write",
+    host: "claude-code",
+    profile: "codex",
+    prompt: "must not run",
+    hostSessionId: "claude-1",
+  });
+
+  const result = await runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-cancelled-before-worker" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadProfiles: async () => {
+        throw new Error("Profile must not start for a cancelled Job");
+      },
+      ensureBrokerSession: async () => {
+        throw new Error("Broker must not start for a cancelled Job");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal((await readJob(workspaceRoot, "job-cancelled-before-worker")).status, "cancelled");
+});
+
+test("task-worker observes cancellation while stamping its worker pid", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-cancelled-during-stamp",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "write",
+    host: "claude-code",
+    profile: "codex",
+    prompt: "must not run",
+    hostSessionId: "claude-1",
+  });
+
+  const result = await runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-cancelled-during-stamp" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      writeJobRecord: async (_root: string, _jobId: string, record: JobRecord) => {
+        await writeJob(workspaceRoot, {
+          ...record,
+          status: "cancelled",
+          stopReason: "cancelled",
+        });
+      },
+      loadProfiles: async () => {
+        throw new Error("Profile must not start after cancellation");
+      },
+      ensureBrokerSession: async () => {
+        throw new Error("Broker must not start after cancellation");
+      },
+    }),
+  });
+
+  const record = await readJob(workspaceRoot, "job-cancelled-during-stamp");
+  assert.equal(result.exitCode, 0);
+  assert.equal(record.status, "cancelled");
+  assert.equal(record.workerPid, process.pid);
 });
 
 test("task-worker forwards completed prerequisite results to the dependent prompt", async (t) => {
@@ -162,6 +236,55 @@ test("task-worker waits for prerequisite Jobs before starting the Profile", asyn
   });
 
   assert.equal((await resultPromise).exitCode, 0);
+});
+
+test("task-worker observes cancellation while waiting for prerequisites", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-prerequisite",
+    kind: "delegate",
+    status: "running",
+    profile: "claude",
+    submittedAt: "2026-05-14T09:00:00.000Z",
+  });
+  await writeJob(workspaceRoot, {
+    jobId: "job-cancelled-during-wait",
+    kind: "delegate",
+    status: "queued",
+    submittedAt: "2026-05-14T10:00:00.000Z",
+    mode: "write",
+    host: "codex",
+    profile: "codex",
+    prompt: "must not run",
+    hostSessionId: "codex-1",
+    afterJobIds: ["job-prerequisite"],
+  });
+
+  const result = await runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-cancelled-during-wait" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      poll: async () => {
+        const cancelled = await readJob(workspaceRoot, "job-cancelled-during-wait");
+        cancelled.status = "cancelled";
+        cancelled.stopReason = "cancelled";
+        await writeJob(workspaceRoot, cancelled);
+        const prerequisite = await readJob(workspaceRoot, "job-prerequisite");
+        prerequisite.status = "completed";
+        await writeJob(workspaceRoot, prerequisite);
+      },
+      loadProfiles: async () => {
+        throw new Error("Profile must not start after cancellation");
+      },
+      ensureBrokerSession: async () => {
+        throw new Error("Broker must not start after cancellation");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal((await readJob(workspaceRoot, "job-cancelled-during-wait")).status, "cancelled");
 });
 
 test("task-worker skips a dependent Job when a prerequisite does not complete", async (t) => {

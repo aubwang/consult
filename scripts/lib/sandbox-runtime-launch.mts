@@ -160,7 +160,21 @@ export interface ConfinedSandboxRuntimeLaunchDeps {
   startAgent?: typeof startAgent;
   now?: () => number;
   pidIsAlive?: (pid: number) => boolean;
+  inspectMachO?: MachODependencyInspector;
+  warn?: (message: string) => void;
 }
+
+export interface MachODependency {
+  installName: string;
+  weak: boolean;
+}
+
+export interface MachOInspection {
+  dependencies: MachODependency[];
+  rpaths: string[];
+}
+
+export type MachODependencyInspector = (executable: string) => MachOInspection;
 
 export interface ConfinedSandboxRuntimeProbeInput
   extends JobAuthorityPreflightInput {
@@ -330,10 +344,11 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       ...runtimeExecutableReadScopes(
         require.resolve("@anthropic-ai/sandbox-runtime"),
         platform,
+        deps,
       ),
-      ...runtimeExecutableReadScopes(resolvedBinary, platform),
+      ...runtimeExecutableReadScopes(resolvedBinary, platform, deps),
       ...[...runtimeExecutables.values()].flatMap((executable) =>
-        runtimeExecutableReadScopes(executable, platform),
+        runtimeExecutableReadScopes(executable, platform, deps),
       ),
     ];
     const readPaths = existingPaths([
@@ -820,8 +835,7 @@ async function executableNeedsNode(executable: string): Promise<boolean> {
 
 export function executableReadScopes(
   executable: string,
-  linkedRuntimePaths: readonly string[] =
-    process.platform === "darwin" ? linkedMachORuntimePaths(executable) : [],
+  linkedRuntimePaths: readonly string[] = [],
 ): string[] {
   const scopes = new Set<string>();
   addExecutableReadScopes(scopes, executable);
@@ -831,6 +845,14 @@ export function executableReadScopes(
   }
   addHomebrewOpenSslDataReadScopes(scopes, linkedRuntimePaths);
   return [...scopes];
+}
+
+export function macosExecutableReadScopes(
+  executable: string,
+  inspect: MachODependencyInspector = inspectMachODependencies,
+  warn: (message: string) => void = defaultRuntimeWarning,
+): string[] {
+  return executableReadScopes(executable, linkedMachORuntimePaths(executable, inspect, warn));
 }
 
 export function linuxExecutableReadScopes(
@@ -853,10 +875,15 @@ export function linuxExecutableReadScopes(
 function runtimeExecutableReadScopes(
   executable: string,
   platform: SupportedPlatform,
+  deps: Pick<ConfinedSandboxRuntimeLaunchDeps, "inspectMachO" | "warn"> = {},
 ): string[] {
   return platform === "linux"
     ? linuxExecutableReadScopes(executable)
-    : executableReadScopes(executable);
+    : macosExecutableReadScopes(
+        executable,
+        deps.inspectMachO ?? inspectMachODependencies,
+        deps.warn ?? defaultRuntimeWarning,
+      );
 }
 
 function addHomebrewOpenSslDataReadScopes(
@@ -921,27 +948,100 @@ function addExecutableReadScopes(scopes: Set<string>, executable: string): void 
   }
 }
 
-function linkedMachORuntimePaths(executable: string): string[] {
+function linkedMachORuntimePaths(
+  executable: string,
+  inspect: MachODependencyInspector,
+  warn: (message: string) => void,
+): string[] {
   const linked = new Set<string>();
   const inspected = new Set<string>();
-  const pending = [executable];
+  const pending = [{ candidate: executable, inheritedRpaths: [] as string[] }];
   while (pending.length > 0) {
-    const candidate = pending.pop()!;
+    const { candidate, inheritedRpaths } = pending.pop()!;
     const canonical = fs.realpathSync(candidate);
     if (inspected.has(canonical)) continue;
     inspected.add(canonical);
     if (!isMachO(canonical)) continue;
-    for (const dependency of inspectMachODependencies(canonical)) {
-      if (!path.isAbsolute(dependency) || isMacosSystemRuntimePath(dependency)) {
-        continue;
+    const inspection = inspect(canonical);
+    const executableDirectory = path.dirname(executable);
+    const loaderDirectory = path.dirname(canonical);
+    const rpaths = [
+      ...inspection.rpaths.map((rpath) =>
+        expandMachOPathTokens(rpath, loaderDirectory, executableDirectory)),
+      ...inheritedRpaths,
+    ];
+    for (const dependency of inspection.dependencies) {
+      const resolvedDependency = resolveMachODependency(
+        dependency.installName,
+        loaderDirectory,
+        executableDirectory,
+        rpaths,
+      );
+      if (resolvedDependency === undefined) {
+        if (dependency.weak) {
+          warn(`skipping missing weak-linked macOS runtime dependency '${dependency.installName}' for ${canonical}`);
+          continue;
+        }
+        throw new Error(
+          `failed to resolve linked runtime dependency '${dependency.installName}' for ${canonical}`,
+        );
       }
-      const resolved = fs.realpathSync(dependency);
-      linked.add(dependency);
+      if (isMacosSystemRuntimePath(resolvedDependency)) continue;
+      let resolved: string;
+      try {
+        resolved = fs.realpathSync(resolvedDependency);
+      } catch (error) {
+        if (dependency.weak && (error as NodeJS.ErrnoException).code === "ENOENT") {
+          warn(`skipping missing weak-linked macOS runtime dependency '${resolvedDependency}' for ${canonical}`);
+          continue;
+        }
+        throw error;
+      }
+      linked.add(resolvedDependency);
       linked.add(resolved);
-      if (!inspected.has(resolved)) pending.push(resolved);
+      if (!inspected.has(resolved)) pending.push({ candidate: resolved, inheritedRpaths: rpaths });
     }
   }
   return [...linked];
+}
+
+function expandMachOPathTokens(
+  candidate: string,
+  loaderDirectory: string,
+  executableDirectory: string,
+): string {
+  if (candidate === "@loader_path") return loaderDirectory;
+  if (candidate.startsWith("@loader_path/")) {
+    return path.join(loaderDirectory, candidate.slice("@loader_path/".length));
+  }
+  if (candidate === "@executable_path") return executableDirectory;
+  if (candidate.startsWith("@executable_path/")) {
+    return path.join(executableDirectory, candidate.slice("@executable_path/".length));
+  }
+  return candidate;
+}
+
+function resolveMachODependency(
+  installName: string,
+  loaderDirectory: string,
+  executableDirectory: string,
+  rpaths: readonly string[],
+): string | undefined {
+  const expanded = expandMachOPathTokens(installName, loaderDirectory, executableDirectory);
+  if (path.isAbsolute(expanded)) return path.resolve(expanded);
+  if (!installName.startsWith("@rpath/")) return undefined;
+  const suffix = installName.slice("@rpath/".length);
+  for (const rpath of rpaths) {
+    if (!path.isAbsolute(rpath)) continue;
+    const candidate = path.join(rpath, suffix);
+    try {
+      fs.lstatSync(candidate);
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return undefined;
 }
 
 function linkedElfRuntimePaths(executable: string): string[] {
@@ -1039,28 +1139,70 @@ function isElf(candidate: string): boolean {
   }
 }
 
-function inspectMachODependencies(executable: string): string[] {
+export function inspectMachODependencies(executable: string): MachOInspection {
   let output: string;
   try {
-    output = execFileSync("/usr/bin/otool", ["-L", executable], {
+    output = execFileSync("/usr/bin/otool", ["-l", executable], {
       encoding: "utf8",
       maxBuffer: 1024 * 1024,
       timeout: 5_000,
     });
-  } catch {
+  } catch (error) {
+    const detail = [
+      (error as { stdout?: unknown }).stdout,
+      (error as { stderr?: unknown }).stderr,
+    ].filter((value): value is string => typeof value === "string").join("\n");
+    if (
+      (error as NodeJS.ErrnoException).code === "ENOENT" ||
+      /xcode-select|command line tools|active developer directory/iu.test(detail)
+    ) {
+      throw new Error(
+        `failed to inspect linked runtime dependencies for ${executable}: otool is unavailable; install Xcode Command Line Tools with 'xcode-select --install'`,
+      );
+    }
     throw new Error(`failed to inspect linked runtime dependencies for ${executable}`);
   }
-  const dependencies: string[] = [];
-  for (const line of output.split(/\r?\n/u).slice(1)) {
-    const match = /^\s+(.+?) \(compatibility version /u.exec(line);
-    if (match) dependencies.push(match[1]);
-  }
-  return dependencies;
+  return parseMachOOtoolLoadCommands(output);
 }
 
-function isMacosSystemRuntimePath(candidate: string): boolean {
+export function parseMachOOtoolLoadCommands(output: string): MachOInspection {
+  const dependencies: MachODependency[] = [];
+  const rpaths: string[] = [];
+  for (const block of output.split(/^Load command \d+\s*$/gmu).slice(1)) {
+    const command = /^\s*cmd (LC_[A-Z0-9_]+)\s*$/mu.exec(block)?.[1];
+    if (command === "LC_RPATH") {
+      const rpath = /^\s*path (.+?) \(offset \d+\)\s*$/mu.exec(block)?.[1];
+      if (rpath) rpaths.push(rpath);
+      continue;
+    }
+    if (!new Set([
+      "LC_LOAD_DYLIB",
+      "LC_LOAD_WEAK_DYLIB",
+      "LC_REEXPORT_DYLIB",
+      "LC_LOAD_UPWARD_DYLIB",
+    ]).has(command ?? "")) {
+      continue;
+    }
+    const installName = /^\s*name (.+?) \(offset \d+\)\s*$/mu.exec(block)?.[1];
+    if (installName) {
+      dependencies.push({
+        installName,
+        weak: command === "LC_LOAD_WEAK_DYLIB",
+      });
+    }
+  }
+  return { dependencies, rpaths };
+}
+
+export function isMacosSystemRuntimePath(candidate: string): boolean {
   return candidate === "/System" || candidate.startsWith("/System/") ||
-    candidate === "/usr" || candidate.startsWith("/usr/");
+    ["/usr/bin", "/usr/lib", "/usr/libexec", "/usr/sbin", "/usr/share"].some(
+      (root) => candidate === root || candidate.startsWith(`${root}/`),
+    );
+}
+
+function defaultRuntimeWarning(message: string): void {
+  process.emitWarning(message);
 }
 
 function existingPaths(paths: readonly string[]): string[] {

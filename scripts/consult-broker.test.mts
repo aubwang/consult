@@ -1186,6 +1186,52 @@ test("idle broker shuts down after the idle timeout", async (t) => {
   assert.equal(fs.existsSync(harness.pidFile), false);
 });
 
+test("a concurrent Broker for the same identity cannot replace the live owner", async (t) => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-broker-lock-"));
+  const workspace = path.join(dir, "workspace");
+  const endpoint = path.join(dir, "broker.sock");
+  const previousDataDir = process.env.CONSULT_DATA_DIR;
+  process.env.CONSULT_DATA_DIR = path.join(dir, "data");
+  await fsp.mkdir(workspace);
+  const options = {
+    endpoint,
+    cwd: workspace,
+    profile: "codex",
+    binary: process.execPath,
+    args: [fakeAgentPath, "sessions"],
+    host: "terminal",
+    hostSessionId: "lock-test",
+    idleTimeoutMs: 0,
+  };
+  const owner = await serveBroker(options);
+  const statePath = brokerFilePath({
+    workspaceRoot: workspace,
+    jobId: null,
+    host: "terminal",
+    hostSessionId: "lock-test",
+    profile: "codex",
+  });
+  t.after(async () => {
+    await owner.shutdown().catch(() => {});
+    if (previousDataDir === undefined) delete process.env.CONSULT_DATA_DIR;
+    else process.env.CONSULT_DATA_DIR = previousDataDir;
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  await assert.rejects(
+    serveBroker(options),
+    (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
+  );
+  assert.equal(await fileExists(statePath), true);
+  assert.equal(await fileExists(`${statePath}.lock`), true);
+  const client = await connectBroker(endpoint);
+  try {
+    assert.equal(((await client.request("consult/ping", {})) as any).ok, true);
+  } finally {
+    await client.close();
+  }
+});
+
 test("connected clients prevent idle broker shutdown until they disconnect", async (t) => {
   const harness = await startBroker(t, { idleTimeoutMs: 30 });
   const client = await connectBroker(harness.endpoint);
@@ -1202,6 +1248,7 @@ test("running jobs prevent idle broker shutdown after originator disconnect", as
     idleTimeoutMs: 20,
   });
   const client = await connectBroker(harness.endpoint);
+  const sawUpdate = nextNotification(client, "consult/update");
 
   await client.request("consult/run", {
     jobId: "job-1",
@@ -1209,6 +1256,7 @@ test("running jobs prevent idle broker shutdown after originator disconnect", as
     profile: "codex",
     mode: "write",
   });
+  await sawUpdate;
   await client.close();
 
   await assertNotClosedWithin(harness.broker.closed, 80);

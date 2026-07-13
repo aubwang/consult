@@ -3,6 +3,7 @@ import {
   failJobRecord,
   finalizeJobRecord,
   markJobRunning,
+  readWorkspaceJobRecord as defaultReadJobRecord,
   writeJobRecord as defaultWriteJobRecord,
 } from "./job-records.mts";
 import type { JobRecord } from "./job-records.mts";
@@ -55,6 +56,7 @@ export interface PromptTurnContext {
 
 export interface PromptTurnDeps {
   now?: () => string;
+  readJobRecord?: (workspaceRoot: string, jobId: string) => Promise<JobRecord>;
   writeJobRecord?: (workspaceRoot: string, jobId: string, record: JobRecord) => Promise<void>;
   appendLogLine?: (
     workspaceRoot: string,
@@ -121,6 +123,7 @@ export async function runPromptTurn({
 }: RunPromptTurnOptions): Promise<PromptTurnSuccess | NullOutputResult> {
   const now = deps.now ?? (() => new Date().toISOString());
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
+  const readJobRecord = deps.readJobRecord ?? defaultReadJobRecord;
   const appendLogLine = deps.appendLogLine ?? defaultAppendLogLine;
   const maxFinalTextChars = deps.maxFinalTextChars ?? DEFAULT_MAX_FINAL_TEXT_CHARS;
   const authority = canonicalRunAuthority(jobRecord);
@@ -175,6 +178,14 @@ export async function runPromptTurn({
   const reportWriteFailure = (error: unknown) => {
     output.stderr(`job record write failed: ${(error as Error).message}\n`);
   };
+  const persistJobRecord = async (): Promise<void> => {
+    const existing = await readJobRecord(workspaceRoot, jobRecord.jobId!).catch(() => null);
+    if (existing?.status === "cancelled" && jobRecord.status !== "cancelled") {
+      Object.assign(jobRecord, existing);
+      return;
+    }
+    await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord);
+  };
 
   client.on("consult/update", (notification) => {
     onUpdate?.(notification, context);
@@ -186,7 +197,7 @@ export async function runPromptTurn({
       if (!sawUpdate) {
         sawUpdate = true;
         markJobRunning(jobRecord, { now });
-        await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord).catch(reportWriteFailure);
+        await persistJobRecord().catch(reportWriteFailure);
       }
       const agentText = extractFinalText(notification);
       if (agentText) {
@@ -218,7 +229,7 @@ export async function runPromptTurn({
       if (finalizedNotification.sessionStateArchived) {
         jobRecord.sessionStateArchived = true;
       }
-      await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord).catch(reportWriteFailure);
+      await persistJobRecord().catch(reportWriteFailure);
       finalizedResolve(finalizedNotification);
     });
   });
@@ -251,7 +262,7 @@ export async function runPromptTurn({
     const message = brokerErrorMessage(brokerError);
     if (markFailedOnBrokerError) {
       failJobRecord(jobRecord, { now, errorMessage: message });
-      await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord);
+      await persistJobRecord();
     }
     output.stderr(`${message}\n`);
     return output.result(exitCode);
@@ -261,7 +272,7 @@ export async function runPromptTurn({
     const message = `Broker did not accept ${jobRecord.kind} job`;
     if (markFailedOnBrokerError) {
       failJobRecord(jobRecord, { now, errorMessage: message });
-      await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord);
+      await persistJobRecord();
     }
     output.stderr(`${message}\n`);
     return output.result(3);
@@ -290,7 +301,7 @@ export async function runPromptTurn({
     const message = brokerErrorMessage(brokerError);
     failJobRecord(jobRecord, { now, errorMessage: message, finalText });
     await notificationChain;
-    await writeJobRecord(workspaceRoot, jobRecord.jobId!, jobRecord);
+    await persistJobRecord();
     output.stderr(`${message}\n`);
     return output.result(exitCodeForBrokerError(brokerError.code));
   }

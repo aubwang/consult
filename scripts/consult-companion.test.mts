@@ -47,6 +47,19 @@ test("dispatch rejects an unknown subcommand", async () => {
   assert.equal(result.stderr.includes("Operational contract"), false);
 });
 
+test("dispatch rejects an unrecognized boolean flag value", async () => {
+  const result = await dispatch("logs", {
+    positional: ["job-1"],
+    flags: { follow: "yes" },
+  });
+
+  assert.deepEqual(result, {
+    exitCode: 2,
+    stdout: "",
+    stderr: "--follow must be true or false\n",
+  });
+});
+
 test("dispatch prints concise help for the help subcommand", async () => {
   const result = await dispatch("help", {} as ParsedArgs);
 

@@ -10,7 +10,15 @@ export async function readJobRecord(
   jobsDir: string,
   jobId: string,
 ): Promise<Record<string, unknown>> {
-  return await readJsonFile(path.join(jobsDir, `${safeSegment(jobId)}.json`));
+  const filePath = path.join(jobsDir, `${safeSegment(jobId)}.json`);
+  const record = await readJsonFile(filePath);
+  if (record.jobId !== jobId) {
+    const error = new Error(`Job record not found: ${jobId}`) as JobRecordError;
+    error.code = "ENOENT";
+    error.path = filePath;
+    throw error;
+  }
+  return record;
 }
 
 export async function listJobRecords(jobsDir: string): Promise<Record<string, unknown>[]> {

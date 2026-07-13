@@ -49,6 +49,8 @@ export interface BrokerSessionState {
   endpoint?: string;
   pid?: number;
   pidStartTime?: string | null;
+  agentPid?: number;
+  agentPidStartTime?: string | null;
   authority?: unknown;
   [key: string]: unknown;
 }
@@ -212,6 +214,7 @@ export async function teardownBrokerSession({
       await client.request("broker/shutdown", {}, { timeoutMs: shutdownTimeoutMs });
       await waitForExitOrMissing(state.pid, brokerFile, shutdownTimeoutMs);
       if (!state.pid || !(await pidAlive(state.pid))) {
+        await terminateAgentFromState(state, options.sigtermTimeoutMs ?? 500);
         return { teardown: "shutdown", brokerFile };
       }
     } catch {
@@ -229,7 +232,8 @@ export async function teardownBrokerSession({
       teardown = "sigterm-tree";
     }
   }
-  await cleanupBrokerFiles(brokerFile, pidFile);
+  await terminateAgentFromState(state, options.sigtermTimeoutMs ?? 500);
+  await cleanupBrokerFilesIfOwned(brokerFile, pidFile, state.pid);
   return { teardown, brokerFile };
 }
 
@@ -344,6 +348,41 @@ export async function cleanupBrokerFiles(
     fsp.unlink(brokerFile).catch(ignoreMissing),
     fsp.unlink(pidFile).catch(ignoreMissing),
   ]);
+}
+
+async function cleanupBrokerFilesIfOwned(
+  brokerFile: string,
+  pidFile: string,
+  expectedPid: number | undefined,
+): Promise<void> {
+  await Promise.all([
+    unlinkBrokerFileIfOwned(brokerFile, expectedPid),
+    unlinkBrokerFileIfOwned(pidFile, expectedPid),
+  ]);
+}
+
+async function unlinkBrokerFileIfOwned(
+  filePath: string,
+  expectedPid: number | undefined,
+): Promise<void> {
+  if (!expectedPid) {
+    return;
+  }
+  const state = await readJson(filePath).catch(() => null);
+  if (state?.pid !== expectedPid) {
+    return;
+  }
+  await fsp.unlink(filePath).catch(ignoreMissing);
+}
+
+async function terminateAgentFromState(
+  state: BrokerSessionState,
+  timeoutMs: number,
+): Promise<void> {
+  await terminatePid(state.agentPid, timeoutMs, {
+    pidStartTime: state.agentPidStartTime,
+    requireIdentity: true,
+  });
 }
 
 function ignoreMissing(error: unknown): void {

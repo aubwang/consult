@@ -105,7 +105,7 @@ export function supportsResume(
 ): boolean {
   const agentCapabilities = capabilities?.agentCapabilities ?? {};
   return (
-    agentCapabilities.sessionCapabilities?.resume !== undefined ||
+    agentCapabilities.sessionCapabilities?.resume != null ||
     agentCapabilities.sessions?.resume === true
   );
 }
@@ -249,7 +249,8 @@ function compareModelVersions(a: string, b: string): number {
 }
 
 function versionSegments(id: string): number[] {
-  return (id.match(/\d+/g) ?? []).map(Number);
+  const undecorated = id.replace(/\[[^\]]*\]$/u, "");
+  return (undecorated.match(/\d+/g) ?? []).map(Number);
 }
 
 export function normalizeModelControl(profile: string, model: string): string {

@@ -59,6 +59,7 @@ export interface StartJobAgentOptions {
   resumeSessionId?: string | null;
   parentJobId?: string | null;
   model?: string | null;
+  onSpawn?: (pid: number) => void | Promise<void>;
   runtime: JobAgentRuntimeHooks;
 }
 
@@ -82,6 +83,7 @@ export async function startJobAgent(
     resumeSessionId = null,
     parentJobId = null,
     model = null,
+    onSpawn,
     runtime,
   }: StartJobAgentOptions,
   deps: StartJobAgentDeps = {},
@@ -132,6 +134,7 @@ export async function startJobAgent(
       profileRegistryId === "claude" && model
         ? knownClaudeModelControl(model) ?? undefined
         : undefined,
+    onSpawn,
     clientHandlers: {
       sessionUpdate: async ({ sessionId, update }) =>
         await runtime.handleSessionUpdate({ sessionId, update }),
@@ -204,6 +207,9 @@ export async function runAgentJobTurn(
     canonicalParams.parentJobId,
     canonicalParams.model,
   );
+  if (job.status !== "running") {
+    return;
+  }
   let sessionId: string | undefined;
   let sessionState: AgentSessionState | null = null;
   if (job.resumeSessionId) {
@@ -233,6 +239,10 @@ export async function runAgentJobTurn(
     profile: params.profile,
   });
   ctx.setSession(sessionId, sessionState);
+
+  if (job.status !== "running") {
+    return;
+  }
 
   let vulnerableClaudeAsyncSubagentStarted = false;
 

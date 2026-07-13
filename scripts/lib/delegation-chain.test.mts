@@ -42,6 +42,7 @@ test("resolveNewJobChain inherits lineage and read-only permission ceiling", asy
       chainId: "job-root",
       delegationDepth: 1,
       mode: "read-only",
+      status: "running",
     }),
   });
 
@@ -65,6 +66,7 @@ test("resolveNewJobChain preserves delegation cap and explicit write errors", as
       chainId: "job-root",
       delegationDepth: 2,
       mode: "write",
+      status: "running",
     }),
   });
   const tooPermissive = await resolveNewJobChain({
@@ -78,11 +80,59 @@ test("resolveNewJobChain preserves delegation cap and explicit write errors", as
       chainId: "job-root",
       delegationDepth: 0,
       mode: "read-only",
+      status: "running",
     }),
   });
 
   assert.equal(tooDeep.error, "delegation depth 3 exceeds max 2");
   assert.equal(tooPermissive.error, "child job cannot use --write when parent job is read-only");
+});
+
+test("resolveNewJobChain rejects inactive parents", async () => {
+  const result = await resolveNewJobChain({
+    workspaceRoot: "/workspace",
+    jobId: "job-child",
+    parentJobId: "job-parent",
+    readJobRecord: async () => ({
+      jobId: "job-parent",
+      status: "completed",
+      delegationDepth: 0,
+    }),
+  });
+
+  assert.equal(result.error, "parent job is not active: job-parent (completed)");
+});
+
+test("resolveNewJobChain applies the read-only ceiling to legacy records without mode", async () => {
+  const result = await resolveNewJobChain({
+    workspaceRoot: "/workspace",
+    jobId: "job-child",
+    parentJobId: "job-parent",
+    requestedMode: "write",
+    writeExplicit: true,
+    readJobRecord: async () => ({
+      jobId: "job-parent",
+      status: "running",
+      delegationDepth: 0,
+    }),
+  });
+
+  assert.equal(result.error, "child job cannot use --write when parent job is read-only");
+});
+
+test("resolveNewJobChain rejects malformed parent delegation depth", async () => {
+  const result = await resolveNewJobChain({
+    workspaceRoot: "/workspace",
+    jobId: "job-child",
+    parentJobId: "job-parent",
+    readJobRecord: async () => ({
+      jobId: "job-parent",
+      status: "running",
+      delegationDepth: 1.5,
+    }),
+  });
+
+  assert.equal(result.error, "parent job has invalid delegation depth: 1.5");
 });
 
 test("relationship enrichment adds direct children and finds active descendants", () => {

@@ -43,6 +43,7 @@ export async function findResumeCandidate(
   const candidates: JobRecord[] = [];
   for (const record of await listJobRecords(workspaceRoot)) {
     if (
+      record?.kind === "delegate" &&
       record?.profile === profile &&
       (host === undefined || record.host === host) &&
       (hostSessionId === undefined || record.hostSessionId === hostSessionId) &&
@@ -66,6 +67,9 @@ export async function findResumeJobCandidate(
   { readJobRecord = readWorkspaceJobRecord }: FindResumeJobCandidateOptions = {},
 ): Promise<ResumeJobCandidateResult> {
   const record = await readJobRecord(workspaceRoot, jobId);
+  if (record?.kind !== "delegate") {
+    return { error: `resume job '${jobId}' is not a delegate Job` };
+  }
   if (record?.profile !== profile) {
     const ownerProfile = record?.profile ?? "unknown";
     return {

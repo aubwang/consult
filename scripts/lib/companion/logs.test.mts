@@ -108,6 +108,27 @@ test("logs validates bounds and lets --tail 0 suppress history", async (t) => {
   assert.deepEqual(JSON.parse(emptyJson.stdout), []);
 });
 
+test("logs rejects unknown flags and an empty tail value before workspace discovery", async () => {
+  const deps = {
+    resolveWorkspaceRoot: async () => {
+      throw new Error("workspace should not be resolved");
+    },
+  };
+  const unknown = await runLogs({
+    args: { positional: ["job-log"], flags: { tial: "2" } },
+    deps,
+  });
+  const emptyTail = await runLogs({
+    args: { positional: ["job-log"], flags: { tail: "" } },
+    deps,
+  });
+
+  assert.equal(unknown.exitCode, 2);
+  assert.equal(unknown.stderr, "--tial is not supported by this command\n");
+  assert.equal(emptyTail.exitCode, 2);
+  assert.match(emptyTail.stderr, /non-negative integer/u);
+});
+
 test("logs follow appends newly rendered log text until the job finalizes", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -247,6 +268,21 @@ test("logs exits 2 for malformed NDJSON", async (t) => {
 
   assert.equal(result.exitCode, 2);
   assert.equal(result.stderr, `job log malformed: ${logPath}:2\n`);
+});
+
+test("logs exits 2 for a valid-JSON scalar log entry", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-scalar", status: "completed" });
+  const logPath = await writeRawLog(workspaceRoot, "job-scalar", "null\n");
+
+  const result = await runLogs({
+    args: { positional: ["job-scalar"], flags: {} },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, `job log malformed: ${logPath}:1\n`);
 });
 
 async function makeWorkspace(): Promise<{ workspaceRoot: string; dataDir: string }> {

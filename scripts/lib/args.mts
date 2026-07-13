@@ -26,15 +26,30 @@ export interface ParsedArgs {
 }
 
 export function stringFlag(value: unknown): string | undefined {
-  if (Array.isArray(value)) {
-    return value.at(-1);
-  }
-  return typeof value === "string" ? value : undefined;
+  const last = Array.isArray(value) ? value.at(-1) : value;
+  return typeof last === "string" ? last : undefined;
 }
 
 export function boolFlag(value: unknown): boolean {
   const last = Array.isArray(value) ? value.at(-1) : value;
-  return last === true || last === "true";
+  if (last === true || last === "true") return true;
+  if (last === false || last === "false" || last === undefined) return false;
+  const error = new Error("boolean flag value must be true or false") as Error & { code: string };
+  error.code = "INVALID_BOOLEAN_FLAG";
+  throw error;
+}
+
+export function invalidBooleanFlagValueError(
+  flags: Record<string, FlagValue | undefined> | undefined,
+): string | null {
+  for (const [name, value] of Object.entries(flags ?? {})) {
+    if (!BOOLEAN_FLAGS.has(name)) continue;
+    const last = Array.isArray(value) ? value.at(-1) : value;
+    if (![true, false, "true", "false"].includes(last as string | boolean)) {
+      return `--${name} must be true or false`;
+    }
+  }
+  return null;
 }
 
 export function missingFlagValueError(
@@ -89,10 +104,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (nextToken !== undefined && !nextToken.startsWith("--")) {
         addFlag(flags, name, nextToken);
         index += 1;
+        continue;
       }
-      if (flags[name] === undefined) {
-        addFlag(flags, name, true);
-      }
+      addFlag(flags, name, "");
       continue;
     }
     positional.push(token);

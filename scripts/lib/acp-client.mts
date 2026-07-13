@@ -68,6 +68,7 @@ export interface StartAgentOptions {
   mode?: string;
   profileRegistryId?: string;
   requestedModel?: string;
+  onSpawn?: (pid: number) => void | Promise<void>;
 }
 
 export interface AgentLaunchLease {
@@ -210,6 +211,11 @@ export async function* promptTurn(
       }
     }
 
+    const settledPrompt = promptResult as PromptTurnOutcome;
+    if (!settledPrompt.ok) {
+      throw settledPrompt.error;
+    }
+
     while (
       await Promise.race([
         queue.waitForValue().then(() => true),
@@ -221,7 +227,7 @@ export async function* promptTurn(
       }
     }
 
-    yield { type: "stop", stopReason: (promptResult as PromptTurnResolved).value.stopReason };
+    yield { type: "stop", stopReason: settledPrompt.value.stopReason };
   } finally {
     if (state.queues.get(sessionId) === queue) {
       state.queues.delete(sessionId);
@@ -242,6 +248,7 @@ export async function startAgent(
     mode = "read-only",
     profileRegistryId,
     requestedModel,
+    onSpawn,
   }: StartAgentOptions,
   deps: StartAgentDeps = {},
 ): Promise<StartedAgent> {
@@ -305,6 +312,18 @@ export async function startAgent(
 
   let timeoutId: NodeJS.Timeout | undefined;
   let disposePromise: Promise<void> | undefined;
+  try {
+    if (onSpawn && agentChild.pid !== undefined) {
+      await onSpawn(agentChild.pid);
+    }
+  } catch (error) {
+    try {
+      await disposeAgentChild(false);
+    } catch (cleanupError) {
+      noteCleanupFailure(error, cleanupError);
+    }
+    throw error;
+  }
   try {
     const stream = ndJsonStream(
       Writable.toWeb(agentChild.stdin),

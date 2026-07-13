@@ -78,8 +78,10 @@ export function createInlineClient({
   maxPersistedLogBytes,
   scheduleWallClock,
   clearWallClock,
+  startAgent = startJobAgent,
 }: EnsureBrokerSessionInput &
   { cancelAckTimeoutMs?: number } &
+  { startAgent?: typeof startJobAgent } &
   InlineJobReliabilityOptions): PromptTurnBrokerClient {
   const entry = profileEntry as BrokerProfileEntry;
   const sandbox = normalizeAgentSandbox(process.env.CONSULT_AGENT_SANDBOX);
@@ -114,7 +116,7 @@ export function createInlineClient({
       if (method === "consult/finalized") {
         finalizedDispatched = true;
         finalizedResolve();
-        void settleAndDispatch(method, params);
+        void settleAndDispatch(method, params).catch(() => {});
         return;
       }
       handlers.get(method)?.(params);
@@ -169,8 +171,13 @@ export function createInlineClient({
         }
       }
     } catch (error) {
-      await disposeAgent();
-      removeSignalHandlers();
+      try {
+        await disposeAgent();
+      } catch {
+        // The request/preflight error is the useful failure; disposal is best-effort here.
+      } finally {
+        removeSignalHandlers();
+      }
       throw error;
     }
 
@@ -215,7 +222,7 @@ export function createInlineClient({
           stopReason: "failed",
           sessionId: acceptedJob.sessionId,
           errorMessage: agentErrorMessage(error as CodedAgentError),
-        });
+        }).catch(() => {});
       }
     });
     return { accepted: true, jobId: canonicalParams.jobId };
@@ -232,7 +239,7 @@ export function createInlineClient({
     // One inline client runs exactly one job in exactly one mode, so unlike
     // the Broker there is never a mode change requiring an agent restart.
     if (!agent) {
-      agent = await startJobAgent({
+      agent = await startAgent({
         binary: entry.binary,
         args: entry.args ?? [],
         env: entry.env ?? {},

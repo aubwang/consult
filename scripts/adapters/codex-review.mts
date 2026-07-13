@@ -20,6 +20,7 @@ import { renderSessionUpdate } from "../lib/session-update-renderer.mts";
 import type { NullOutputResult } from "../lib/null-output.mts";
 import { DEFAULT_JOB_AUTHORITY } from "../lib/job-authority.mts";
 import type { JobAuthority } from "../lib/job-authority.mts";
+import { resolveNewJobChain } from "../lib/delegation-chain.mts";
 
 export interface CodexReviewDeps extends PromptTurnDeps, OutputDeps {
   getDiff?: (opts: GetDiffOptions) => Promise<string>;
@@ -41,6 +42,7 @@ export interface CodexReviewOptions {
   reviewOfJobId?: string | null;
   json?: boolean;
   authority?: JobAuthority;
+  parentJobId?: string | null;
   availableCommandsTimeoutMs?: number | null;
   deps?: CodexReviewDeps;
 }
@@ -59,6 +61,7 @@ export async function runCodexReview({
   reviewOfJobId = null,
   json = false,
   authority = { ...DEFAULT_JOB_AUTHORITY },
+  parentJobId = null,
   availableCommandsTimeoutMs: timeoutOverride = null,
   deps = {},
 }: CodexReviewOptions): Promise<NullOutputResult> {
@@ -79,13 +82,23 @@ export async function runCodexReview({
     return output.result(2);
   }
   const jobId = generateJobId();
+  const chain = await resolveNewJobChain({
+    workspaceRoot,
+    jobId,
+    parentJobId,
+    requestedMode: "read-only",
+    writeExplicit: false,
+    readJobRecord: deps.readJobRecord,
+  });
+  if (chain.error) {
+    output.stderr(`${chain.error}\n`);
+    return output.result(2);
+  }
   const jobRecord = createQueuedJobRecord({
     jobId,
     kind,
     submittedAt: now(),
-    chainId: jobId,
-    parentJobId: null,
-    delegationDepth: 0,
+    ...chain.fields,
     authority,
     mode: "read-only",
     host,

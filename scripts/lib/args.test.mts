@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   BOOLEAN_FLAGS,
   boolFlag,
+  invalidBooleanFlagValueError,
   missingFlagValueError,
   parseArgs,
   unsupportedFlagError,
@@ -60,10 +61,10 @@ test("parseArgs leaves equals-form boolean flag values unchanged", () => {
   });
 });
 
-test("parseArgs treats a flag without a value as true", () => {
+test("parseArgs marks a value flag without a value as missing", () => {
   assert.deepEqual(parseArgs(["--verbose"]), {
     positional: [],
-    flags: { verbose: true },
+    flags: { verbose: "" },
   });
 });
 
@@ -112,16 +113,31 @@ test("parseArgs still honors the separator after boolean flags", () => {
   });
 });
 
-test("boolFlag honors explicit false and undefined", () => {
+test("boolFlag honors literal boolean values and rejects unrecognized values", () => {
   assert.equal(boolFlag(true), true);
   assert.equal(boolFlag("true"), true);
   assert.equal(boolFlag(false), false);
   assert.equal(boolFlag("false"), false);
-  assert.equal(boolFlag("anything-else"), false);
+  assert.throws(() => boolFlag("anything-else"), /must be true or false/u);
   assert.equal(boolFlag(undefined), false);
   // The last occurrence wins for repeated flags.
   assert.equal(boolFlag([true, false]), false);
   assert.equal(boolFlag([false, true]), true);
+});
+
+test("parseArgs marks a repeated value flag with a missing final value", () => {
+  const flags = parseArgs(["--model", "gpt-5", "--model", "--json"]).flags;
+
+  assert.deepEqual(flags, { model: ["gpt-5", ""], json: true });
+  assert.equal(missingFlagValueError(flags, ["model"]), "--model requires a value");
+});
+
+test("invalidBooleanFlagValueError identifies explicit unsupported boolean values", () => {
+  assert.equal(
+    invalidBooleanFlagValueError(parseArgs(["--follow=yes"]).flags),
+    "--follow must be true or false",
+  );
+  assert.equal(invalidBooleanFlagValueError(parseArgs(["--follow=false"]).flags), null);
 });
 
 test("missingFlagValueError flags value-bearing flags without a value", () => {

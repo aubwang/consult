@@ -11,7 +11,12 @@ import { createOutput } from "./output.mts";
 import type { CommandResult, OutputDeps } from "./output.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { pollUntilFinalRecord } from "./job-poll.mts";
-import { boolFlag, stringFlag } from "../args.mts";
+import {
+  boolFlag,
+  invalidBooleanFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 
 const DEFAULT_LOG_TAIL_LINES = 20;
@@ -45,7 +50,14 @@ export async function runLogs({
   args: ParsedArgs;
   deps?: LogsDeps;
 }): Promise<CommandResult> {
-  const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
+  const unsupported = unsupportedFlagError(args.flags, ["follow", "json", "tail", "all"]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  const invalidBoolean = invalidBooleanFlagValueError(args.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
   const jobId = args.positional?.[0];
   if (!jobId) {
     return { exitCode: 2, stdout: "", stderr: "job id is required\n" };
@@ -57,6 +69,7 @@ export async function runLogs({
   if (!tail.ok) {
     return { exitCode: 2, stdout: "", stderr: `${tail.error}\n` };
   }
+  const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
 
   try {
     await readJobRecord(workspaceRoot, jobId, deps);
@@ -204,7 +217,11 @@ function parseLog(
       continue;
     }
     try {
-      entries.push(JSON.parse(line));
+      const entry: unknown = JSON.parse(line);
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        throw new SyntaxError("log entry is not an object");
+      }
+      entries.push(entry);
     } catch {
       const error = new Error(`job log malformed: ${path}:${index + 1}`) as NodeJS.ErrnoException;
       error.code = "JOB_LOG_MALFORMED";
@@ -239,7 +256,7 @@ function resolveTailLines(args: ParsedArgs):
     return { ok: true, value: DEFAULT_LOG_TAIL_LINES };
   }
   const raw = stringFlag(args.flags.tail);
-  const value = raw === undefined ? Number.NaN : Number(raw);
+  const value = !raw ? Number.NaN : Number(raw);
   if (!Number.isSafeInteger(value) || value < 0) {
     return { ok: false, error: "--tail must be a non-negative integer" };
   }

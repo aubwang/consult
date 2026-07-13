@@ -315,6 +315,116 @@ test("cancelJob ensures the agent with the running job's own mode", async (t: Te
   await runtime.finalizeJob(job, { stopReason: "cancelled", sessionId: "session-1" });
 });
 
+test("cancelJob finalizes a Job cancelled before a session exists", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  const runtime = createBrokerJobRuntime({
+    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 25 },
+    ensureAgent: async () => { throw new Error("agent must not be needed"); },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) { notifications.push({ method, params }); },
+  });
+  const job = runtime.createJob(
+    { jobId: "job-cancel-before-session", profile: "codex", mode: "write", prompt: "fix" },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+
+  await runtime.cancelJob(job);
+
+  assert.equal(job.status, "finalized");
+  assert.equal(job.finalized?.stopReason, "cancelled");
+  assert.equal(runtime.isTainted(), false);
+  assert.equal(notifications.at(-1)?.method, "consult/finalized");
+  assert.equal((await readWorkspaceJobRecord(workspaceRoot, job.jobId)).status, "cancelled");
+});
+
+test("attach during terminal preparation waits for the complete finalized outcome", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  let release!: () => void;
+  const terminalGate = new Promise<void>((resolve) => { release = resolve; });
+  const notifications: Array<{ socket: string; method: string; params: any }> = [];
+  const runtime = createBrokerJobRuntime({
+    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 2000 },
+    ensureAgent: async () => { throw new Error("agent must not be needed"); },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(socket, method, params) {
+      notifications.push({ socket: (socket as FakeSocket).name, method, params });
+    },
+    beforeTerminal: async () => await terminalGate,
+  });
+  const job = runtime.createJob(
+    { jobId: "job-attach-terminal", profile: "codex", mode: "read-only", prompt: "inspect" },
+    fakeSocket("originator"),
+  );
+  const finalizing = runtime.failJob(job, "original failure");
+  await waitFor(() => job.status === "finalized");
+  runtime.attachJob(job, fakeSocket("late-subscriber"));
+
+  assert.equal(notifications.length, 0);
+  release();
+  await finalizing;
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].params.stopReason, "failed");
+  assert.equal(notifications[0].params.errorMessage, "original failure");
+});
+
+test("terminal record write failure still notifies subscribers and runs terminal cleanup", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  const terminalJobs: string[] = [];
+  const runtime = createBrokerJobRuntime({
+    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 2000 },
+    ensureAgent: async () => { throw new Error("agent must not be needed"); },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) { notifications.push({ method, params }); },
+    persistJobRecord: async () => { throw Object.assign(new Error("disk full"), { code: "ENOSPC" }); },
+    onTerminal(job) { terminalJobs.push(job.jobId); },
+  });
+  const job = runtime.createJob(
+    { jobId: "job-terminal-write-failure", profile: "codex", mode: "read-only", prompt: "inspect" },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+
+  await runtime.finalizeJob(job, { stopReason: "end_turn", sessionId: "session-1" });
+
+  assert.equal(notifications.at(-1)?.method, "consult/finalized");
+  assert.equal(notifications.at(-1)?.params.stopReason, "failed");
+  assert.match(notifications.at(-1)?.params.errorMessage, /job record write failed: disk full/u);
+  assert.deepEqual(terminalJobs, [job.jobId]);
+});
+
+test("cancel acknowledgement timeout does not taint while terminal preparation is in progress", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  let release!: () => void;
+  const terminalGate = new Promise<void>((resolve) => { release = resolve; });
+  const runtime = createBrokerJobRuntime({
+    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 20 },
+    ensureAgent: async () => ({ connection: { cancel: async () => {} } } as unknown as BrokerAgentHandle),
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+    beforeTerminal: async () => await terminalGate,
+  });
+  const job = runtime.createJob(
+    { jobId: "job-cancel-dispose", profile: "codex", mode: "read-only", prompt: "inspect" },
+    fakeSocket("originator"),
+  );
+  runtime.trackSession("session-1", job);
+  await runtime.cancelJob(job);
+  const finalizing = runtime.finalizeJob(job, { stopReason: "cancelled", sessionId: "session-1" });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.equal(runtime.isTainted(), false);
+  release();
+  await finalizing;
+});
+
 test("persisted log limit drops the overflowing update, preserves partial output, and cancels", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

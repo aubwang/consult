@@ -11,7 +11,8 @@ import type {
   StartedAgent,
 } from "./acp-client.mts";
 import type { JobAuthority } from "./job-authority.mts";
-import { hashRunPayload, startJobAgent } from "./job-agent.mts";
+import { hashRunPayload, runAgentJobTurn, startJobAgent } from "./job-agent.mts";
+import type { BrokerJob } from "./broker-job-runtime.mts";
 import type { ConfinedSandboxRuntimeLaunchInput } from "./sandbox-runtime-launch.mts";
 
 const BASE_RUN = {
@@ -20,6 +21,40 @@ const BASE_RUN = {
   profile: "codex",
   mode: "write",
 };
+
+test("runAgentJobTurn stops after cold start when the Job was cancelled", async () => {
+  let releaseAgent!: (agent: StartedAgent) => void;
+  const agentReady = new Promise<StartedAgent>((resolve) => { releaseAgent = resolve; });
+  let sessionStarted = false;
+  const job = { status: "running", resumeSessionId: null } as BrokerJob;
+  const turn = runAgentJobTurn(
+    { ...BASE_RUN, authority: authority({ mode: "write" }) },
+    job,
+    {
+      config: { cwd: "/workspace" },
+      ensureAgent: async () => await agentReady,
+      getSession: () => undefined,
+      setSession: () => { sessionStarted = true; },
+      trackSession: () => { sessionStarted = true; },
+      finalizeJob: async () => {},
+      noteTurnSettled: () => {},
+    },
+  );
+  job.status = "finalized";
+  releaseAgent({
+    connection: {
+      newSession: async () => {
+        sessionStarted = true;
+        throw new Error("cancelled Job must not create a session");
+      },
+    },
+    capabilities: {},
+    dispose: async () => {},
+  } as unknown as StartedAgent);
+
+  await turn;
+  assert.equal(sessionStarted, false);
+});
 
 test("hashRunPayload includes canonical execute authority", () => {
   const runAuthority = authority({ mode: "write" });

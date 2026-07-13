@@ -51,6 +51,7 @@ import { createOutput } from "./output.mts";
 import type { CommandResult } from "./output.mts";
 import { writeAuthorityDiagnostic } from "./authority-diagnostic.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
+import { resolveNewJobChain } from "../delegation-chain.mts";
 
 export const REVIEW_PROMPT = `Review the pinned Git changes for defects and regressions.
 
@@ -254,6 +255,7 @@ export async function runReview({
       reviewOfJobId: sourceJobId,
       json,
       authority,
+      parentJobId: env.CONSULT_PARENT_JOB ?? null,
       deps,
     });
   }
@@ -262,13 +264,23 @@ export async function runReview({
   const generateJobId = deps.generateJobId ?? defaultGenerateJobId;
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
   const jobId = generateJobId();
+  const chain = await resolveNewJobChain({
+    workspaceRoot,
+    jobId,
+    parentJobId: env.CONSULT_PARENT_JOB ?? null,
+    requestedMode: "read-only",
+    writeExplicit: false,
+    readJobRecord: deps.readJobRecord,
+  });
+  if (chain.error) {
+    output.stderr(`${chain.error}\n`);
+    return output.result(2);
+  }
   const jobRecord = createQueuedJobRecord({
     jobId,
     kind: "review",
     submittedAt: now(),
-    chainId: jobId,
-    parentJobId: null,
-    delegationDepth: 0,
+    ...chain.fields,
     authority,
     mode: "read-only",
     host: hostIdentity.host,

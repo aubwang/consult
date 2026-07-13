@@ -208,6 +208,31 @@ test("workspace job persistence reads, writes, lists, and appends logs", async (
   assert.ok(await fs.stat(path.join(jobsDir(workspaceRoot), "job-new.json")));
 });
 
+test("workspace job persistence does not overwrite a cancelled status with a stale snapshot", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJobRecord(workspaceRoot, "job-cancel-terminal", {
+    jobId: "job-cancel-terminal",
+    status: "cancelled",
+    stopReason: "cancelled",
+    completedAt: "2026-05-21T10:01:00.000Z",
+  });
+
+  await writeJobRecord(workspaceRoot, "job-cancel-terminal", {
+    jobId: "job-cancel-terminal",
+    status: "running",
+    workerPid: 12345,
+  });
+
+  assert.deepEqual(await readWorkspaceJobRecord(workspaceRoot, "job-cancel-terminal"), {
+    jobId: "job-cancel-terminal",
+    status: "cancelled",
+    stopReason: "cancelled",
+    completedAt: "2026-05-21T10:01:00.000Z",
+    workerPid: 12345,
+  });
+});
+
 test("workspace job persistence confines unsafe job ids to safe filenames", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

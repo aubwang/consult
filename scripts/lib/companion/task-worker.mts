@@ -108,6 +108,19 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
     return output.result(2);
   }
 
+  if (jobRecord.status !== "queued") {
+    await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+    return output.result(0);
+  }
+
+  const readJobRecord = deps.readJobRecord ?? readWorkspaceJobRecord;
+  const pickupRecord = await readJobRecord(workspaceRoot, jobId);
+  if (pickupRecord.status !== "queued") {
+    await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+    return output.result(0);
+  }
+  Object.assign(jobRecord, pickupRecord);
+
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
   Object.assign(jobRecord, {
     workerPid: process.pid,
@@ -125,9 +138,14 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
     await cleanupPreparedWorkspace(isolatedWorkspace, deps);
     throw error;
   }
+  const postStampRecord = await readJobRecord(workspaceRoot, jobId);
+  if (postStampRecord.status !== "queued") {
+    await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+    return output.result(0);
+  }
+  Object.assign(jobRecord, postStampRecord);
 
   if (jobRecord.afterJobIds?.length) {
-    const readJobRecord = deps.readJobRecord ?? readWorkspaceJobRecord;
     let prerequisites: JobRecord[];
     try {
       prerequisites = await waitForJobDependencies({
@@ -157,6 +175,12 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
       output.stderr(`${message}\n`);
       return output.result(1);
     }
+    const postWaitRecord = await readJobRecord(workspaceRoot, jobId);
+    if (postWaitRecord.status !== "queued") {
+      await cleanupPreparedWorkspace(isolatedWorkspace, deps);
+      return output.result(0);
+    }
+    Object.assign(jobRecord, postWaitRecord);
     const unsuccessful = prerequisites.filter(
       (prerequisite) => prerequisite.status !== "completed",
     );
