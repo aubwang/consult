@@ -234,16 +234,28 @@ export async function runAgentJobTurn(
   });
   ctx.setSession(sessionId, sessionState);
 
+  let vulnerableClaudeAsyncSubagentStarted = false;
+
   for await (const event of promptTurn(agent.connection, {
     sessionId,
     prompt: params.prompt,
   })) {
+    if (
+      event.type === "update" &&
+      isAsyncClaudeSubagentLaunch(event.update) &&
+      usesVulnerableClaudeAsyncFinalization(params.profile, agent.capabilities)
+    ) {
+      vulnerableClaudeAsyncSubagentStarted = true;
+    }
     if (event.type === "stop") {
       if (job.status !== "running") {
         // A job finalized early (policy violation) settles here; clear its
         // pending cancel-ack timer so the broker is not tainted retroactively.
         ctx.noteTurnSettled(job);
         continue;
+      }
+      if (vulnerableClaudeAsyncSubagentStarted) {
+        throw claudeAsyncFinalizationError(agent.capabilities);
       }
       // Busy clears in handleRunMessage only after this turn fully settles.
       await ctx.finalizeJob(job, {
@@ -252,6 +264,66 @@ export async function runAgentJobTurn(
       });
     }
   }
+}
+
+const CLAUDE_AGENT_ACP_PACKAGE = "@agentclientprotocol/claude-agent-acp";
+const CLAUDE_ASYNC_FINALIZATION_MIN_VERSION = "0.59.0";
+
+// claude-agent-acp <=0.58.1 could resolve session/prompt while an async Agent
+// still ran, so Consult would persist interim text and dispose the Job process.
+// Upstream 0.59.0 owns the complete task/follow-up lifecycle; this guard only
+// prevents older maintained adapters from reporting a false successful Result.
+function isAsyncClaudeSubagentLaunch(update: unknown): boolean {
+  if (!isRecord(update)) return false;
+  const meta = isRecord(update._meta) ? update._meta : null;
+  const claudeCode = meta && isRecord(meta.claudeCode) ? meta.claudeCode : null;
+  if (claudeCode?.toolName !== "Agent" && claudeCode?.toolName !== "Task") return false;
+  const rawInput = isRecord(update.rawInput) ? update.rawInput : null;
+  const toolResponse = claudeCode && isRecord(claudeCode.toolResponse)
+    ? claudeCode.toolResponse
+    : null;
+  return rawInput?.run_in_background === true || toolResponse?.isAsync === true;
+}
+
+function usesVulnerableClaudeAsyncFinalization(
+  profile: string,
+  capabilities: unknown,
+): boolean {
+  if (profile !== "claude" || !isRecord(capabilities)) return false;
+  const agentInfo = isRecord(capabilities.agentInfo) ? capabilities.agentInfo : null;
+  if (agentInfo?.name !== CLAUDE_AGENT_ACP_PACKAGE) return false;
+  return typeof agentInfo.version !== "string" ||
+    !versionAtLeast(agentInfo.version, CLAUDE_ASYNC_FINALIZATION_MIN_VERSION);
+}
+
+function versionAtLeast(actual: string, minimum: string): boolean {
+  const parsedActual = parseReleaseVersion(actual);
+  const parsedMinimum = parseReleaseVersion(minimum);
+  if (!parsedActual || !parsedMinimum) return false;
+  for (let index = 0; index < parsedActual.length; index += 1) {
+    if (parsedActual[index] !== parsedMinimum[index]) {
+      return parsedActual[index] > parsedMinimum[index];
+    }
+  }
+  return true;
+}
+
+function parseReleaseVersion(version: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
+
+function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
+  const agentInfo = isRecord(capabilities) && isRecord(capabilities.agentInfo)
+    ? capabilities.agentInfo
+    : null;
+  const version = typeof agentInfo?.version === "string" ? agentInfo.version : "unknown";
+  const error = new Error(
+    `${CLAUDE_AGENT_ACP_PACKAGE} ${version} returned before its background subagent finalized; ` +
+      `update with npm install -g ${CLAUDE_AGENT_ACP_PACKAGE}@^${CLAUDE_ASYNC_FINALIZATION_MIN_VERSION} and retry`,
+  ) as CodedAgentError;
+  error.code = "CLAUDE_ASYNC_FINALIZATION_UNSUPPORTED";
+  return error;
 }
 
 export interface CodedAgentError extends Error {
