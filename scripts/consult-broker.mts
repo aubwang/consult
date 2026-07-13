@@ -141,6 +141,7 @@ interface SocketBrokerContext {
     resumeSourceJobId?: string | null,
     resumeSessionId?: string | null,
     parentJobId?: string | null,
+    model?: string | null,
   ) => Promise<AgentHandle>;
   isBusy: () => boolean;
   setBusy: (value: boolean) => void;
@@ -304,6 +305,7 @@ export async function serveBroker(
     resumeSourceJobId: string | null = null,
     resumeSessionId: string | null = null,
     parentJobId: string | null = null,
+    model: string | null = null,
   ): Promise<AgentHandle> {
     if (agent && agentAuthority && !jobAuthoritiesEqual(agentAuthority, authority)) {
       await agent.dispose();
@@ -329,6 +331,7 @@ export async function serveBroker(
       resumeSourceJobId,
       resumeSessionId,
       parentJobId,
+      model,
       runtime,
     });
     agentAuthority = authority;
@@ -602,6 +605,7 @@ async function handleRunMessage(
         params.resumeJobId,
         params.resume,
         params.parentJobId,
+        params.model,
       );
       if (!supportsResume(agent.capabilities) && !supportsLoad(agent.capabilities)) {
         writeError(socket, message.id, {

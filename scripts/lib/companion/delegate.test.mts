@@ -403,6 +403,88 @@ test("delegate fails authority preflight before diff, isolation, or Job persiste
   assert.equal(recordWritten, false);
 });
 
+test("root Claude delegate automatically refreshes once and continues the original Job", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+  let preflightCalls = 0;
+  let refreshCalls = 0;
+  const resultPromise = runDelegate({
+    args: { positional: ["inspect"], flags: {} },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => claudeProfilesFixture(),
+      generateJobId: () => "job-claude-auto-refresh",
+      preflightAuthority: async (input: {
+        authority: JobAuthority;
+        profileRegistryId?: string;
+      }) => {
+        assert.equal(input.profileRegistryId, "claude");
+        preflightCalls += 1;
+        return preflightCalls === 1
+          ? expiredClaudePreflight()
+          : { ok: true as const, authority: input.authority };
+      },
+      refreshClaudeHostOauth: async (input: { profileRegistryId?: string }) => {
+        assert.equal(input.profileRegistryId, "claude");
+        refreshCalls += 1;
+      },
+      ensureBrokerSession: async () => ({ client }),
+    }),
+  });
+
+  const request = await Promise.race([
+    client.waitForRequest("consult/run"),
+    resultPromise.then((early) => {
+      throw new Error(`delegate exited before Broker request: ${early.stderr}`);
+    }),
+  ]);
+  client.notify("consult/finalized", {
+    jobId: "job-claude-auto-refresh",
+    stopReason: "end_turn",
+    sessionId: "session-claude-auto-refresh",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(request.params.profile, "claude");
+  assert.equal(preflightCalls, 2);
+  assert.equal(refreshCalls, 1);
+});
+
+test("nested Claude delegate never refreshes the Host credential", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeParentJob(workspaceRoot, {
+    jobId: "job-claude-parent",
+    chainId: "job-claude-parent",
+    delegationDepth: 0,
+    mode: "read-only",
+  });
+  let refreshCalls = 0;
+  const result = await runDelegate({
+    args: { positional: ["inspect"], flags: { "parent-job": "job-claude-parent" } },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => claudeProfilesFixture(),
+      generateJobId: () => "job-claude-child",
+      preflightAuthority: async () => expiredClaudePreflight(),
+      refreshClaudeHostOauth: async () => {
+        refreshCalls += 1;
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(refreshCalls, 0);
+  await assert.rejects(
+    fs.access(path.join(jobsDir(workspaceRoot), "job-claude-child.json")),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+  );
+});
+
 test("delegate rejects --base without --include-diff", async () => {
   const result = await runDelegate({
     args: { positional: ["inspect"], flags: { base: "main" } },
@@ -1641,6 +1723,37 @@ function profilesFixture() {
         args: [],
         env: {},
         installedAt: "2026-05-14T09:00:00.000Z",
+      },
+    },
+  };
+}
+
+function claudeProfilesFixture() {
+  return {
+    schemaVersion: 1,
+    default: "claude",
+    profiles: {
+      claude: {
+        registryId: "claude",
+        binary: "/bin/claude-agent-acp",
+        args: [],
+        env: {},
+        installedAt: "2026-07-13T00:00:00.000Z",
+      },
+    },
+  };
+}
+
+function expiredClaudePreflight() {
+  return {
+    ok: false as const,
+    diagnostic: {
+      code: "AUTHORITY_PREFLIGHT_FAILED" as const,
+      message: "Claude OAuth credential is expired",
+      remediation: "Sign in.",
+      details: {
+        credentialKind: "claude-oauth",
+        credentialState: "expired",
       },
     },
   };

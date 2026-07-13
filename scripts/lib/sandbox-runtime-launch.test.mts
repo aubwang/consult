@@ -688,6 +688,57 @@ test("confined Claude launch maps CONSULT_CLAUDE_API_KEY to ANTHROPIC_API_KEY", 
   }
 });
 
+test("confined Claude launch transports only the explicit requested model", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: "/usr/bin:/bin",
+      CONSULT_CLAUDE_API_KEY: "explicit-key",
+      ANTHROPIC_MODEL: "ambient-model",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "claude",
+    requestedModel: "claude-fable-5",
+  }, harness.deps);
+
+  try {
+    assert.equal(lease.launch.env.ANTHROPIC_MODEL, "claude-fable-5");
+  } finally {
+    await lease.release();
+  }
+});
+
+test("confined Claude launch drops an ambient model when none was requested", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: "/usr/bin:/bin",
+      CONSULT_CLAUDE_API_KEY: "explicit-key",
+      ANTHROPIC_MODEL: "ambient-model",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "claude",
+  }, harness.deps);
+
+  try {
+    assert.equal(lease.launch.env.ANTHROPIC_MODEL, undefined);
+  } finally {
+    await lease.release();
+  }
+});
+
 test("confined preflight surfaces a specific re-authentication remediation for expired Claude OAuth", async (t) => {
   const fixture = await makeFixture(t);
   const now = 2_000_000_000_000;
@@ -711,9 +762,13 @@ test("confined preflight surfaces a specific re-authentication remediation for e
   if (!result.ok) {
     assert.equal(result.diagnostic.code, "AUTHORITY_PREFLIGHT_FAILED");
     assert.match(result.diagnostic.message, /Claude OAuth credential is expired/u);
-    assert.match(result.diagnostic.remediation, /complete sign-in/iu);
+    assert.deepEqual(result.diagnostic.details, {
+      credentialKind: "claude-oauth",
+      credentialState: "expired",
+    });
+    assert.match(result.diagnostic.remediation, /automatically refreshes/iu);
     assert.match(result.diagnostic.remediation, /CONSULT_CLAUDE_OAUTH_TOKEN/u);
-    assert.match(result.diagnostic.remediation, /will not refresh/iu);
+    assert.match(result.diagnostic.remediation, /Nested invocations cannot mutate Host credentials/iu);
     assert.doesNotMatch(result.diagnostic.remediation, /consult doctor/u);
   }
   assert.deepEqual(harness.events, []);

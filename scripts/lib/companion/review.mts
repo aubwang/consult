@@ -11,6 +11,10 @@ import {
 } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import {
+  preflightWithClaudeHostRefresh,
+  refreshClaudeHostOauth as defaultRefreshClaudeHostOauth,
+} from "../claude-host-auth.mts";
+import {
   appendPinnedDiff,
   getDiff as defaultGetDiff,
   pinnedDiffErrorMessage,
@@ -66,6 +70,7 @@ export interface ReviewDeps extends RunDelegateOnceDeps {
   preflightAuthority?: (
     input: JobAuthorityPreflightInput,
   ) => Promise<JobAuthorityPreflightResult>;
+  refreshClaudeHostOauth?: typeof defaultRefreshClaudeHostOauth;
   stdoutWrite?: (text: string) => void;
   stderrWrite?: (text: string) => void;
   [key: string]: unknown;
@@ -164,14 +169,7 @@ export async function runReview({
     }
   }
 
-  const preflight = await (
-    deps.preflightAuthority ??
-    ((input: JobAuthorityPreflightInput) =>
-      defaultPreflightJobAuthority(input, {
-        probeConfined: probeConfinedSandboxRuntime,
-        probeInherited: probeInheritedProfileLaunch,
-      }))
-  )({
+  const preflightInput: JobAuthorityPreflightInput = {
     authority,
     workspaceRoot,
     profile: selected.profile as string,
@@ -183,6 +181,17 @@ export async function runReview({
           env: selected.profileEntry.env,
         }
       : undefined,
+  };
+  const preflight = await preflightWithClaudeHostRefresh(preflightInput, {
+    allowHostRefresh: !env.CONSULT_PARENT_JOB,
+    preflight:
+      deps.preflightAuthority ??
+      ((input: JobAuthorityPreflightInput) =>
+        defaultPreflightJobAuthority(input, {
+          probeConfined: probeConfinedSandboxRuntime,
+          probeInherited: probeInheritedProfileLaunch,
+        })),
+    refresh: deps.refreshClaudeHostOauth ?? defaultRefreshClaudeHostOauth,
   });
   if (!preflight.ok) {
     writeAuthorityDiagnostic(output, preflight.diagnostic, json);

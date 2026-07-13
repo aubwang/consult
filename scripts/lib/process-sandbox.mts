@@ -34,6 +34,7 @@ export interface AgentLaunchOptions {
   mode?: string;
   sandbox?: string;
   profileRegistryId?: string;
+  requestedModel?: string;
 }
 
 export interface AgentLaunch {

@@ -426,6 +426,7 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       data,
       config,
       stagedConfig,
+      requestedModel: input.requestedModel,
     });
     Object.assign(childEnv, runtimeEnvironment);
 
@@ -548,7 +549,11 @@ export async function probeConfinedSandboxRuntime(
           code: "AUTHORITY_PREFLIGHT_FAILED",
           message: `confined authority preflight failed: ${errorMessage(failure)}`,
           remediation:
-            "Open Claude Code on the Host and complete sign-in, or supply CONSULT_CLAUDE_OAUTH_TOKEN or CONSULT_CLAUDE_API_KEY to the Host environment, then retry. Consult-specific credentials take precedence. Consult will not refresh the credential or retry with inherited authority.",
+            "A trusted root Host invocation automatically refreshes this credential once. Nested invocations cannot mutate Host credentials. You may instead supply CONSULT_CLAUDE_OAUTH_TOKEN or CONSULT_CLAUDE_API_KEY to the Host environment.",
+          details: {
+            credentialKind: "claude-oauth",
+            credentialState: "expired",
+          },
         },
       };
     }
@@ -746,6 +751,7 @@ function sanitizedChildEnv(input: {
   data: string;
   config: string;
   stagedConfig: string;
+  requestedModel?: string;
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     PATH: `${input.bin}:/usr/bin:/bin`,
@@ -758,6 +764,9 @@ function sanitizedChildEnv(input: {
     [input.profile.childConfigEnv]: input.stagedConfig,
     ...input.credentialEnv,
   };
+  if (input.profile === CONFINED_PROFILE_POLICIES.claude && input.requestedModel) {
+    env.ANTHROPIC_MODEL = input.requestedModel;
+  }
   for (const name of SAFE_ENV_KEYS) {
     const value = input.source[name];
     if (value !== undefined) env[name] = value;
