@@ -218,6 +218,10 @@ test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient"
         entry.includes("/node_modules/@anthropic-ai/sandbox-runtime")),
     );
     assert.ok(harness.configs[0].filesystem.allowRead.includes(path.join(stagedHome, "..", "bin")));
+    await assert.rejects(
+      fsp.access(path.join(stagedHome, "..", "bin", "codex")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
     assert.ok(harness.configs[0].filesystem.allowRead.includes(stagedHome));
     assert.ok(harness.configs[0].filesystem.allowRead.includes(lease.launch.env.TMPDIR));
     assert.ok(harness.configs[0].filesystem.allowRead.includes("/bin"));
