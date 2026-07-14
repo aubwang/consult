@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.2](https://github.com/aubwang/consult/compare/v0.5.1...v0.5.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* close correctness races and validation gaps ([5e72a01](https://github.com/aubwang/consult/commit/5e72a01c5aa574cd03232b5e4bd4cdc3f6c1cb65))
+* harden cancellation, cleanup, and confinement edge paths ([8b41d94](https://github.com/aubwang/consult/commit/8b41d9487d14299bdb673aed01132d0392c0cc13))
+* release session brokers after unsettled policy violations ([d1225b9](https://github.com/aubwang/consult/commit/d1225b9176f10e40f2571a6d48c92514449f16d2))
+* tolerate slow late prompt updates and darwin tmpdir symlinks ([949f0ad](https://github.com/aubwang/consult/commit/949f0ad5e5b1bf8223c16991c84ca73b18ed673a))
+
 ## [0.5.1](https://github.com/aubwang/consult/compare/v0.5.0...v0.5.1) (2026-07-13)
 
 
