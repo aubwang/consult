@@ -113,7 +113,7 @@ type PromptTurnOutcome = PromptTurnResolved | PromptTurnRejected;
 
 const sessionUpdateStates = new WeakMap<ClientSideConnection, SessionUpdateState>();
 // Some ACP agents flush the final session/update just after session/prompt resolves.
-const POST_PROMPT_UPDATE_DRAIN_IDLE_MS = 100;
+const POST_PROMPT_UPDATE_DRAIN_IDLE_MS = 250;
 // Bounded SIGTERM grace before dispose escalates to SIGKILL.
 const DISPOSE_SIGTERM_TIMEOUT_MS = 500;
 
