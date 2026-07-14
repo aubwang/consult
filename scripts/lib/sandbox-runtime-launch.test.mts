@@ -69,7 +69,9 @@ Load command 13
 });
 
 test("macOS executable scopes resolve rpaths and tolerate missing weak links", async (t) => {
-  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-macho-scopes-"));
+  // Canonicalize: macOS tmpdir resolves through /private, and the scope walk
+  // compares realpath'd output.
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "consult-macho-scopes-")));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
   const executable = path.join(root, "bin", "agent");
   const dependency = path.join(root, "lib", "libexample.dylib");
@@ -105,7 +107,7 @@ test("macOS executable scopes resolve rpaths and tolerate missing weak links", a
 });
 
 test("macOS executable scopes skip unresolved non-weak dependencies with a warning", async (t) => {
-  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-macho-unresolved-"));
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "consult-macho-unresolved-")));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
   const executable = path.join(root, "bin", "agent");
   await fsp.mkdir(path.dirname(executable), { recursive: true });
@@ -208,7 +210,7 @@ test("macOS x64 Homebrew scopes do not widen to /usr/local", () => {
 });
 
 test("Linux executable scopes include exact Homebrew ELF dependencies without broad roots", async (t) => {
-  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-linuxbrew-scopes-"));
+  const root = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "consult-linuxbrew-scopes-")));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
   const nodePackage = path.join(root, "Cellar", "node", "26.5.0");
   const zlibPackage = path.join(root, "Cellar", "zlib-ng-compat", "2.2.4");
