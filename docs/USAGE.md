@@ -71,6 +71,10 @@ consult review --agent codex --base HEAD~1
 Codex may use its verified native review capability. Other Profiles receive the
 same review task through the portable delegation path.
 
+Pass `--effort` to select among the reasoning-effort options the reviewing
+Profile advertises, exactly as for `delegate`. Review keeps the Profile's
+default model.
+
 ## Job Authority
 
 Every `delegate` and `review` defaults to read-only, Consult-managed

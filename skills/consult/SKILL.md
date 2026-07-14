@@ -37,6 +37,11 @@ Route models by task shape:
 Optimize for total turns, not token price alone. Omit `--model` when the
 configured Profile default is intentional; otherwise pass it explicitly.
 
+Pass `--effort` (on `delegate` and `review`) when the same model should reason
+harder or lighter; it selects among the options the Profile advertises. Raise
+effort for review, debugging, and subtle-risk turns before reaching for a
+different Profile.
+
 ## Choose Authority
 
 - Default investigations and reviews to `--read-only` confinement.
