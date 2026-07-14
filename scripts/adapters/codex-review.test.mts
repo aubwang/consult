@@ -14,6 +14,7 @@ test("runCodexReview streams a codex review when review is advertised", async ()
     workspaceRoot: "/workspace",
     host: "claude-code",
     hostSessionId: "claude-1",
+    effort: "high",
     deps: quietDeps({
       getDiff: async () => "diff text",
       ensureBrokerSession: async () => ({ client }),
@@ -45,9 +46,11 @@ test("runCodexReview streams a codex review when review is advertised", async ()
     (request.params as Record<string, unknown>).prompt as string,
     /--- END CONSULT PINNED GIT DIFF ---$/,
   );
+  assert.equal((request.params as Record<string, unknown>).effort, "high");
   assert.equal((request.params as Record<string, unknown>).chainId, "job-review");
   assert.equal((request.params as Record<string, unknown>).parentJobId, null);
   assert.equal((request.params as Record<string, unknown>).delegationDepth, 0);
+  assert.equal((writtenRecords.at(0) as Record<string, unknown>).effort, "high");
   assert.equal((writtenRecords.at(0) as Record<string, unknown>).chainId, "job-review");
   assert.equal((writtenRecords.at(0) as Record<string, unknown>).parentJobId, null);
   assert.equal((writtenRecords.at(0) as Record<string, unknown>).delegationDepth, 0);

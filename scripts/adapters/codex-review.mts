@@ -42,6 +42,7 @@ export interface CodexReviewOptions {
   reviewOfJobId?: string | null;
   json?: boolean;
   authority?: JobAuthority;
+  effort?: string | null;
   parentJobId?: string | null;
   availableCommandsTimeoutMs?: number | null;
   deps?: CodexReviewDeps;
@@ -61,6 +62,7 @@ export async function runCodexReview({
   reviewOfJobId = null,
   json = false,
   authority = { ...DEFAULT_JOB_AUTHORITY },
+  effort = null,
   parentJobId = null,
   availableCommandsTimeoutMs: timeoutOverride = null,
   deps = {},
@@ -105,6 +107,7 @@ export async function runCodexReview({
     hostSessionId,
     profile,
     label,
+    effort: effort ?? undefined,
     prompt: slash,
     includeDiff: true,
     baseRef: baseRef as string | undefined,
@@ -126,7 +129,7 @@ export async function runCodexReview({
       prompt: appendPinnedDiff(suppliedPrompt ?? slash, diff, {
         baseRef: reviewOfJobId ? `isolated Job ${reviewOfJobId}` : baseRef,
       }),
-      payloadFields: { baseRef },
+      payloadFields: { baseRef, effort: effort ?? undefined },
       deps,
       output,
       renderUpdate: json
