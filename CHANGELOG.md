@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/aubwang/consult/compare/v0.6.0...v0.7.0) (2026-07-14)
+
+
+### Features
+
+* select the review model explicitly ([0eb8a20](https://github.com/aubwang/consult/commit/0eb8a200c8848779847adc55eb46f0fd323cf386))
+
 ## [0.6.0](https://github.com/aubwang/consult/compare/v0.5.2...v0.6.0) (2026-07-14)
 
 
