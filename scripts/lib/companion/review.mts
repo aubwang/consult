@@ -94,7 +94,7 @@ export async function runReview({
   const output = createOutput(deps);
   const unsupported = unsupportedFlagError(args.flags, [
     "agent", "profile", "host", "host-session", "host-session-id", "base",
-    "sandbox", "json", "job", "label", "effort",
+    "sandbox", "json", "job", "label", "model", "effort",
   ]);
   if (unsupported) {
     output.stderr(`${unsupported}\n`);
@@ -110,6 +110,7 @@ export async function runReview({
     "sandbox",
     "job",
     "label",
+    "model",
     "effort",
   ]);
   if (usageError) {
@@ -127,6 +128,7 @@ export async function runReview({
     output.stderr(`${label.error}\n`);
     return output.result(2);
   }
+  const model = stringFlag(args.flags?.model);
   const effort = stringFlag(args.flags?.effort);
   const json = boolFlag(args.flags?.json);
   const authorityResult = resolveJobAuthority({
@@ -257,6 +259,7 @@ export async function runReview({
       reviewOfJobId: sourceJobId,
       json,
       authority,
+      model,
       effort,
       parentJobId: env.CONSULT_PARENT_JOB ?? null,
       deps,
@@ -290,6 +293,7 @@ export async function runReview({
     hostSessionId: hostIdentity.hostSessionId,
     profile: selected.profile,
     label: label.label,
+    model: model ?? undefined,
     effort: effort ?? undefined,
     prompt: REVIEW_PROMPT,
     includeDiff: true,
@@ -309,6 +313,7 @@ export async function runReview({
       baseRef: sourceJobId ? `isolated Job ${sourceJobId}` : baseRef,
     }),
     kind: "review",
+    model,
     effort,
     deps,
     output,

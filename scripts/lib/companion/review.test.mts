@@ -43,7 +43,7 @@ test("review with a Profile lacking native review runs a read-only pinned-diff J
   const writtenRecords: Array<Record<string, unknown>> = [];
   let diffCalls = 0;
   const resultPromise = runReview({
-    args: { positional: [], flags: { agent: "claude", effort: "high" } },
+    args: { positional: [], flags: { agent: "claude", model: "sonnet", effort: "high" } },
     env: { CONSULT_HOST: "codex", CONSULT_HOST_SESSION_ID: "codex-1" },
     deps: quietDeps({
       resolveWorkspaceRoot: async () => "/workspace",
@@ -84,6 +84,7 @@ test("review with a Profile lacking native review runs a read-only pinned-diff J
   assert.equal(request.params.kind, "review");
   assert.equal(request.params.mode, "read-only");
   assert.equal(request.params.profile, "claude");
+  assert.equal(request.params.model, "sonnet");
   assert.equal(request.params.effort, "high");
   assert.match(request.params.prompt as string, /Return findings first, ordered by severity/);
   assert.match(request.params.prompt as string, /BEGIN CONSULT PINNED GIT DIFF/);
@@ -91,6 +92,7 @@ test("review with a Profile lacking native review runs a read-only pinned-diff J
   const queued = writtenRecords.at(0)!;
   assert.equal(queued.kind, "review");
   assert.equal(queued.mode, "read-only");
+  assert.equal(queued.model, "sonnet");
   assert.equal(queued.effort, "high");
   assert.equal(queued.includeDiff, true);
   assert.equal((queued.prompt as string).includes("diff --git"), false);
