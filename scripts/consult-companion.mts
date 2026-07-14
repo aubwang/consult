@@ -155,8 +155,7 @@ pinned diff. review --job <job-id> instead reviews a completed isolated write
 Job using its original task, final report, touched-files list, and Consult-owned
 patch as bounded untrusted data. --job and --base are mutually exclusive. Codex
 may use its verified native review command; every other Profile uses the
-portable delegate path. review accepts --effort like delegate; the reviewing
-Profile keeps its default model.
+portable delegate path. review accepts --model and --effort like delegate.
 
 ## Foreground and background
 
