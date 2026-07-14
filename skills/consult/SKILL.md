@@ -46,8 +46,12 @@ different Profile.
 
 - Default investigations and reviews to `--read-only` confinement.
 - Use `--write --isolated` for implementation so the Host receives a patch
-  without changing its checkout. Delegates cannot execute commands, so do not
-  prompt a Job to run tests or builds; verify the patch Host-side.
+  without changing its checkout. Consult denies command execution itself, so
+  do not prompt a Job to run tests or builds; verify the patch Host-side.
+  Phrase the prompt constraint as "do not run tests, builds, or verification
+  commands — read files freely", never a blanket "you cannot execute
+  commands": some delegates read files through a shell-mediated tool and
+  refuse file reads under a blanket execution ban.
 - Add `--allow-fetch` only when the Profile needs public-web research; readable
   Job data can then be sent to public hosts.
 - Use `--sandbox inherit` only when the trusted Host deliberately accepts its
