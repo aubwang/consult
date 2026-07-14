@@ -789,6 +789,7 @@ async function acquireBrokerLock(
   lockPath: string,
   owner: Record<string, unknown> & { pid: number },
 ): Promise<void> {
+  await sweepStaleLockCandidates(lockPath);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const candidatePath = `${lockPath}.${process.pid}.${Date.now()}.${attempt}`;
     try {
@@ -828,14 +829,30 @@ async function acquireBrokerLock(
   throw error;
 }
 
+async function sweepStaleLockCandidates(lockPath: string): Promise<void> {
+  const dir = path.dirname(lockPath);
+  const prefix = `${path.basename(lockPath)}.`;
+  const entries = await fsp.readdir(dir).catch(() => [] as string[]);
+  await Promise.all(
+    entries
+      .filter((entry) => entry.startsWith(prefix))
+      .map(async (entry) => {
+        const candidatePid = Number(entry.slice(prefix.length).split(".")[0]);
+        if (Number.isInteger(candidatePid) && candidatePid > 0 && pidIsAlive(candidatePid)) {
+          return;
+        }
+        await fsp.unlink(path.join(dir, entry)).catch(() => {});
+      }),
+  );
+}
+
 async function unlinkOwnedBrokerState(filePath: string, pid: number): Promise<void> {
   const owner = await readBrokerOwner(filePath);
   if (owner?.pid !== pid) {
     return;
   }
-  await fsp.unlink(filePath).catch((error: CodedError) => {
-    if (error.code !== "ENOENT") throw error;
-  });
+  // Shutdown cleanup is best-effort; an unlink failure must not abort it.
+  await fsp.unlink(filePath).catch(() => {});
 }
 
 async function readBrokerOwner(

@@ -205,7 +205,9 @@ function assertLinuxWriteBinds(words: readonly string[], allowedWrites: Readonly
     if (words[index] !== "--bind") continue;
     const source = words[index + 1];
     const target = words[index + 2];
-    if (source !== target) continue;
+    if (source !== target) {
+      throw policyShapeError(`unexpected Linux writable bind shape for ${source} -> ${target}`);
+    }
     if (!proxySocketPattern.test(source) && !allowedWrites.has(source)) {
       throw policyShapeError(`unexpected Linux writable bind remained for ${source}`);
     }

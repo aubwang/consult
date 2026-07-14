@@ -230,6 +230,9 @@ export async function runAgentJobTurn(
     sessionId = (sessionState as { sessionId: string }).sessionId;
     ctx.setSession(sessionId, sessionState);
   }
+  if (job.status !== "running") {
+    return;
+  }
   ctx.trackSession(sessionId, job);
   sessionState = await applySessionControls(agent.connection, {
     sessionId,
@@ -241,6 +244,12 @@ export async function runAgentJobTurn(
   ctx.setSession(sessionId, sessionState);
 
   if (job.status !== "running") {
+    return;
+  }
+  if (job.cancelRequested) {
+    // A cancel raced session setup; no prompt is in flight for the agent to
+    // acknowledge, so finalize as cancelled instead of prompting.
+    await ctx.finalizeJob(job, { stopReason: "cancelled", sessionId });
     return;
   }
 

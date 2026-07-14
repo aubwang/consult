@@ -175,7 +175,9 @@ export async function ensureBrokerSession({
   }
 
   await terminatePid(child.pid, options.sigtermTimeoutMs ?? 500);
-  await cleanupBrokerFiles(brokerFile, pidFile);
+  // A concurrent spawner may have won this identity; only remove files the
+  // timed-out child actually owns.
+  await cleanupBrokerFilesIfOwned(brokerFile, pidFile, child.pid);
   const stderr = await fsp.readFile(stderrFile, "utf8").catch(() => "");
   await fsp.unlink(stderrFile).catch(() => {});
   const error: CodedError = new Error(

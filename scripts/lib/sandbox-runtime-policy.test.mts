@@ -89,6 +89,24 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
       }),
     /unexpected Linux writable bind remained for \/etc/u,
   );
+  assert.throws(
+    () =>
+      transformSandboxRuntimeLaunch({
+        ...input,
+        launch: {
+          ...input.launch,
+          argv: [
+            "/bin/bash",
+            "-c",
+            source.replace(
+              "--unshare-pid",
+              "--bind /host/etc /etc --unshare-pid",
+            ),
+          ],
+        },
+      }),
+    /unexpected Linux writable bind shape for \/host\/etc/u,
+  );
 });
 
 test("tightens the pinned macOS profile rules and proxy environment", () => {
