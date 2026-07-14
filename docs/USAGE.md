@@ -12,7 +12,7 @@ Consult ships three built-in Profile definitions:
 | --- | --- | --- | --- |
 | `claude` | `claude-agent-acp` | `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`, otherwise a stageable credentials file. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
 | `codex` | `codex-acp` | `CONSULT_OPENAI_API_KEY`, otherwise the underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
-| `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; explicit inheritance is required. |
+| `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority. |
 
 Run `consult setup` to inspect available Profile executables or
 `consult setup --install <profile>` to install and verify one. Custom Profiles
@@ -103,16 +103,27 @@ credentials; keep the Job's readable input narrow.
 
 ### Ambient inheritance
 
-`--sandbox inherit` deliberately adds no Consult OS boundary. It is an explicit
-escape hatch for a trusted Host and is never selected as an automatic retry.
-Read-only and path policy are cooperative and detective under inheritance, so a
-Profile backend may act before Consult observes a violation. Inheritance also
-passes the Host's ambient environment without confined credential staging or
-translation, so vendor variables may affect the Profile's native authentication.
+`--sandbox inherit` deliberately adds no Consult OS boundary: no private Job
+home, no filesystem confinement, and no egress proxy. The Profile runs as an
+ordinary Host process. It is an explicit escape hatch for a trusted Host and is
+never selected as an automatic retry. Consult's Job policy — the selected
+read-only or write mode, workspace path checks, and fetch and execute denial —
+still applies at the agent-protocol permission layer, but it is cooperative and
+detective under inheritance, so a Profile backend may act before Consult
+observes a violation. Inheritance also passes the Host's ambient environment
+without confined credential staging or translation, so vendor variables may
+affect the Profile's native authentication.
 
-Confined nested delegation is unsupported. Custom and opencode Profiles require
-inheritance. Native Windows and macOS x64 processes, including Node under
-Rosetta, are unsupported even in inherited mode.
+Consult-managed confinement is implemented only for the built-in `codex` and
+`claude` Profiles. Custom and opencode Profiles always require
+`--sandbox inherit`: a default confined `delegate` or `review` for them fails
+preflight before any Job is created, and Consult never downgrades to
+inheritance automatically. An opencode Job is therefore never OS-sandboxed by
+Consult; treat it as running with the Host's own authority, subject only to the
+cooperative Job policy above and any sandboxing the opencode runtime itself
+provides. Confined nested delegation is unsupported. Native Windows and macOS
+x64 processes, including Node under Rosetta, are unsupported even in inherited
+mode.
 
 Check the exact Host/Profile/authority combination first:
 
@@ -156,9 +167,12 @@ Keychain-only login is unavailable in the private Job home. Consult deliberately
 does not broker the macOS Keychain.
 
 `--allow-exec` remains unavailable while execute-specific resource limits and
-cross-Profile conformance are incomplete. Confined Jobs have wall-clock and
-persisted-log limits, but no process-count, CPU, memory, disk, or global fan-out
-quota. The trusted Host must bound concurrent delegates.
+cross-Profile conformance are incomplete. A delegated Job can read and edit
+files according to its mode but cannot run commands — tests, linters, builds,
+or generators — so the Host runs verification after the Job returns. Confined
+Jobs have wall-clock and persisted-log limits, but no process-count, CPU,
+memory, disk, or global fan-out quota. The trusted Host must bound concurrent
+delegates.
 
 ## Write Jobs and artifacts
 
@@ -172,7 +186,7 @@ For delegated implementation, prefer an isolated write Job:
 
 ```sh
 consult delegate --agent codex --write --isolated --label "focused fix" -- \
-  "Implement the focused fix and run the relevant checks."
+  "Implement the focused fix and add a regression test."
 ```
 
 An isolated Job seeds a detached Git worktree from current staged, unstaged,
@@ -183,7 +197,9 @@ checkout unchanged. The repository needs at least one commit to provide a
 stable base.
 
 The isolated worktree is a transactional boundary separate from native process
-confinement. Confined Job Authority still applies by default.
+confinement. Confined Job Authority still applies by default, and execute
+authority stays unavailable: the delegate edits files but cannot run tests or
+builds, so verify the patch Host-side before or after applying it.
 
 Review a completed isolated Job directly from its Consult-owned artifacts:
 

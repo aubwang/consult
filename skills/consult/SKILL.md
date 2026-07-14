@@ -46,11 +46,13 @@ different Profile.
 
 - Default investigations and reviews to `--read-only` confinement.
 - Use `--write --isolated` for implementation so the Host receives a patch
-  without changing its checkout.
+  without changing its checkout. Delegates cannot execute commands, so do not
+  prompt a Job to run tests or builds; verify the patch Host-side.
 - Add `--allow-fetch` only when the Profile needs public-web research; readable
   Job data can then be sent to public hosts.
 - Use `--sandbox inherit` only when the trusted Host deliberately accepts its
-  ambient boundary. Custom and opencode Profiles currently require it.
+  ambient boundary. Custom and opencode Profiles currently require it and are
+  never OS-confined by Consult.
 - Never weaken authority automatically after preflight failure.
 
 ## Run and Collect
