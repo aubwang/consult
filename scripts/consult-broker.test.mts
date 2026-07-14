@@ -1265,7 +1265,9 @@ test("running jobs prevent idle broker shutdown after originator disconnect", as
   await client.close();
 
   await assertNotClosedWithin(harness.broker.closed, 80);
-  assert.deepEqual(await withTimeout(harness.broker.closed, 500), { code: 0 });
+  // The slow turn's tail includes the post-prompt update drain window, so the
+  // close budget must comfortably exceed sleep(200) + drain + idle timeout.
+  assert.deepEqual(await withTimeout(harness.broker.closed, 1500), { code: 0 });
 });
 
 test("unknown RPC methods return JSON-RPC method not found", async (t) => {

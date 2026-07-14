@@ -598,7 +598,9 @@ test("policy violation with an unsettled turn releases and taints after the canc
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   const runtime = createBrokerJobRuntime({
-    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 20 },
+    // The ack timeout must comfortably exceed the awaited record write inside
+    // the violation path so the held-busy state is observable first.
+    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 250 },
     ensureAgent: async () => ({ connection: { cancel: async () => {} } } as unknown as BrokerAgentHandle),
     hashRunPayload: () => "payload-hash",
     writeNotification() {},
