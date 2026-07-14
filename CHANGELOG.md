@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/aubwang/consult/compare/v0.7.0...v0.7.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **skills:** scope delegation exec constraint so delegates keep reading files ([3172f5e](https://github.com/aubwang/consult/commit/3172f5e8d7ced3220d133c57fbfc9ca2ca7fe618))
+
 ## [0.7.0](https://github.com/aubwang/consult/compare/v0.6.0...v0.7.0) (2026-07-14)
 
 
