@@ -64,7 +64,9 @@ the work in its own context; the Host gets back only what it asked for.
 
 - 🧠 **Keep the working detail out of your context.** Delegates start cold and
   return bounded summaries, final answers, or patch artifacts — never their
-  tool transcript.
+  tool transcript. The boundary is opt-in depth, not a black box: every Job
+  keeps a full activity log on disk, one `consult logs <job-id>` away when
+  something deserves a closer look.
 - 🔀 **Cross agent boundaries without switching stacks.** Invoke Claude from
   Codex, Codex from Claude Code, or either from opencode — over the open
   [Agent Client Protocol](https://agentclientprotocol.com), using your
