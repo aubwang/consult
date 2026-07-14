@@ -1220,12 +1220,15 @@ test("a concurrent Broker for the same identity cannot replace the live owner", 
     await fsp.rm(dir, { recursive: true, force: true });
   });
 
+  const staleCandidate = `${statePath}.lock.4194305.1.0`;
+  await fsp.writeFile(staleCandidate, "{}\n");
   await assert.rejects(
     serveBroker(options),
     (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
   );
   assert.equal(await fileExists(statePath), true);
   assert.equal(await fileExists(`${statePath}.lock`), true);
+  assert.equal(await fileExists(staleCandidate), false);
   const client = await connectBroker(endpoint);
   try {
     assert.equal(((await client.request("consult/ping", {})) as any).ok, true);

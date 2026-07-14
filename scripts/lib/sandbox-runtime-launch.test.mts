@@ -8,6 +8,7 @@ import { test, type TestContext } from "node:test";
 import type { StartedAgent } from "./acp-client.mts";
 import type { EgressProxyOptions } from "./egress-proxy.mts";
 import type { JobAuthority } from "./job-authority.mts";
+import { processStartTime } from "./process-identity.mts";
 import {
   CONFINED_PROFILE_POLICIES,
   MACOS_READ_PATHS,
@@ -101,6 +102,28 @@ test("macOS executable scopes resolve rpaths and tolerate missing weak links", a
   assert.deepEqual(inspected, [executable, dependency]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /missing weak-linked macOS runtime dependency/u);
+});
+
+test("macOS executable scopes skip unresolved non-weak dependencies with a warning", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-macho-unresolved-"));
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "bin", "agent");
+  await fsp.mkdir(path.dirname(executable), { recursive: true });
+  await fsp.writeFile(executable, Buffer.from("feedfacf", "hex"));
+  const warnings: string[] = [];
+
+  const scopes = macosExecutableReadScopes(
+    executable,
+    (candidate) =>
+      candidate === executable
+        ? { dependencies: [{ installName: "libfallback.dylib", weak: false }], rpaths: [] }
+        : { dependencies: [], rpaths: [] },
+    (message) => warnings.push(message),
+  );
+
+  assert.ok(Array.isArray(scopes));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /unresolved macOS runtime dependency 'libfallback.dylib'/u);
 });
 
 test("missing otool reports the Xcode Command Line Tools remediation", async (t) => {
@@ -889,6 +912,55 @@ test("a new confined launch sweeps an old root whose owner is gone", async (t) =
   });
   try {
     assert.equal(fs.existsSync(staleRoot), false);
+  } finally {
+    await lease.release();
+  }
+});
+
+test("the stale-root sweep treats a reused owner pid as gone", async (t) => {
+  const fixture = await makeFixture(t);
+  const reusedRoot = await fsp.mkdtemp("/tmp/consult-srt-job-reused-");
+  t.after(() => fsp.rm(reusedRoot, { recursive: true, force: true }));
+  await fsp.writeFile(
+    path.join(reusedRoot, ".consult-owner.json"),
+    `${JSON.stringify({ pid: process.pid, pidStartTime: "not-this-process", createdAt: 0 })}\n`,
+    { mode: 0o600 },
+  );
+  const keptRoot = await fsp.mkdtemp("/tmp/consult-srt-job-kept-");
+  t.after(() => fsp.rm(keptRoot, { recursive: true, force: true }));
+  await fsp.writeFile(
+    path.join(keptRoot, ".consult-owner.json"),
+    `${JSON.stringify({
+      pid: process.pid,
+      pidStartTime: await processStartTime(process.pid),
+      createdAt: 0,
+    })}\n`,
+    { mode: 0o600 },
+  );
+  const now = Date.now();
+  const old = new Date(now - 40 * 60 * 1000);
+  await fsp.utimes(reusedRoot, old, old);
+  await fsp.utimes(keptRoot, old, old);
+  const harness = fakeRuntime();
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    cwd: fixture.workspace,
+    env: {
+      CONSULT_OPENAI_API_KEY: "selected-key",
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "codex",
+  }, {
+    ...harness.deps,
+    now: () => now,
+    pidIsAlive: () => true,
+  });
+  try {
+    assert.equal(fs.existsSync(reusedRoot), false);
+    assert.equal(fs.existsSync(keptRoot), true);
   } finally {
     await lease.release();
   }

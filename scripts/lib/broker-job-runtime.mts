@@ -361,7 +361,7 @@ export function createBrokerJobRuntime({
       // boundaries: observers may immediately submit the next Job.
       busy = false;
       await writeJobRecord(job, job.finalized).catch((error) => {
-        job.finalized = terminalWriteFailure(job, error);
+        job.finalized = boundedFinalized(job, terminalWriteFailure(job, error));
       });
       // Keep finalized jobs for this daemon lifetime; eviction is deferred for v1.
       notifyFinalized(job, job.finalized);
@@ -385,7 +385,7 @@ export function createBrokerJobRuntime({
       sessionJobs.delete(job.sessionId);
       busy = false;
       await writeFailedJobRecord(job).catch((error) => {
-        job.finalized = terminalWriteFailure(job, error);
+        job.finalized = boundedFinalized(job, terminalWriteFailure(job, error));
       });
       notifyFinalized(job, job.finalized);
       onActivity();

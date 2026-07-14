@@ -56,6 +56,40 @@ test("runAgentJobTurn stops after cold start when the Job was cancelled", async 
   assert.equal(sessionStarted, false);
 });
 
+test("runAgentJobTurn finalizes as cancelled when a cancel raced session setup", async () => {
+  const finalized: Array<{ stopReason: string; sessionId: string }> = [];
+  const job = { status: "running", cancelRequested: false, resumeSessionId: null } as BrokerJob;
+  await runAgentJobTurn(
+    { ...BASE_RUN, authority: authority({ mode: "write" }) },
+    job,
+    {
+      config: { cwd: "/workspace" },
+      ensureAgent: async () =>
+        ({
+          connection: {
+            newSession: async () => ({ sessionId: "sess-1" }),
+            prompt: async () => {
+              throw new Error("cancelled Job must not prompt");
+            },
+          },
+          capabilities: {},
+          dispose: async () => {},
+        }) as unknown as StartedAgent,
+      getSession: () => undefined,
+      setSession: () => {},
+      // Simulate consult/cancel landing right after the session registers.
+      trackSession: () => {
+        job.cancelRequested = true;
+      },
+      finalizeJob: async (_job, outcome) => {
+        finalized.push(outcome);
+      },
+      noteTurnSettled: () => {},
+    },
+  );
+  assert.deepEqual(finalized, [{ stopReason: "cancelled", sessionId: "sess-1" }]);
+});
+
 test("hashRunPayload includes canonical execute authority", () => {
   const runAuthority = authority({ mode: "write" });
   const defaultHash = hashRunPayload({ ...BASE_RUN, authority: runAuthority });

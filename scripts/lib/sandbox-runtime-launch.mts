@@ -23,6 +23,7 @@ import {
   restoreConfinedSessionState,
 } from "./confined-session-state.mts";
 import { pidIsAlive as defaultPidIsAlive } from "./process.mts";
+import { pidMatchesStartTime, processStartTime } from "./process-identity.mts";
 import {
   SANDBOX_RUNTIME_VERSION,
   assertSandboxRuntimeLiteralPath,
@@ -643,7 +644,11 @@ async function createPrivateJobRoot(now: number): Promise<string> {
     await fsp.chmod(raw, 0o700);
     await fsp.writeFile(
       path.join(raw, JOB_ROOT_OWNER_FILE),
-      `${JSON.stringify({ pid: process.pid, createdAt: now })}\n`,
+      `${JSON.stringify({
+        pid: process.pid,
+        pidStartTime: await processStartTime(process.pid).catch(() => null),
+        createdAt: now,
+      })}\n`,
       { flag: "wx", mode: 0o600 },
     );
     return await fsp.realpath(raw);
@@ -672,17 +677,28 @@ async function sweepStaleJobRoots(
     if (!stat.isDirectory() || now - stat.mtimeMs <= STALE_JOB_ROOT_AGE_MS) return;
 
     let ownerPid: number | undefined;
+    let ownerPidStartTime: string | null = null;
     try {
       const owner = JSON.parse(
         await fsp.readFile(path.join(candidate, JOB_ROOT_OWNER_FILE), "utf8"),
-      ) as { pid?: unknown };
+      ) as { pid?: unknown; pidStartTime?: unknown };
       if (Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0) {
         ownerPid = Number(owner.pid);
+      }
+      if (typeof owner.pidStartTime === "string" && owner.pidStartTime) {
+        ownerPidStartTime = owner.pidStartTime;
       }
     } catch {
       // Old or interrupted roots may not have an ownership marker.
     }
-    if (ownerPid !== undefined && pidIsAlive(ownerPid)) return;
+    if (ownerPid !== undefined) {
+      // Start-time identity distinguishes the recorded owner from an
+      // unrelated process that merely reused its pid.
+      const ownerAlive = ownerPidStartTime
+        ? await pidMatchesStartTime(ownerPid, ownerPidStartTime).catch(() => true)
+        : pidIsAlive(ownerPid);
+      if (ownerAlive) return;
+    }
     await fsp.rm(candidate, { recursive: true, force: true }).catch(() => {});
   }));
 }
@@ -982,9 +998,11 @@ function linkedMachORuntimePaths(
           warn(`skipping missing weak-linked macOS runtime dependency '${dependency.installName}' for ${canonical}`);
           continue;
         }
-        throw new Error(
-          `failed to resolve linked runtime dependency '${dependency.installName}' for ${canonical}`,
-        );
+        // dyld may still satisfy this via fallback search paths we do not
+        // model; skipping only narrows read scopes and the warning names the
+        // dependency if the confined launch then fails.
+        warn(`skipping unresolved macOS runtime dependency '${dependency.installName}' for ${canonical}`);
+        continue;
       }
       if (isMacosSystemRuntimePath(resolvedDependency)) continue;
       let resolved: string;

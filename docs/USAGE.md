@@ -82,7 +82,10 @@ confinement. On native Linux and native arm64 macOS, built-in `codex` and
 - one selected credential source;
 - only the system and runtime reads needed to start the configured Profile; and
 - model traffic through an authenticated host-allowlist proxy, with direct
-  networking blocked.
+  networking blocked. The confined allowlist is `api.openai.com`,
+  `chatgpt.com`, and `auth.openai.com` for `codex` (authentication and model
+  traffic share the ChatGPT-backed endpoints) and `api.anthropic.com` for
+  `claude`.
 
 Preflight initializes the exact configured Profile before creating a Job.
 
