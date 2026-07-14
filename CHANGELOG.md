@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/aubwang/consult/compare/v0.5.2...v0.6.0) (2026-07-14)
+
+
+### Features
+
+* tune review reasoning effort ([88e19cb](https://github.com/aubwang/consult/commit/88e19cbf363ebe27d68d6535352dda0256c88c67))
+
 ## [0.5.2](https://github.com/aubwang/consult/compare/v0.5.1...v0.5.2) (2026-07-14)
 
 
