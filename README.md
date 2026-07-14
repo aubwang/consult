@@ -192,8 +192,8 @@ npx skills add aubwang/consult
 
 ## Security posture
 
-Delegating to an autonomous agent is running code. Consult treats that
-seriously:
+A delegated Job is a real agent working against your repository, so the
+defaults stay conservative:
 
 - New Jobs default to **read-only, OS-level confinement** with network fetch
   and command execution disabled (built-in Claude and Codex Profiles on Linux
