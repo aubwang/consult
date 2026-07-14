@@ -1,6 +1,6 @@
 {
   "name": "@aubwang/consult",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Host-neutral delegation CLI for ACP coding agents.",
   "license": "Apache-2.0",
   "type": "module",
