@@ -44,3 +44,26 @@ also remains observational so diagnostics do not repair the state they report.
   state, but it sends no prompt and receives no model response.
 - The confined Job continues to receive only a private credential snapshot and
   sanitized environment.
+
+## Amendment: proactive near-expiry refresh
+
+The refresh trigger is widened from *already expired* to *expired or expiring
+within a skew window*. A stageable OAuth credential that is still valid at
+preflight but within the skew is treated as refresh-eligible, so a root Job
+refreshes it before staging rather than letting it lapse between staging and
+the first confined model call (the confined Job stages a fixed snapshot and its
+egress allowlist — `api.anthropic.com` only — cannot reach the token endpoint,
+so it never self-refreshes).
+
+The skew defaults to two minutes and is configurable through
+`CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS`; `0` restores the strict already-expired
+behavior. It is kept small on purpose: a credential within the window is close
+enough to expiry that the Host refresh session reliably rotates it, and the
+existing single-retry guard still fails closed with `claude setup-token` /
+`CONSULT_CLAUDE_OAUTH_TOKEN` remediation when a refresh does not extend it.
+
+Doctor stays observational under this amendment: it classifies the credential
+with a zero skew (`inspectClaudeHostOauth`) so a still-valid, soon-to-expire
+credential is reported as `expiring` without flipping `canDelegate`, and it
+never performs the refresh. The durable operator fix remains an explicit
+long-lived Consult credential variable, which bypasses the OAuth file entirely.

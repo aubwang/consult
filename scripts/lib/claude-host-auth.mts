@@ -112,7 +112,7 @@ function refreshFailure(
     ...diagnostic,
     message,
     remediation:
-      "Run `claude auth login` once, or supply CONSULT_CLAUDE_OAUTH_TOKEN or CONSULT_CLAUDE_API_KEY to the Host environment, then retry. No Job was created.",
+      "Run `claude auth login` once to restore the Host login, then retry. To stop hitting this repeatedly, set a long-lived CONSULT_CLAUDE_OAUTH_TOKEN (generate one with `claude setup-token`) or CONSULT_CLAUDE_API_KEY in the Host environment. No Job was created.",
     details: {
       ...diagnostic.details,
       refreshAttempted: true,
