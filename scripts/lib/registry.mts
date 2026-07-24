@@ -22,7 +22,21 @@ export interface RegistryGithubReleaseInstall {
   binaryInArchive?: string;
 }
 
-export type RegistryInstall = RegistryShellInstall | RegistryGithubReleaseInstall;
+/**
+ * A Profile whose vendor ships only an interactive shell installer. Consult
+ * verifies an existing executable on PATH but never runs `hint`; it is printed
+ * so the operator installs the Profile themselves.
+ */
+export interface RegistryManualInstall {
+  type: "manual";
+  hint: string;
+  docsUrl?: string;
+}
+
+export type RegistryInstall =
+  | RegistryShellInstall
+  | RegistryGithubReleaseInstall
+  | RegistryManualInstall;
 
 export interface RegistrySupports {
   resume: boolean;
@@ -133,6 +147,11 @@ function isValidInstall(install: Record<string, unknown>): boolean {
         typeof install.repo === "string" &&
         typeof install.version === "string" &&
         typeof install.assetTemplate === "string"
+      );
+    case "manual":
+      return (
+        typeof install.hint === "string" &&
+        ("docsUrl" in install ? typeof install.docsUrl === "string" : true)
       );
     default:
       return false;

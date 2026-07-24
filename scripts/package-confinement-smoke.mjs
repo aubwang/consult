@@ -11,9 +11,23 @@ const scriptsRoot = path.dirname(fileURLToPath(import.meta.url));
 const fixtureSource = path.join(scriptsRoot, "package-confinement-fixture.mjs");
 const FINAL_STATUSES = new Set(["completed", "cancelled", "failed"]);
 
+// Every registry identity Consult can confine, with the Host-side staging shape
+// the packed adapter must translate into the private Job home.
+const CONFINED_PROFILES = ["codex", "claude", "grok"];
+const PROFILE_SHAPES = {
+  codex: { configDir: ".codex", configEnv: "CODEX_HOME", credential: "auth.json", decoy: "config.toml" },
+  claude: {
+    configDir: ".claude",
+    configEnv: "CLAUDE_CONFIG_DIR",
+    credential: ".credentials.json",
+    decoy: "settings.json",
+  },
+  grok: { configDir: ".grok", configEnv: "GROK_HOME", credential: "auth.json", decoy: "config.toml" },
+};
+
 export async function assertInstalledConfinedMatrix(binary, temporaryRoot, installer) {
   assertSupportedPlatform();
-  for (const profile of ["codex", "claude"]) {
+  for (const profile of CONFINED_PROFILES) {
     const harness = await createHarness(binary, temporaryRoot, installer, profile);
     try {
       await runFullProfileMatrix(harness);
@@ -27,7 +41,7 @@ export async function assertInstalledConfinedMatrix(binary, temporaryRoot, insta
 
 export async function assertInstalledConfinedDoctors(binary, temporaryRoot, installer) {
   assertSupportedPlatform();
-  for (const profile of ["codex", "claude"]) {
+  for (const profile of CONFINED_PROFILES) {
     const harness = await createHarness(binary, temporaryRoot, installer, profile);
     try {
       await assertDoctor(harness);
@@ -153,12 +167,13 @@ function assertCompleted(payload, marker) {
 
 async function createHarness(binary, temporaryRoot, installer, profile) {
   const sandboxRootsBefore = await listSandboxRoots();
+  const shape = PROFILE_SHAPES[profile];
   const root = path.join(temporaryRoot, `confined-${installer}-${profile}`);
   const workspace = path.join(root, "workspace");
   const data = path.join(root, "data");
   const home = path.join(root, "home");
   const fakeBin = path.join(root, "bin");
-  const sourceConfig = path.join(home, profile === "codex" ? ".codex" : ".claude");
+  const sourceConfig = path.join(home, shape.configDir);
   const hostReadCanary = path.join(root, "host-read-canary.txt");
   const hostWriteCanary = path.join(root, "host-write-canary.txt");
   await Promise.all([
@@ -175,12 +190,12 @@ async function createHarness(binary, temporaryRoot, installer, profile) {
   await fs.chmod(fixture, 0o755);
   await fs.writeFile(hostReadCanary, "host-only\n", { mode: 0o600 });
   await fs.writeFile(
-    path.join(sourceConfig, profile === "codex" ? "auth.json" : ".credentials.json"),
+    path.join(sourceConfig, shape.credential),
     `${JSON.stringify({ probe: profile })}\n`,
     { mode: 0o600 },
   );
   await fs.writeFile(
-    path.join(sourceConfig, profile === "codex" ? "config.toml" : "settings.json"),
+    path.join(sourceConfig, shape.decoy),
     "must not be staged\n",
     { mode: 0o600 },
   );
@@ -210,9 +225,7 @@ async function createHarness(binary, temporaryRoot, installer, profile) {
     sandboxRootsBefore,
     loopbackPort: sentinel.port,
   };
-  const profileEnv = profile === "codex"
-    ? { CODEX_HOME: sourceConfig }
-    : { CLAUDE_CONFIG_DIR: sourceConfig };
+  const profileEnv = { [shape.configEnv]: sourceConfig };
   await fs.writeFile(
     path.join(data, "profiles.json"),
     `${JSON.stringify({
@@ -237,6 +250,7 @@ async function createHarness(binary, temporaryRoot, installer, profile) {
     CONSULT_OPENAI_API_KEY: undefined,
     CONSULT_CLAUDE_API_KEY: undefined,
     CONSULT_CLAUDE_OAUTH_TOKEN: undefined,
+    CONSULT_XAI_API_KEY: undefined,
     ...profileEnv,
     PATH: [fakeBin, path.dirname(process.execPath), process.env.PATH]
       .filter(Boolean)

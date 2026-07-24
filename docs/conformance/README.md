@@ -2,8 +2,9 @@
 
 Live conformance status for the implemented Consult Profiles.
 
-Job Authority confinement is now implemented for the built-in Codex and Claude
-Profile identities on native Linux and native arm64 macOS, with exact live preflight deciding
+Job Authority confinement is now implemented for the built-in Codex, Claude,
+and Grok Profile identities on native Linux and native arm64 macOS, with exact
+live preflight deciding
 whether the current Host context is usable. The pinned runtime remains
 **rejected for the nested macOS Codex Host path** because it cannot establish
 its own proxy or Seatbelt boundary inside Codex's inherited sandbox. See the
@@ -59,6 +60,28 @@ token present only in that task's launch environment:
 ```json
 {"schemaVersion":1,"platform":"darwin","arch":"arm64","hostContext":"codex","agent":"claude","expectation":"unsupported","direct":null,"doctor":{"exitCode":1,"selectedProfile":"claude","profileRegistryId":"claude","confinedReady":false,"diagnostic":{"code":"AUTHORITY_PREFLIGHT_FAILED","message":"confined authority preflight failed: listen EPERM: operation not permitted 127.0.0.1","remediation":"Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created."}},"turn":null,"background":null}
 ```
+
+On 2026-07-24, the Grok registry identity joined the deterministic packed
+matrix and passed the complete npm matrix and the Bun confined Doctor control
+on native macOS arm64 with Node 24.18.0, alongside the existing Codex and
+Claude runs:
+
+```text
+packed confined npm/codex matrix passed
+packed confined npm/claude matrix passed
+packed confined npm/grok matrix passed
+packed confined bun/codex Doctor passed
+packed confined bun/claude Doctor passed
+packed confined bun/grok Doctor passed
+```
+
+That establishes Consult's own boundary for the Grok identity — private
+`GROK_HOME` staging, config-decoy exclusion, credential-environment
+minimization, direct-egress denial, proxy behavior with and without
+`--allow-fetch`, in-workspace-only writes, isolated write, Session archive and
+restore across a fresh confined process, process-tree cancellation, and
+cleanup. Live xAI authentication, model transport, and vendor `session/load`
+compatibility remain unrun; see [grok.md](grok.md).
 
 The deterministic packed npm Codex and Claude matrices and Bun Doctor controls
 also passed with Homebrew Node 24.18.0. The real Claude controls used an
@@ -139,6 +162,10 @@ OpenCode remains inherit-only.
 | [claude](claude.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, **preventive**) | PASS | PASS (cooperative) | PASS (after iter-17 fix) | 2026-05-19 direct/Consult/bwrap proof PASS. Cancel works but is slower than codex. |
 | [opencode](opencode.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, defense-in-depth) | PASS | — | — | 2026-05-19 direct/Consult/bwrap proof PASS with provider auth configured. |
 
+The [grok](grok.md) Profile postdates this historical table. It is covered by
+the current deterministic packed confinement matrix rather than by the 2026-05
+cooperative/bwrap sweep, and its live vendor run is still outstanding.
+
 Legend:
 - **PASS**: live-verified end-to-end against the real backend.
 - **AUTH-DEFERRED**: backend reachable but live delegate is intentionally out of
@@ -163,7 +190,8 @@ Both codex and claude shapes are unit-tested in `scripts/consult-broker.test.mts
 
 The historical cooperative ACP/backstop results above are not hard boundaries by
 themselves. Current `delegate` and `review` requests default to canonical
-read-only confined Job Authority. Built-in Codex and Claude launches receive a
+read-only confined Job Authority. Built-in Codex, Claude, and Grok launches
+receive a
 private Job home/temp directory, one Profile-specific Consult credential
 variable when supplied or otherwise a copied credential file, Workspace access
 according to mode, and no
@@ -172,12 +200,18 @@ direct network. Model traffic uses an authenticated pinned-address proxy;
 HTTPS clients, but the proxy does not terminate TLS or prove the tunneled
 application protocol is HTTP.
 
-Whole Host config is not staged: Codex `config.toml` and Claude `settings.json`
-are absent. Exact Profile initialization happens before Job creation, and
+Whole Host config is not staged: Codex `config.toml`, Claude `settings.json`,
+and Grok `config.toml` are absent, and ambient `GROK_*` variables do not cross
+into a Job. Exact Profile initialization happens before Job creation, and
 `consult doctor` runs that same live check. `--sandbox inherit` is an explicit
 ambient-authority escape hatch and is never an automatic retry. The opencode
 and custom Profile paths currently require inheritance; native Windows, Intel
 macOS, and confined nesting are unsupported.
+
+Grok is launched as `grok agent --no-leader stdio`. Consult does not pass
+`--always-approve`, so tool calls keep arriving as ACP permission requests for
+Consult's Job policy to decide, and `--no-leader` keeps the turn inside the
+Job-scoped process rather than a shared leader outside the boundary.
 
 On macOS, Claude conformance requires a supported token environment variable or
 a stageable `.claude/.credentials.json`. A Keychain-only Claude login is not a

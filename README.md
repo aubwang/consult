@@ -68,7 +68,7 @@ the work in its own context; the Host gets back only what it asked for.
   keeps a full activity log on disk, one `consult logs <job-id>` away when
   something deserves a closer look.
 - 🔀 **Cross agent boundaries without switching stacks.** Invoke Claude from
-  Codex, Codex from Claude Code, or either from opencode — over the open
+  Codex, Codex from Claude Code, or Grok Build from either — over the open
   [Agent Client Protocol](https://agentclientprotocol.com), using your
   existing local installs and logins.
 - 🔒 **Authority travels with the Job, not the machine.** Delegation defaults
@@ -91,27 +91,27 @@ agent can run a command, it can use Consult.
 ## How it works
 
 The invoking environment is the **Host**. A configured agent is a **Profile**
-(`claude`, `codex`, or `opencode` out of the box). Each delegation creates one
-durable **Job** carrying exactly one prompt turn and one explicit **Job
-Authority**.
+(`claude`, `codex`, `grok`, or `opencode` out of the box). Each delegation
+creates one durable **Job** carrying exactly one prompt turn and one explicit
+**Job Authority**.
 
 ```text
-┌──────────────────────────────┐
-│ Host context                 │
-│ decisions · decomposition    │
-└──────────────┬───────────────┘
-               │  cold prompt + Job Authority
-        ┌──────┼──────┐
-        ▼      ▼      ▼
-     Claude  Codex  opencode
-        │      │      │
-        └──────┼──────┘
-               │  result · review · patch artifact
-               ▼
-┌──────────────────────────────┐
-│ Host context                 │
-│ integration · decisions      │
-└──────────────────────────────┘
+┌──────────────────────────────────┐
+│ Host context                     │
+│ decisions · decomposition        │
+└─────────────────┬────────────────┘
+                  │  cold prompt + Job Authority
+      ┌───────┬───┴───┬────────┐
+      ▼       ▼       ▼        ▼
+   Claude   Codex   Grok   opencode
+      │       │       │        │
+      └───────┴───┬───┴────────┘
+                  │  result · review · patch artifact
+                  ▼
+┌──────────────────────────────────┐
+│ Host context                     │
+│ integration · decisions          │
+└──────────────────────────────────┘
 ```
 
 Cold doesn't mean context-free — the Host names the relevant paths,
@@ -186,6 +186,7 @@ write a cold prompt, and which authority to grant:
 | `consult` | General delegation workflow for any Host. |
 | `ask-claude` | Ask Claude for a review, explanation, or second opinion. |
 | `ask-codex` | Delegate focused work or review to Codex. |
+| `ask-grok` | Delegate focused work or review to Grok Build. |
 | `ask-opencode` | Delegate through a configured opencode provider. |
 
 ```sh

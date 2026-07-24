@@ -1,6 +1,6 @@
 ---
 name: consult
-description: Delegate work to configured Claude, Codex, or opencode Profiles through Consult. Use for focused second opinions, model routing, parallel tasks, delegated implementation, predictable Job pipelines, or operating Consult Jobs.
+description: Delegate work to configured Claude, Codex, Grok, or opencode Profiles through Consult. Use for focused second opinions, model routing, parallel tasks, delegated implementation, predictable Job pipelines, or operating Consult Jobs.
 ---
 
 # Consult Delegation
@@ -56,7 +56,8 @@ different Profile.
   Job data can then be sent to public hosts.
 - Use `--sandbox inherit` only when the trusted Host deliberately accepts its
   ambient boundary. Custom and opencode Profiles currently require it and are
-  never OS-confined by Consult.
+  never OS-confined by Consult; `claude`, `codex`, and `grok` are confined by
+  default and get the same boundary as each other.
 - Never weaken authority automatically after preflight failure.
 
 ## Run and Collect

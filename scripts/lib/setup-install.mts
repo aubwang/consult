@@ -47,6 +47,8 @@ export interface RegistryInstallSpec {
   version?: string;
   assetTemplate?: string;
   binaryInArchive?: string;
+  hint?: string;
+  docsUrl?: string;
 }
 
 export interface InstallRegistryEntry {
@@ -200,9 +202,32 @@ async function performInstall(
       return performShellInstall(registryEntry, deps);
     case "github-release":
       return performGithubReleaseInstall(registryEntry, deps);
+    case "manual":
+      return performManualInstall(registryEntry, deps);
     default:
       throw new InstallStageError("install", `unsupported install type: ${type}`);
   }
+}
+
+// Some vendors ship only an interactive shell installer (`curl … | bash`).
+// Consult refuses to execute one on the operator's behalf, so a manual entry
+// verifies an already-installed executable and otherwise reports the exact
+// documented command for the operator to run.
+async function performManualInstall(
+  registryEntry: InstallRegistryEntry,
+  deps: InstallDeps,
+): Promise<InstalledBinary> {
+  const existing = await probeBinaryOnPath(registryEntry.binary, deps);
+  if (existing.found) {
+    return { binaryPath: existing.path };
+  }
+  const { hint, docsUrl } = registryEntry.install;
+  throw new InstallStageError(
+    "install",
+    `${registryEntry.binary} is not on PATH and Consult does not run this Profile's installer` +
+      `${hint ? `; install it yourself with: ${hint}` : ""}` +
+      `${docsUrl ? ` (see ${docsUrl})` : ""}`,
+  );
 }
 
 async function performShellInstall(

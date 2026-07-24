@@ -116,6 +116,138 @@ test("Claude session archive preserves its project-relative transcript path", as
   );
 });
 
+test("Grok session archive carries conversation state and drops the rest", async (t) => {
+  const fixture = await makeFixture(t);
+  const sessionId = "01997f00-0000-7000-8000-00000000abcd";
+  const group = "%2Ftmp%2Fworkspace";
+  const sessionDir = path.join(fixture.home, ".grok/sessions", group, sessionId);
+  await writePrivateFile(path.join(sessionDir, "updates.jsonl"), "grok updates\n");
+  await writePrivateFile(path.join(sessionDir, "summary.json"), "{\"info\":1}\n");
+  await writePrivateFile(path.join(sessionDir, "chat_history.jsonl"), "grok chat\n");
+  await writePrivateFile(path.join(sessionDir, "rewind_points.jsonl"), "workspace snapshots\n");
+  await writePrivateFile(path.join(sessionDir, "feedback.jsonl"), "ratings\n");
+  await writePrivateFile(path.join(sessionDir, "subagents/child/meta.json"), "child\n");
+  await writePrivateFile(path.join(fixture.home, ".grok/auth.json"), "credential\n");
+  await writePrivateFile(path.join(fixture.home, ".grok/mcp_credentials.json"), "oauth\n");
+  await writePrivateFile(
+    path.join(fixture.home, ".grok/sessions", group, "other-session/updates.jsonl"),
+    "other\n",
+  );
+
+  await archiveConfinedSessionState({
+    ...fixture.input,
+    profileRegistryId: "grok",
+    sessionId,
+    privateHome: fixture.home,
+  });
+  await validateConfinedSessionStateArchive({
+    ...fixture.input,
+    profileRegistryId: "grok",
+    sessionId,
+  });
+  await restoreConfinedSessionState({
+    ...fixture.input,
+    profileRegistryId: "grok",
+    sessionId,
+    privateHome: fixture.restoredHome,
+  });
+
+  const restoredSessionDir = path.join(
+    fixture.restoredHome,
+    ".grok/sessions",
+    group,
+    sessionId,
+  );
+  assert.deepEqual((await fs.readdir(restoredSessionDir)).sort(), [
+    "chat_history.jsonl",
+    "summary.json",
+    "updates.jsonl",
+  ]);
+  assert.equal(
+    await fs.readFile(path.join(restoredSessionDir, "updates.jsonl"), "utf8"),
+    "grok updates\n",
+  );
+  for (const excluded of [
+    ".grok/auth.json",
+    ".grok/mcp_credentials.json",
+    `.grok/sessions/${group}/other-session/updates.jsonl`,
+  ]) {
+    await assert.rejects(fs.access(path.join(fixture.restoredHome, excluded)));
+  }
+});
+
+test("Grok session archive fails closed without the authoritative update log", async (t) => {
+  const fixture = await makeFixture(t);
+  const sessionId = "01997f00-0000-7000-8000-00000000beef";
+  await writePrivateFile(
+    path.join(fixture.home, ".grok/sessions/%2Ftmp%2Fworkspace", sessionId, "summary.json"),
+    "{}\n",
+  );
+
+  await assert.rejects(
+    archiveConfinedSessionState({
+      ...fixture.input,
+      profileRegistryId: "grok",
+      sessionId,
+      privateHome: fixture.home,
+    }),
+    /has no updates\.jsonl to archive/u,
+  );
+});
+
+test("Grok session archive rejects an ambiguous Session id across cwd groups", async (t) => {
+  const fixture = await makeFixture(t);
+  const sessionId = "01997f00-0000-7000-8000-00000000cafe";
+  for (const group of ["%2Ftmp%2Fone", "%2Ftmp%2Ftwo"]) {
+    await writePrivateFile(
+      path.join(fixture.home, ".grok/sessions", group, sessionId, "updates.jsonl"),
+      "updates\n",
+    );
+  }
+
+  await assert.rejects(
+    archiveConfinedSessionState({
+      ...fixture.input,
+      profileRegistryId: "grok",
+      sessionId,
+      privateHome: fixture.home,
+    }),
+    /expected exactly one grok Session directory/u,
+  );
+});
+
+test("session archive validation rejects a manifest target outside the Session directory", async (t) => {
+  const fixture = await makeFixture(t);
+  const sessionId = "01997f00-0000-7000-8000-00000000d00d";
+  await writePrivateFile(
+    path.join(fixture.home, ".grok/sessions/%2Ftmp%2Fworkspace", sessionId, "updates.jsonl"),
+    "updates\n",
+  );
+  await archiveConfinedSessionState({
+    ...fixture.input,
+    profileRegistryId: "grok",
+    sessionId,
+    privateHome: fixture.home,
+  });
+
+  const manifestPath = path.join(
+    jobArtifactsDir(fixture.workspaceRoot, fixture.input.jobId),
+    "session-state/manifest.json",
+  );
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  manifest.files[0].targetPath = ".grok/auth.json";
+  await fs.writeFile(manifestPath, JSON.stringify(manifest));
+
+  await assert.rejects(
+    validateConfinedSessionStateArchive({
+      ...fixture.input,
+      profileRegistryId: "grok",
+      sessionId,
+    }),
+    /disallowed target path|credential or shared history state/u,
+  );
+});
+
 test("session archive validation rejects tampering and cwd changes", async (t) => {
   const fixture = await makeFixture(t);
   const sessionId = "session-tamper";

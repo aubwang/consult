@@ -493,6 +493,143 @@ test("write and fetch authority only broaden Workspace writes and public TCP/443
   }
 });
 
+test("confined Grok launch stages auth.json under a private GROK_HOME", async (t) => {
+  const fixture = await makeFixture(t);
+  const sourceAuth = path.join(fixture.home, ".grok", "auth.json");
+  await privateFile(sourceAuth, '{"access_token":"host-only"}');
+  await privateFile(path.join(fixture.home, ".grok", "config.toml"), "[ui]\n");
+  await privateFile(path.join(fixture.home, ".grok", "mcp_credentials.json"), '{"a":1}');
+  const harness = fakeRuntime();
+
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: ["agent", "--no-leader", "stdio"],
+    cwd: fixture.workspace,
+    env: {
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+      GROK_HOME: path.join(fixture.home, ".grok"),
+      XAI_API_KEY: "ambient-key",
+      GROK_AUTH_PROVIDER_COMMAND: "/usr/bin/must-not-leak",
+      GROK_SANDBOX: "off",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    sandbox: "off",
+    profileRegistryId: "grok",
+  }, harness.deps);
+
+  const stagedHome = lease.launch.env.HOME!;
+  try {
+    assert.equal(lease.launch.env.GROK_HOME, path.join(stagedHome, ".grok"));
+    assert.equal(
+      await fsp.readFile(path.join(stagedHome, ".grok", "auth.json"), "utf8"),
+      '{"access_token":"host-only"}',
+    );
+    // Whole Host config is never staged, and an ambient key or auth-provider
+    // command must not reach the Job.
+    for (const excluded of ["config.toml", "mcp_credentials.json"]) {
+      await assert.rejects(
+        fsp.access(path.join(stagedHome, ".grok", excluded)),
+        (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+      );
+    }
+    assert.equal(lease.launch.env.XAI_API_KEY, undefined);
+    assert.equal(lease.launch.env.GROK_AUTH_PROVIDER_COMMAND, undefined);
+    assert.equal(lease.launch.env.GROK_SANDBOX, undefined);
+
+    assert.deepEqual(harness.proxyOptions, [{
+      trustedHosts: CONFINED_PROFILE_POLICIES.grok.trustedHosts,
+      allowPublicHosts: false,
+    }]);
+    assert.deepEqual(harness.configs[0].filesystem.denyRead, ["/"]);
+    assert.deepEqual(harness.configs[0].filesystem.allowWrite, [
+      stagedHome,
+      lease.launch.env.TMPDIR,
+    ]);
+    assert.equal(harness.configs[0].network.strictAllowlist, true);
+    assert.deepEqual(harness.configs[0].network.deniedDomains, ["*"]);
+    assert.equal(harness.configs[0].network.allowLocalBinding, false);
+  } finally {
+    await lease.release();
+  }
+
+  assert.equal(await fsp.readFile(sourceAuth, "utf8"), '{"access_token":"host-only"}');
+  assert.equal(fs.existsSync(stagedHome), false);
+});
+
+test("confined Grok launch uses CONSULT_XAI_API_KEY instead of auth.json", async (t) => {
+  const fixture = await makeFixture(t);
+  await privateFile(path.join(fixture.home, ".grok", "auth.json"), '{"access_token":"host"}');
+  const harness = fakeRuntime();
+
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+      GROK_HOME: path.join(fixture.home, ".grok"),
+      CONSULT_XAI_API_KEY: "explicit-key",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "grok",
+  }, harness.deps);
+
+  try {
+    assert.equal(lease.launch.env.XAI_API_KEY, "explicit-key");
+    await assert.rejects(
+      fsp.access(path.join(lease.launch.env.GROK_HOME!, "auth.json")),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+  } finally {
+    await lease.release();
+  }
+});
+
+test("confined Grok launch fails closed without any credential source", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      args: [],
+      cwd: fixture.workspace,
+      env: {
+        PATH: `${fixture.bin}:/usr/bin:/bin`,
+        GROK_HOME: path.join(fixture.home, ".grok"),
+        XAI_API_KEY: "ambient-only",
+      },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "grok",
+    }, harness.deps),
+    /has no staged credential or Consult credential environment variable \(CONSULT_XAI_API_KEY\)/u,
+  );
+});
+
+test("confined Profile trusted hosts stay scoped to each vendor's endpoints", () => {
+  assert.deepEqual(CONFINED_PROFILE_POLICIES.grok.trustedHosts, [
+    "api.x.ai",
+    "cli-chat-proxy.grok.com",
+    "auth.x.ai",
+  ]);
+  // The CLI's loopback callback only accepts a browser request *from* this
+  // origin; it never calls it, and confined Jobs cannot run a browser login.
+  assert.equal(
+    CONFINED_PROFILE_POLICIES.grok.trustedHosts.includes("accounts.x.ai"),
+    false,
+  );
+  for (const policy of Object.values(CONFINED_PROFILE_POLICIES)) {
+    // Wildcards would admit any subdomain a prompt-injected Job could name.
+    assert.equal(policy.trustedHosts.some((host) => host.includes("*")), false);
+  }
+});
+
 test("custom and opencode confined Profiles fail before runtime or proxy startup", async (t) => {
   const fixture = await makeFixture(t);
   for (const profileRegistryId of [undefined, "opencode"]) {

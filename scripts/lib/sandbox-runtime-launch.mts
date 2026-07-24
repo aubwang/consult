@@ -98,8 +98,10 @@ interface ConfinedProfilePolicy {
   requiredCommands: readonly string[];
 }
 
+export type ConfinedProfileRegistryId = "codex" | "claude" | "grok";
+
 export const CONFINED_PROFILE_POLICIES: Readonly<
-  Record<"codex" | "claude", ConfinedProfilePolicy>
+  Record<ConfinedProfileRegistryId, ConfinedProfilePolicy>
 > = Object.freeze({
   codex: Object.freeze({
     credentialEnv: Object.freeze({ CONSULT_OPENAI_API_KEY: "OPENAI_API_KEY" }),
@@ -124,6 +126,24 @@ export const CONFINED_PROFILE_POLICIES: Readonly<
     stagedConfigDir: ".claude",
     childConfigEnv: "CLAUDE_CONFIG_DIR",
     trustedHosts: Object.freeze(["api.anthropic.com"]),
+    requiredCommands: Object.freeze([]),
+  }),
+  grok: Object.freeze({
+    credentialEnv: Object.freeze({ CONSULT_XAI_API_KEY: "XAI_API_KEY" }),
+    credentialFile: "auth.json",
+    sourceConfigEnv: "GROK_HOME",
+    stagedConfigDir: ".grok",
+    childConfigEnv: "GROK_HOME",
+    // `api.x.ai` serves the API-key path, `cli-chat-proxy.grok.com` the
+    // signed-in session path, and `auth.x.ai` (the OAuth2 issuer) refreshes a
+    // staged credential. `accounts.x.ai` is deliberately absent: it is an
+    // origin the CLI's loopback callback accepts a browser request *from*, not
+    // a host it calls, and interactive login cannot happen in a confined Job.
+    trustedHosts: Object.freeze([
+      "api.x.ai",
+      "cli-chat-proxy.grok.com",
+      "auth.x.ai",
+    ]),
     requiredCommands: Object.freeze([]),
   }),
 });
@@ -535,7 +555,7 @@ export async function probeConfinedSandboxRuntime(
         code: "AUTHORITY_PLATFORM_UNSUPPORTED",
         message: errorMessage(error),
         remediation:
-          "Use a built-in codex or claude Profile on native Linux or macOS with a native arm64 Node process.",
+          "Use a built-in codex, claude, or grok Profile on native Linux or macOS with a native arm64 Node process.",
       },
     };
   }
@@ -548,7 +568,7 @@ export async function probeConfinedSandboxRuntime(
         code: "AUTHORITY_COMBINATION_UNSUPPORTED",
         message: errorMessage(error),
         remediation:
-          "Use a built-in codex or claude Profile, or explicitly choose inherited ambient authority.",
+          "Use a built-in codex, claude, or grok Profile, or explicitly choose inherited ambient authority.",
       },
     };
   }
@@ -627,7 +647,7 @@ export async function probeConfinedSandboxRuntime(
 }
 
 function confinedProfilePolicy(registryId: string | undefined): ConfinedProfilePolicy {
-  const policy = CONFINED_PROFILE_POLICIES[registryId as "codex" | "claude"];
+  const policy = CONFINED_PROFILE_POLICIES[registryId as ConfinedProfileRegistryId];
   if (!policy) {
     throw new Error(
       `confined authority is unsupported for Profile registry identity '${registryId ?? "custom"}'`,

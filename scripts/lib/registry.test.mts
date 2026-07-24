@@ -13,7 +13,7 @@ test("loadRegistry returns the shipped v1 registry entries", async () => {
   assert.equal(registry.schemaVersion, 1);
   assert.deepEqual(
     registry.agents.map((agent) => agent.id),
-    ["codex", "claude", "opencode"],
+    ["codex", "claude", "grok", "opencode"],
   );
   for (const agent of registry.agents) {
     assert.equal(typeof agent.id, "string");
@@ -32,6 +32,8 @@ test("loadRegistry returns the shipped v1 registry entries", async () => {
       assert.equal(typeof agent.install.repo, "string");
       assert.equal(typeof agent.install.version, "string");
       assert.equal(typeof agent.install.assetTemplate, "string");
+    } else if (agent.install.type === "manual") {
+      assert.equal(typeof agent.install.hint, "string");
     } else {
       assert.fail(`unknown install type: ${(agent.install as RegistryInstall).type}`);
     }
@@ -58,6 +60,61 @@ test("Claude registry entry installs the maintained ACP package", async () => {
     claude.install.cmd,
     "npm install -g @agentclientprotocol/claude-agent-acp",
   );
+});
+
+test("Grok registry entry launches leaderless ACP stdio without always-approve", async () => {
+  const registry = await loadRegistry();
+  const grok = findRegistryEntry(registry, "grok")!;
+
+  assert.equal(grok.binary, "grok");
+  assert.deepEqual(grok.args, ["agent", "--no-leader", "stdio"]);
+  // `--always-approve` would bypass the ACP permission requests Consult's Job
+  // policy decides on, and a shared leader would run the turn in a process
+  // outside the Job's confinement.
+  assert.equal(grok.args.includes("--always-approve"), false);
+  assert.equal(grok.args.includes("--yolo"), false);
+  assert.deepEqual(grok.supports, { resume: false, load: true });
+});
+
+test("Grok registry entry describes a manual install Consult never executes", async () => {
+  const registry = await loadRegistry();
+  const grok = findRegistryEntry(registry, "grok")!;
+
+  assert.equal(grok.install.type, "manual");
+  assert.equal(
+    grok.install.type === "manual" ? grok.install.hint : null,
+    "curl -fsSL https://x.ai/cli/install.sh | bash",
+  );
+  assert.equal(
+    grok.install.type === "manual" ? grok.install.docsUrl : null,
+    "https://docs.x.ai/build/overview",
+  );
+});
+
+test("loadRegistry rejects a manual install entry without a hint", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-registry-"));
+  const registryPath = path.join(dir, "registry.json");
+  await fs.writeFile(
+    registryPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      agents: [
+        {
+          id: "grok",
+          label: "Grok Build",
+          binary: "grok",
+          args: [],
+          install: { type: "manual" },
+          supports: { resume: false, load: true },
+        },
+      ],
+    }),
+  );
+
+  await assert.rejects(loadRegistry(registryPath), (error: RegistryError) => {
+    assert.equal(error.code, "REGISTRY_MALFORMED");
+    return true;
+  });
 });
 
 test("loadRegistry returns non-empty notes for every shipped registry entry", async () => {

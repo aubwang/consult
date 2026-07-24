@@ -112,6 +112,30 @@ consult doctor --agent codex
 `node --version` must report version 24 or newer. `consult setup` lists the
 available Profiles and whether their agent executables are installed.
 
+## Grok Build Profile
+
+Consult does not install the Grok Build CLI. xAI ships an interactive shell
+installer, and Consult never runs `curl … | bash` for you. Install it with the
+vendor's documented command, then let Consult verify it:
+
+```sh
+curl -fsSL https://x.ai/cli/install.sh | bash
+```
+
+```sh
+grok login
+consult setup --install grok
+consult doctor --agent grok
+```
+
+`consult setup --install grok` finds `grok` on `PATH`, runs an ACP smoke probe,
+and records the Profile. If the executable is missing it prints the command
+above rather than running anything. Confined Grok needs either
+`CONSULT_XAI_API_KEY` in the Host environment or a stageable
+`~/.grok/auth.json` written by `grok login`; an ambient `XAI_API_KEY` is
+deliberately not selected as a confined Profile credential. Set `GROK_HOME`
+before setup if your Grok configuration lives outside `~/.grok`.
+
 Claude background subagents require the maintained ACP adapter 0.59.0 or
 newer. Update it through the same global npm prefix, then rerun Doctor:
 

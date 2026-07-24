@@ -196,6 +196,22 @@ function registryEntryFixture(overrides = {}) {
   };
 }
 
+function manualFixture(overrides = {}) {
+  return {
+    id: "grok",
+    label: "Grok Build",
+    binary: "grok",
+    args: ["agent", "--no-leader", "stdio"],
+    install: {
+      type: "manual",
+      hint: "curl -fsSL https://x.ai/cli/install.sh | bash",
+      docsUrl: "https://docs.x.ai/build/overview",
+    },
+    supports: { resume: false, load: true },
+    ...overrides,
+  };
+}
+
 function githubReleaseFixture(overrides = {}) {
   return {
     id: "codex",
@@ -402,6 +418,51 @@ test("installAndVerify github-release: fails at discover when the extracted arch
   assert.equal(result.ok, false);
   assert.equal(result.stage, "discover");
   assert.match(result.message, /codex-acp missing/);
+});
+
+test("installAndVerify manual: verifies an already-installed binary without running the installer", async () => {
+  let smokeBinary: string | null = null;
+
+  const result = (await installAndVerify({
+    registryEntry: manualFixture(),
+    deps: {
+      spawnInstall: async () => {
+        throw new Error("Consult must never run a manual installer");
+      },
+      whichBinary: async () => "/opt/homebrew/bin/grok",
+      startAgent: async ({ binary }) => {
+        smokeBinary = binary;
+        return { dispose: async () => {} };
+      },
+      now: fixedClock(["2026-07-24T10:00:00.000Z", "2026-07-24T10:00:01.000Z"]),
+    },
+  })) as InstallSuccess;
+
+  assert.equal(result.ok, true);
+  assert.equal(smokeBinary, "/opt/homebrew/bin/grok");
+  assert.equal(result.profile.binary, "/opt/homebrew/bin/grok");
+  assert.deepEqual(result.profile.args, ["agent", "--no-leader", "stdio"]);
+});
+
+test("installAndVerify manual: reports the documented command instead of running it", async () => {
+  const result = (await installAndVerify({
+    registryEntry: manualFixture(),
+    deps: {
+      spawnInstall: async () => {
+        throw new Error("Consult must never run a manual installer");
+      },
+      whichBinary: async () => null,
+      startAgent: async () => {
+        throw new Error("smoke should not run");
+      },
+    },
+  })) as InstallFailure;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, "install");
+  assert.match(result.message, /grok is not on PATH/);
+  assert.match(result.message, /curl -fsSL https:\/\/x\.ai\/cli\/install\.sh \| bash/);
+  assert.match(result.message, /https:\/\/docs\.x\.ai\/build\/overview/);
 });
 
 test("installAndVerify rejects an unknown install type before any side effects", async () => {

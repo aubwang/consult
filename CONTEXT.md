@@ -8,7 +8,9 @@ self-contained Job and delegates one prompt turn to a configured ACP Profile.
 **Host**
 The coding environment where Consult is invoked and delegation starts. Shipped
 Host detection understands terminal, Codex, and opencode; an explicit custom
-Host name is also valid.
+Host name is also valid. Being a shipped Profile does not imply Host
+detection: Claude and Grok are Profiles whose spawning Host must name itself
+explicitly.
 _Avoid_: caller, source agent, frontend
 
 **Host Session**
@@ -32,8 +34,8 @@ _Avoid_: plugin, wrapper, frontend
 
 **Profile**
 A configured ACP agent available to Consult regardless of the invoking Host.
-The shipped Profile registry contains `codex`, `claude`, and `opencode`.
-Generic custom Profile configuration remains possible.
+The shipped Profile registry contains `codex`, `claude`, `grok`, and
+`opencode`. Generic custom Profile configuration remains possible.
 _Avoid_: backend, agent-config
 
 **Profile Capability**
@@ -195,3 +197,6 @@ _Avoid_: marketplace, plugin manifest
 - `codex` launches the separate `codex-acp` shim, not the `codex` executable
   itself. `claude` similarly launches `claude-agent-acp`, which can reuse the
   Claude Code CLI's authentication without making Consult a Claude plugin.
+  `grok` needs no shim: the vendor's own `grok agent stdio` mode is the ACP
+  server, launched leaderless so the turn cannot run in a shared process
+  outside the Job's boundary.

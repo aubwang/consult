@@ -43,8 +43,8 @@ const summaryUsage = `Usage:
   consult <command> [options]
   consult help --reference
 
-Delegate focused work from the current Host to a configured Claude, Codex, or
-opencode Profile.
+Delegate focused work from the current Host to a configured Claude, Codex,
+Grok, or opencode Profile.
 
 Commands:
   setup      Install or verify Profiles.
@@ -103,9 +103,9 @@ summary wait, and Job JSON. Job ids remain the only command identifiers.
   unstaged, and safe nonignored untracked state. Gitignored files are not
   seeded or captured. The original checkout stays unchanged;
   Job artifacts contain the Profile-only binary patch and touched-files list.
-- --sandbox confined (default): launch built-in codex or claude Profiles inside
-  Consult-managed native confinement on Linux or native arm64 macOS. Direct
-  networking is blocked; model traffic uses an authenticated model-host
+- --sandbox confined (default): launch built-in codex, claude, or grok Profiles
+  inside Consult-managed native confinement on Linux or native arm64 macOS.
+  Direct networking is blocked; model traffic uses an authenticated model-host
   allowlist proxy.
 - --allow-fetch: additionally permit arbitrary public TCP/443 through that proxy
   for HTTPS-oriented research; Consult does not inspect the encrypted protocol.
@@ -130,14 +130,16 @@ Job, or choose inheritance explicitly for a cooperative ambient chain.
 
 Native Windows and macOS x64 processes (including Node under Rosetta) are
 unsupported, including inheritance. Confined
-authority is currently implemented only for built-in codex and claude Profile
-identities on native Linux and native arm64 macOS; custom and opencode Profiles
+authority is currently implemented only for built-in codex, claude, and grok
+Profile identities on native Linux and native arm64 macOS; custom and opencode
+Profiles
 require explicit --sandbox inherit. Run consult doctor --agent <profile> before
 delegation to check the exact Profile
 launch in the current Host context. Doctor briefly stages the selected
 credential and initializes/disposes the Profile, but sends no model prompt. A
 failed preflight creates no Job. CONSULT_OPENAI_API_KEY,
-CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN explicitly override the
+CONSULT_CLAUDE_API_KEY, CONSULT_CLAUDE_OAUTH_TOKEN, and CONSULT_XAI_API_KEY
+explicitly override the
 corresponding Profile file; ambient vendor variables do not. Consult never
 retries with ambient credentials or inheritance. A trusted root Claude
 delegate or review automatically makes one no-prompt Host OAuth refresh attempt

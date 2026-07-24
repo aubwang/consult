@@ -8,8 +8,10 @@ live in `docs/adr/`; this is not a second decision log.
 Consult is a CLI-first, host-neutral delegation layer for agentic work:
 
 - One `consult` CLI from terminal, Codex, or opencode.
-- Built-in `claude`, `codex`, and `opencode` Profiles plus generic custom
-  Profile configuration.
+- Built-in `claude`, `codex`, `grok`, and `opencode` Profiles plus generic
+  custom Profile configuration. A Profile whose vendor ships only an
+  interactive shell installer is registered as a `manual` install: Consult
+  verifies it but never runs that installer.
 - Foreground and background Jobs with durable status, logs, cancellation,
   resume, and Delegation Chain lineage.
 - Background Job Dependencies with bounded upstream-result forwarding,
@@ -21,9 +23,11 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
   manifest without changing the invoking checkout.
 - Canonical Job Authority defaults delegation to read-only native confinement,
   with explicit write, fetch, and ambient-inheritance grants.
-- Built-in Codex and Claude confinement targets native Linux and native arm64
-  macOS with direct-network denial, authenticated pinned-address proxying,
-  minimal staged credentials, exact Profile preflight, and process-tree cleanup.
+- Built-in Codex, Claude, and Grok confinement targets native Linux and native
+  arm64 macOS with direct-network denial, authenticated pinned-address
+  proxying, minimal staged credentials, exact Profile preflight, and
+  process-tree cleanup. Grok launches leaderless and without always-approve so
+  its boundary is no broader than Codex's or Claude's.
 - Custom and opencode Profiles are explicit-inherit only. Native Windows,
   macOS x64 processes, and confined nesting are unsupported.
 - Execute permission remains fail-closed pending execute-specific resource

@@ -24,8 +24,17 @@ const companionPath = fileURLToPath(new URL("./consult-companion.mts", import.me
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 2 * 60 * 1000;
 
+// The confinement-capable registry identities and the Host-side config
+// directory each one reads, used to give the direct control an auth-only home.
+const CONFINED_AGENTS = ["codex", "claude", "grok"] as const;
+const AGENT_CONFIG_SHAPES = {
+  codex: { dir: ".codex", env: "CODEX_HOME", credential: "auth.json" },
+  claude: { dir: ".claude", env: "CLAUDE_CONFIG_DIR", credential: ".credentials.json" },
+  grok: { dir: ".grok", env: "GROK_HOME", credential: "auth.json" },
+} as const;
+
 interface Options {
-  agent: "codex" | "claude";
+  agent: (typeof CONFINED_AGENTS)[number];
   expect: "ready" | "unsupported";
   model?: string;
   turn: boolean;
@@ -241,10 +250,10 @@ function parseOptions(args: string[]): Options {
     const argument = args[index];
     if (argument === "--agent") {
       const value = args[++index];
-      if (value !== "codex" && value !== "claude") {
-        throw new Error("--agent must be codex or claude");
+      if (!CONFINED_AGENTS.includes(value as Options["agent"])) {
+        throw new Error(`--agent must be one of ${CONFINED_AGENTS.join(", ")}`);
       }
-      agent = value;
+      agent = value as Options["agent"];
       continue;
     }
     if (argument === "--expect") {
@@ -345,11 +354,12 @@ async function createDirectControlEnvironment(
   profile: Options["agent"],
   configuredEnv: Record<string, string>,
 ): Promise<{ root: string; env: NodeJS.ProcessEnv }> {
+  const shape = AGENT_CONFIG_SHAPES[profile];
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-direct-control-"));
   await fs.chmod(root, 0o700);
   const home = path.join(root, "home");
   const temp = path.join(root, "tmp");
-  const config = path.join(home, profile === "codex" ? ".codex" : ".claude");
+  const config = path.join(home, shape.dir);
   await Promise.all([
     fs.mkdir(config, { recursive: true, mode: 0o700 }),
     fs.mkdir(temp, { recursive: true, mode: 0o700 }),
@@ -358,11 +368,8 @@ async function createDirectControlEnvironment(
     fs.mkdir(path.join(home, ".local", "share"), { recursive: true, mode: 0o700 }),
   ]);
   const hostEnv = { ...process.env, ...configuredEnv };
-  const sourceConfig =
-    profile === "codex"
-      ? hostEnv.CODEX_HOME ?? path.join(os.homedir(), ".codex")
-      : hostEnv.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-  const credential = profile === "codex" ? "auth.json" : ".credentials.json";
+  const sourceConfig = hostEnv[shape.env] ?? path.join(os.homedir(), shape.dir);
+  const credential = shape.credential;
   try {
     await fs.copyFile(
       path.join(sourceConfig, credential),
@@ -385,9 +392,7 @@ async function createDirectControlEnvironment(
       XDG_CACHE_HOME: path.join(home, ".cache"),
       XDG_CONFIG_HOME: path.join(home, ".config"),
       XDG_DATA_HOME: path.join(home, ".local", "share"),
-      ...(profile === "codex"
-        ? { CODEX_HOME: config }
-        : { CLAUDE_CONFIG_DIR: config }),
+      [shape.env]: config,
     },
   };
 }

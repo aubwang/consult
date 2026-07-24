@@ -6,17 +6,29 @@ This page holds the operational details behind the shorter examples in the
 
 ## Profiles
 
-Consult ships three built-in Profile definitions:
+Consult ships four built-in Profile definitions:
 
 | Profile | Agent executable | Authentication | Confined authority |
 | --- | --- | --- | --- |
 | `claude` | `claude-agent-acp` | `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`, otherwise a stageable credentials file. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
 | `codex` | `codex-acp` | `CONSULT_OPENAI_API_KEY`, otherwise the underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
+| `grok` | `grok agent --no-leader stdio` | `CONSULT_XAI_API_KEY`, otherwise a stageable `~/.grok/auth.json` from `grok login`. | Native Linux and arm64 macOS after exact preflight. |
 | `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority. |
 
 Run `consult setup` to inspect available Profile executables or
 `consult setup --install <profile>` to install and verify one. Custom Profiles
 can be configured through Consult's generic Profile configuration.
+
+`grok` is the one built-in Profile Consult does not install for you: xAI ships
+an interactive shell installer, and Consult never runs `curl … | bash` on your
+behalf. Install Grok Build yourself, then `consult setup --install grok`
+verifies the executable on `PATH` and runs the ACP smoke probe.
+
+Consult launches Grok without `--always-approve` and with `--no-leader`. The
+first keeps tool calls flowing through ACP permission requests so Consult's
+own read-only or write Job policy decides them; the second keeps the turn in
+the Job-scoped process Consult spawned rather than a shared leader outside its
+boundary.
 
 The Claude Profile is supported, but Consult does not require or ship a Claude
 Code plugin. Gemini and GitHub Copilot are not supported Profiles.
@@ -84,8 +96,8 @@ effort selects among the reasoning options the Profile advertises.
 ## Job Authority
 
 Every `delegate` and `review` defaults to read-only, Consult-managed
-confinement. On native Linux and native arm64 macOS, built-in `codex` and
-`claude` Profiles receive:
+confinement. On native Linux and native arm64 macOS, built-in `codex`,
+`claude`, and `grok` Profiles receive:
 
 - Workspace access according to the selected mode;
 - a private per-Job home and temporary directory;
@@ -94,8 +106,10 @@ confinement. On native Linux and native arm64 macOS, built-in `codex` and
 - model traffic through an authenticated host-allowlist proxy, with direct
   networking blocked. The confined allowlist is `api.openai.com`,
   `chatgpt.com`, and `auth.openai.com` for `codex` (authentication and model
-  traffic share the ChatGPT-backed endpoints) and `api.anthropic.com` for
-  `claude`.
+  traffic share the ChatGPT-backed endpoints), `api.anthropic.com` for
+  `claude`, and `api.x.ai`, `cli-chat-proxy.grok.com`, and `auth.x.ai` for
+  `grok` (the API-key and signed-in session paths use different model
+  endpoints).
 
 Preflight initializes the exact configured Profile before creating a Job.
 
@@ -120,8 +134,8 @@ observes a violation. Inheritance also passes the Host's ambient environment
 without confined credential staging or translation, so vendor variables may
 affect the Profile's native authentication.
 
-Consult-managed confinement is implemented only for the built-in `codex` and
-`claude` Profiles. Custom and opencode Profiles always require
+Consult-managed confinement is implemented only for the built-in `codex`,
+`claude`, and `grok` Profiles. Custom and opencode Profiles always require
 `--sandbox inherit`: a default confined `delegate` or `review` for them fails
 preflight before any Job is created, and Consult never downgrades to
 inheritance automatically. An opencode Job is therefore never OS-sandboxed by
@@ -174,9 +188,11 @@ setup-token`) or `CONSULT_CLAUDE_API_KEY` in the Host environment. Explicit
 Consult credential variables bypass the OAuth file entirely, so they never
 expire mid-run and skip the Host refresh path.
 
-Confined launch does not copy Codex `config.toml` or Claude `settings.json`.
-Pass `--model` explicitly when Host configuration controls model or provider
-selection.
+Confined launch does not copy Codex `config.toml`, Claude `settings.json`, or
+Grok `config.toml`. Ambient `GROK_*` variables are likewise not forwarded, so
+Grok's own `--sandbox` profiles, auth-provider command, and endpoint overrides
+do not follow a Job into confinement. Pass `--model` explicitly when Host
+configuration controls model or provider selection.
 
 Confined Claude on macOS requires `CONSULT_CLAUDE_API_KEY`,
 `CONSULT_CLAUDE_OAUTH_TOKEN`, or a stageable `.claude/.credentials.json`; a
@@ -324,11 +340,16 @@ Use `--resume` to continue the latest finalized Job for the selected Profile in
 the current Host Session, `--resume-job <id>` to select a compatible prior Job,
 or `--fresh` to start over.
 
-Confined Codex and Claude Jobs archive only the completed native Session
-transcript and restore that hash-verified file into the next private Job home.
-Missing or incompatible state fails before a resume Job is created. Confined
-resume with `--isolated` is unsupported because the execution Workspace changes.
-Consult does not translate conversation state between different agent CLIs.
+Confined Jobs archive only the completed native Session state and restore those
+hash-verified files into the next private Job home. Codex and Claude archive
+their single Session transcript. Grok stores a Session as a directory, so
+Consult carries a bounded allowlist of its conversation state —
+`updates.jsonl`, `summary.json`, `chat_history.jsonl`, `plan.json`, and
+`signals.json` — and deliberately leaves out rewind snapshots of Workspace
+files, feedback, and subagent trees. Missing or incompatible state fails before
+a resume Job is created. Confined resume with `--isolated` is unsupported
+because the execution Workspace changes. Consult does not translate
+conversation state between different agent CLIs.
 
 Nested cooperative delegation can pass `--parent-job <id>` or inherit
 `CONSULT_PARENT_JOB`. Consult checks the declared parent's permission mode and a
@@ -369,10 +390,12 @@ Consult resolves Host Identity in this order:
 3. `CODEX_THREAD_ID`, or `OPENCODE_SESSION_ID` / `OPENCODE_RUN_ID`.
 4. `terminal/default`.
 
-Claude Code is not auto-detected. A Claude spawning Host should pass
-`--host claude-code --host-session <stable-session-id>` or set the matching
-environment variables; otherwise its Jobs use the shared `terminal/default`
-scope.
+Claude Code and Grok Build are not auto-detected. Grok exposes
+`GROK_SESSION_ID` only to hook subprocesses, not to the shell tool that would
+run `consult`, so there is nothing reliable to detect. A Claude or Grok
+spawning Host should pass `--host claude-code`/`--host grok` with
+`--host-session <stable-session-id>`, or set the matching environment
+variables; otherwise its Jobs use the shared `terminal/default` scope.
 
 Host Identity scopes defaults, resume lookup, lineage, and lifecycle metadata.
 The same `consult` CLI remains the product interface from every Host.
@@ -411,8 +434,8 @@ Consult never retries with ambient inheritance automatically.
 ## Optional agent skills
 
 The repository ships a generic `$consult` skill and convenience skills for
-asking Claude, Codex, and opencode under [`skills/`](../skills/). Install the
-desired skill for coding agents in the current project with:
+asking Claude, Codex, Grok, and opencode under [`skills/`](../skills/). Install
+the desired skill for coding agents in the current project with:
 
 ```sh
 npx skills add aubwang/consult
@@ -430,10 +453,10 @@ explicit selection flags remain available for non-interactive setup, but the
 short commands above are the recommended interactive path.
 
 Skill installation is optional and separate from installing the Consult CLI.
-If you do not want to use the Skills CLI, copy or symlink one of the four
-user-facing folders (`consult`, `ask-claude`, `ask-codex`, or `ask-opencode`)
-from the installed npm package into the relevant agent's local or global skill
-directory.
+If you do not want to use the Skills CLI, copy or symlink one of the five
+user-facing folders (`consult`, `ask-claude`, `ask-codex`, `ask-grok`, or
+`ask-opencode`) from the installed npm package into the relevant agent's local
+or global skill directory.
 
 The tracked [`opencode` skill entrypoint](../.opencode/skills/consult) exposes
 the generic skill from a repository checkout. These helpers teach a Host when

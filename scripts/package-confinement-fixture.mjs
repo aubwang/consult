@@ -6,8 +6,23 @@ import net from "node:net";
 import path from "node:path";
 import readline from "node:readline";
 
+// Per-registry-identity staging shape the packed adapter must reproduce inside
+// confinement: which environment variable names the private config directory,
+// which file the credential is staged as, and which Host config must stay out.
+const PROFILE_SHAPES = {
+  codex: { configEnv: "CODEX_HOME", credential: "auth.json", decoy: "config.toml" },
+  claude: {
+    configEnv: "CLAUDE_CONFIG_DIR",
+    credential: ".credentials.json",
+    decoy: "settings.json",
+  },
+  grok: { configEnv: "GROK_HOME", credential: "auth.json", decoy: "config.toml" },
+};
+
 const config = JSON.parse(process.argv[2]);
 const profile = config.profile;
+const shape = PROFILE_SHAPES[profile];
+if (!shape) throw new Error(`unknown package confinement profile: ${profile}`);
 const sessionId = `packed-${profile}-session`;
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 let pendingPrompt = null;
@@ -131,16 +146,14 @@ async function beginCancellationProbe(message) {
 }
 
 async function assertCredentialBoundary() {
-  const configDirectory = profile === "codex"
-    ? process.env.CODEX_HOME
-    : process.env.CLAUDE_CONFIG_DIR;
+  const configDirectory = process.env[shape.configEnv];
   if (!configDirectory) throw new Error("private Profile config directory is missing");
-  const credentialName = profile === "codex" ? "auth.json" : ".credentials.json";
-  const credential = JSON.parse(await fs.readFile(path.join(configDirectory, credentialName), "utf8"));
+  const credential = JSON.parse(
+    await fs.readFile(path.join(configDirectory, shape.credential), "utf8"),
+  );
   if (credential.probe !== profile) throw new Error("staged credential content is incorrect");
-  const decoyName = profile === "codex" ? "config.toml" : "settings.json";
   try {
-    await fs.access(path.join(configDirectory, decoyName));
+    await fs.access(path.join(configDirectory, shape.decoy));
     throw new Error("non-credential Profile config was staged");
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
@@ -153,9 +166,11 @@ async function assertCredentialBoundary() {
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "XAI_API_KEY",
     "CONSULT_OPENAI_API_KEY",
     "CONSULT_CLAUDE_API_KEY",
     "CONSULT_CLAUDE_OAUTH_TOKEN",
+    "CONSULT_XAI_API_KEY",
   ]) {
     if (process.env[name] !== undefined) {
       throw new Error(`credential environment ${name} leaked despite file staging`);
@@ -191,6 +206,9 @@ function transcriptPath() {
       "10",
       `probe-${sessionId}.jsonl`,
     );
+  }
+  if (profile === "grok") {
+    return path.join(process.env.GROK_HOME, "sessions", "probe", sessionId, "updates.jsonl");
   }
   return path.join(process.env.CLAUDE_CONFIG_DIR, "projects", "probe", `${sessionId}.jsonl`);
 }

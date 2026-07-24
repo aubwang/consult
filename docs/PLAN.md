@@ -15,7 +15,10 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
   that CLI.
 - Shipped Host autodetection covers terminal, Codex, and opencode. Explicit
   `CONSULT_HOST` values support custom Hosts without a Host-specific adapter.
-- The built-in Profile registry contains `claude`, `codex`, and `opencode`.
+- The built-in Profile registry contains `claude`, `codex`, `grok`, and
+  `opencode`. A registry entry may declare a `manual` install when the vendor
+  ships only an interactive shell installer: Consult verifies such a Profile
+  but never executes the vendor's installer.
 - Claude is a delegated Profile, not a shipped Host plugin. Gemini and Copilot
   are not supported Profiles.
 - Cruise owns Cruise workflow policy and session state; Consult supplies only
@@ -268,15 +271,24 @@ new prompt rather than an attempted native session conversion.
 
 Confined resume does not mount a shared Profile home. After confirmed Profile
 tree termination and before private-home deletion, a Profile-specific adapter
-selects exactly one Codex rollout or Claude project transcript, bounds and
-hashes it, and atomically commits it beneath the source Job's private artifact
-directory. The new Job carries both source Job id and native Session id;
-preflight verifies the archive before Job creation and launch restores the same
-relative transcript path into the fresh home. Missing, malformed, tampered,
-cross-Profile, or cwd-mismatched archives fail closed. Confined isolated resume
-remains unavailable because each detached Execution Workspace has a new cwd.
-Transcripts can contain sensitive conversation content and live as long as
-their Job artifacts; credentials and shared Profile indexes are never copied.
+selects that Profile's Session state, bounds and hashes it, and atomically
+commits it beneath the source Job's private artifact directory. Codex and
+Claude contribute exactly one rollout or project transcript. Grok stores a
+Session as a directory, so its adapter selects a fixed allowlist of
+conversation-state files inside that Session directory — `updates.jsonl`
+(required), `summary.json`, `chat_history.jsonl`, `plan.json`, and
+`signals.json` — under one total size cap, and excludes rewind snapshots of
+Workspace files, feedback, compaction checkpoints, and subagent trees. The
+manifest therefore describes one to eight hash-verified files.
+
+The new Job carries both source Job id and native Session id; preflight
+verifies the archive before Job creation and launch restores the same relative
+paths into the fresh home. Missing, malformed, tampered, cross-Profile, or
+cwd-mismatched archives fail closed, as does any target path outside that
+Profile's Session layout. Confined isolated resume remains unavailable because
+each detached Execution Workspace has a new cwd. Transcripts can contain
+sensitive conversation content and live as long as their Job artifacts;
+credentials and shared Profile indexes are never copied.
 
 ## Pinned Diff and Review
 
@@ -292,8 +304,8 @@ the Job is created:
 
 `review` is Profile-neutral. Consult always resolves a pinned diff and creates
 a read-only, findings-first review Job. The verified Codex native review
-command remains an adapter optimization; Claude and opencode use ordinary ACP
-delegation against the same deterministic input.
+command remains an adapter optimization; Claude, Grok, and opencode use
+ordinary ACP delegation against the same deterministic input.
 
 `review --job <job-id>` accepts only a completed isolated write Job with the
 exact Consult-owned patch artifact path. Consult opens that patch without
@@ -361,8 +373,8 @@ launch. The launch path derives and validates the full policy again, so such a
 race can fail a created Job but cannot silently broaden its authority.
 
 The confined adapter targets native Linux and native arm64 macOS for built-in
-`codex` and `claude` Profile identities. Custom and `opencode` Profiles remain
-inherit-only until they pass the same live conformance gates. A trusted Host
+`codex`, `claude`, and `grok` Profile identities. Custom and `opencode`
+Profiles remain inherit-only until they pass the same live conformance gates. A trusted Host
 may choose `--sandbox inherit`; that adds no Consult OS boundary and disables
 the legacy `CONSULT_AGENT_SANDBOX` launch layer. `consult doctor` reports the
 default confined readiness of the exact selected Profile in the current Host

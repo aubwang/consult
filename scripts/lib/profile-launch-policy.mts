@@ -21,6 +21,9 @@ const PROFILE_LAUNCH_POLICIES: Record<string, ProfileLaunchPolicy | undefined> =
   codex: {
     homeReadOnlyFiles: [".codex/auth.json", ".codex/config.toml", ".codex/AGENTS.md"],
   },
+  grok: {
+    homeReadOnlyFiles: [".grok/auth.json", ".grok/config.toml"],
+  },
 };
 
 export function profileLaunchPolicy(registryId: string | undefined): ProfileLaunchPolicy | null {

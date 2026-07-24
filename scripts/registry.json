@@ -21,6 +21,19 @@
       "supports": { "resume": true, "load": true }
     },
     {
+      "id": "grok",
+      "label": "Grok Build (ACP agent mode: grok agent stdio)",
+      "notes": "Install the xAI Grok Build CLI yourself; Consult never runs its shell installer. Run `grok login` first to authenticate with xAI (or set CONSULT_XAI_API_KEY).",
+      "binary": "grok",
+      "args": ["agent", "--no-leader", "stdio"],
+      "install": {
+        "type": "manual",
+        "hint": "curl -fsSL https://x.ai/cli/install.sh | bash",
+        "docsUrl": "https://docs.x.ai/build/overview"
+      },
+      "supports": { "resume": false, "load": true }
+    },
+    {
       "id": "opencode",
       "label": "OpenCode",
       "notes": "Needs an LLM provider configured. Run `opencode auth login` to pick a provider (OpenRouter, OpenAI, etc.), or set the provider's API key env var.",

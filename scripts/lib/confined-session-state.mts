@@ -6,9 +6,27 @@ import { jobArtifactsDir } from "./broker-endpoint.mts";
 
 const SESSION_STATE_SCHEMA_VERSION = 1;
 const MAX_SESSION_STATE_BYTES = 32 * 1024 * 1024;
+const MAX_SESSION_STATE_FILES = 8;
 const MANIFEST_NAME = "manifest.json";
 
-type ConfinedSessionProfile = "codex" | "claude";
+type ConfinedSessionProfile = "codex" | "claude" | "grok";
+
+/**
+ * Grok stores one Session as a directory rather than a single transcript, so
+ * Consult carries only the conversation state its own `session/load` needs.
+ * `updates.jsonl` is the authoritative log; `chat_history.jsonl` is rebuilt
+ * from it when absent. Rewind snapshots, feedback, and subagent trees are
+ * deliberately excluded: they are large, are not needed to reopen a Session,
+ * and would widen what a Job archive holds.
+ */
+const GROK_SESSION_STATE_FILES = Object.freeze([
+  "updates.jsonl",
+  "summary.json",
+  "chat_history.jsonl",
+  "plan.json",
+  "signals.json",
+]);
+const GROK_REQUIRED_SESSION_STATE_FILE = "updates.jsonl";
 
 interface SessionStateManifest {
   schemaVersion: 1;
@@ -36,51 +54,54 @@ export async function archiveConfinedSessionState(
   input: ConfinedSessionStateInput & { privateHome: string },
 ): Promise<void> {
   const profile = supportedProfile(input.profileRegistryId);
-  const source = await findSessionTranscript(
+  const sources = await findSessionStateFiles(
     input.privateHome,
     profile,
     input.sessionId,
   );
-  const stat = await fs.lstat(source);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw sessionStateError("session transcript is not a regular file");
-  }
-  if (stat.size > MAX_SESSION_STATE_BYTES) {
-    throw sessionStateError(
-      `session transcript exceeds ${MAX_SESSION_STATE_BYTES} bytes`,
-    );
-  }
-
-  const targetPath = safeRelativePath(input.privateHome, source);
-  assertAllowedTarget(profile, targetPath, input.sessionId);
   const archiveRoot = jobArtifactsDir(input.workspaceRoot, input.jobId);
   const finalDir = path.join(archiveRoot, "session-state");
   const temporaryDir = path.join(
     archiveRoot,
     `.session-state.tmp-${process.pid}-${crypto.randomUUID()}`,
   );
-  const archivePath = path.join("files", "0");
-  const archivedFile = path.join(temporaryDir, archivePath);
 
-  await fs.mkdir(path.dirname(archivedFile), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.join(temporaryDir, "files"), { recursive: true, mode: 0o700 });
   try {
-    await fs.copyFile(source, archivedFile, fs.constants.COPYFILE_EXCL);
-    await fs.chmod(archivedFile, 0o600);
-    const bytes = await fs.readFile(archivedFile);
+    const files: SessionStateManifest["files"] = [];
+    let totalBytes = 0;
+    for (const [index, source] of sources.entries()) {
+      const stat = await fs.lstat(source);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw sessionStateError("session state source is not a regular file");
+      }
+      totalBytes += stat.size;
+      if (totalBytes > MAX_SESSION_STATE_BYTES) {
+        throw sessionStateError(
+          `session state exceeds ${MAX_SESSION_STATE_BYTES} bytes`,
+        );
+      }
+      const targetPath = safeRelativePath(input.privateHome, source);
+      assertAllowedTarget(profile, targetPath, input.sessionId);
+      const archivePath = path.join("files", String(index));
+      const archivedFile = path.join(temporaryDir, archivePath);
+      await fs.copyFile(source, archivedFile, fs.constants.COPYFILE_EXCL);
+      await fs.chmod(archivedFile, 0o600);
+      const bytes = await fs.readFile(archivedFile);
+      files.push({
+        archivePath,
+        targetPath,
+        bytes: bytes.length,
+        sha256: sha256(bytes),
+      });
+    }
     const manifest: SessionStateManifest = {
       schemaVersion: SESSION_STATE_SCHEMA_VERSION,
       adapterVersion: adapterVersion(profile),
       profile,
       sessionId: input.sessionId,
       cwd: path.resolve(input.cwd),
-      files: [
-        {
-          archivePath,
-          targetPath,
-          bytes: bytes.length,
-          sha256: sha256(bytes),
-        },
-      ],
+      files,
     };
     await fs.writeFile(
       path.join(temporaryDir, MANIFEST_NAME),
@@ -139,7 +160,12 @@ async function readVerifiedArchive(input: ConfinedSessionStateInput): Promise<{
   ) {
     throw sessionStateError("session archive does not match the requested Profile, Session, or cwd");
   }
+  let totalBytes = 0;
   for (const file of parsed.files) {
+    totalBytes += file.bytes;
+    if (totalBytes > MAX_SESSION_STATE_BYTES) {
+      throw sessionStateError(`session archive exceeds ${MAX_SESSION_STATE_BYTES} bytes`);
+    }
     assertAllowedTarget(profile, file.targetPath, input.sessionId);
     const archivedFile = safeJoin(archiveDir, file.archivePath);
     const stat = await fs.lstat(archivedFile).catch((error) => {
@@ -156,12 +182,15 @@ async function readVerifiedArchive(input: ConfinedSessionStateInput): Promise<{
   return { manifest: parsed, archiveDir };
 }
 
-async function findSessionTranscript(
+async function findSessionStateFiles(
   privateHome: string,
   profile: ConfinedSessionProfile,
   sessionId: string,
-): Promise<string> {
+): Promise<string[]> {
   assertSafeSessionId(sessionId);
+  if (profile === "grok") {
+    return await findGrokSessionStateFiles(privateHome, sessionId);
+  }
   const searchRoot = path.join(
     privateHome,
     profile === "codex" ? ".codex/sessions" : ".claude/projects",
@@ -181,7 +210,54 @@ async function findSessionTranscript(
       `expected exactly one ${profile} transcript for Session '${sessionId}', found ${matches.length}`,
     );
   }
-  return matches[0];
+  return matches;
+}
+
+// Grok writes `$GROK_HOME/sessions/<url-encoded-cwd>/<session-id>/<file>`. The
+// group directory encodes the cwd, so Consult locates the Session directory by
+// id rather than recomputing the vendor's encoding.
+async function findGrokSessionStateFiles(
+  privateHome: string,
+  sessionId: string,
+): Promise<string[]> {
+  const searchRoot = path.join(privateHome, ".grok", "sessions");
+  const groups = await fs.readdir(searchRoot, { withFileTypes: true }).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  const sessionDirs: string[] = [];
+  for (const group of groups) {
+    if (!group.isDirectory()) continue;
+    const candidate = path.join(searchRoot, group.name, sessionId);
+    const stat = await fs.lstat(candidate).catch(() => null);
+    if (stat?.isDirectory()) sessionDirs.push(candidate);
+  }
+  if (sessionDirs.length !== 1) {
+    throw sessionStateError(
+      `expected exactly one grok Session directory for Session '${sessionId}', found ${sessionDirs.length}`,
+    );
+  }
+
+  const sessionDir = sessionDirs[0];
+  const files: string[] = [];
+  for (const name of GROK_SESSION_STATE_FILES) {
+    const candidate = path.join(sessionDir, name);
+    const stat = await fs.lstat(candidate).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (stat === null) continue;
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw sessionStateError(`grok session state '${name}' is not a regular file`);
+    }
+    files.push(candidate);
+  }
+  if (!files.some((file) => path.basename(file) === GROK_REQUIRED_SESSION_STATE_FILE)) {
+    throw sessionStateError(
+      `grok Session '${sessionId}' has no ${GROK_REQUIRED_SESSION_STATE_FILE} to archive`,
+    );
+  }
+  return files;
 }
 
 async function walkRegularFiles(
@@ -206,12 +282,18 @@ async function walkRegularFiles(
 }
 
 function supportedProfile(profile: string): ConfinedSessionProfile {
-  if (profile === "codex" || profile === "claude") return profile;
+  if (profile === "codex" || profile === "claude" || profile === "grok") return profile;
   throw sessionStateError(`confined resume is unsupported for Profile '${profile}'`);
 }
 
+const ADAPTER_VERSIONS: Readonly<Record<ConfinedSessionProfile, string>> = Object.freeze({
+  codex: "codex-rollout-v1",
+  claude: "claude-project-v1",
+  grok: "grok-session-v1",
+});
+
 function adapterVersion(profile: ConfinedSessionProfile): string {
-  return profile === "codex" ? "codex-rollout-v1" : "claude-project-v1";
+  return ADAPTER_VERSIONS[profile];
 }
 
 function assertAllowedTarget(
@@ -220,18 +302,48 @@ function assertAllowedTarget(
   sessionId: string,
 ): void {
   const normalized = targetPath.split(path.sep).join("/");
-  const allowed =
-    profile === "codex"
-      ? normalized.startsWith(".codex/sessions/") &&
-        normalized.endsWith(`-${sessionId}.jsonl`)
-      : normalized.startsWith(".claude/projects/") &&
-        normalized.endsWith(`/${sessionId}.jsonl`);
+  const allowed = isAllowedTarget(profile, normalized, sessionId);
   if (!allowed) {
     throw sessionStateError("session archive contains a disallowed target path");
   }
-  if (/\/(?:auth\.json|\.credentials\.json|\.claude\.json|history\.jsonl)$/u.test(normalized)) {
+  if (
+    /\/(?:auth\.json|\.credentials\.json|\.claude\.json|mcp_credentials\.json|history\.jsonl)$/u
+      .test(normalized)
+  ) {
     throw sessionStateError("session archive attempted to include credential or shared history state");
   }
+}
+
+function isAllowedTarget(
+  profile: ConfinedSessionProfile,
+  normalized: string,
+  sessionId: string,
+): boolean {
+  if (profile === "codex") {
+    return (
+      normalized.startsWith(".codex/sessions/") &&
+      normalized.endsWith(`-${sessionId}.jsonl`)
+    );
+  }
+  if (profile === "claude") {
+    return (
+      normalized.startsWith(".claude/projects/") &&
+      normalized.endsWith(`/${sessionId}.jsonl`)
+    );
+  }
+  // `.grok/sessions/<group>/<sessionId>/<allowlisted file>` exactly: one group
+  // segment, then the Session id, then a known conversation-state file.
+  const segments = normalized.split("/");
+  return (
+    segments.length === 5 &&
+    segments[0] === ".grok" &&
+    segments[1] === "sessions" &&
+    segments[2] !== "" &&
+    segments[2] !== "." &&
+    segments[2] !== ".." &&
+    segments[3] === sessionId &&
+    GROK_SESSION_STATE_FILES.includes(segments[4])
+  );
 }
 
 function assertSafeSessionId(sessionId: string): void {
@@ -270,11 +382,12 @@ function isManifest(value: unknown): value is SessionStateManifest {
   if (
     record.schemaVersion !== SESSION_STATE_SCHEMA_VERSION ||
     typeof record.adapterVersion !== "string" ||
-    (record.profile !== "codex" && record.profile !== "claude") ||
+    (record.profile !== "codex" && record.profile !== "claude" && record.profile !== "grok") ||
     typeof record.sessionId !== "string" ||
     typeof record.cwd !== "string" ||
     !Array.isArray(record.files) ||
-    record.files.length !== 1
+    record.files.length < 1 ||
+    record.files.length > MAX_SESSION_STATE_FILES
   ) {
     return false;
   }
