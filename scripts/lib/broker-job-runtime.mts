@@ -704,6 +704,20 @@ function assertPositiveLimit(name: string, value: number): void {
   }
 }
 
+// Tool kinds a read-only Job permits regardless of who approved them (mirrors
+// decidePermission in permissions.mts). An agent auto-approving one of these is
+// not a permission-gate bypass, so the read-only backstop must not terminate
+// the turn for it. Some Profiles (e.g. opencode) auto-approve their own read
+// tools and report the tool call with `auto_approved: true`; only auto-approved
+// mutating or unclassified kinds signal a real bypass worth failing on.
+const READ_ONLY_AUTO_APPROVAL_SAFE_KINDS = new Set(["read", "search", "think"]);
+
+function readOnlyPermitsAutoApprovedKind(kind: string | null, allowFetch: boolean): boolean {
+  if (kind === null) return false;
+  if (READ_ONLY_AUTO_APPROVAL_SAFE_KINDS.has(kind)) return true;
+  return kind === "fetch" && allowFetch;
+}
+
 function isAutoApprovedPolicyViolation(job: BrokerJob, update: BrokerSessionUpdate): boolean {
   return autoApprovedPolicyViolationMessage(job, update) !== null;
 }
@@ -716,8 +730,8 @@ function autoApprovedPolicyViolationMessage(job: BrokerJob, update: BrokerSessio
   const mode = job.authority.mode;
 
   if (mode === "read-only") {
-    if (autoApproved) {
-      return "policy violation: auto-approved edit update in read-only mode";
+    if (autoApproved && !readOnlyPermitsAutoApprovedKind(kind, job.authority.allowFetch === true)) {
+      return `policy violation: auto-approved ${kind ?? "unknown"} update in read-only mode`;
     }
 
     if (kind !== "edit") {

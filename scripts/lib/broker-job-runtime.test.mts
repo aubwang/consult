@@ -628,6 +628,52 @@ test("policy violation with an unsettled turn releases and taints after the canc
   assert.equal((await readWorkspaceJobRecord(workspaceRoot, job.jobId)).status, "failed");
 });
 
+test("read-only permits auto-approved read tools but still fails auto-approved mutating kinds", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const cancelledSessions: string[] = [];
+  const runtime = createBrokerJobRuntime({
+    config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 2000 },
+    ensureAgent: async () => ({
+      connection: {
+        cancel: async ({ sessionId }: { sessionId: string }) => {
+          cancelledSessions.push(sessionId);
+        },
+      },
+    } as unknown as BrokerAgentHandle),
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+  });
+  const job = runtime.createJob(
+    { jobId: "job-read-only-auto", profile: "opencode", mode: "read-only", prompt: "inspect" },
+    fakeSocket("originator"),
+  );
+  runtime.trackSession("session-1", job);
+  runtime.setBusy(true);
+
+  // A Profile that auto-approves its own read/search/think tools must not have
+  // the turn terminated: read-only permits those kinds regardless.
+  for (const kind of ["read", "search", "think"]) {
+    await runtime.handleSessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "tool_call", kind, rawInput: { auto_approved: true } },
+    });
+    assert.equal(job.status, "running", `auto-approved ${kind} must not terminate the turn`);
+  }
+  assert.deepEqual(cancelledSessions, []);
+
+  // An auto-approved mutating kind is still a read-only bypass and fails.
+  await runtime.handleSessionUpdate({
+    sessionId: "session-1",
+    update: { sessionUpdate: "tool_call", kind: "execute", rawInput: { auto_approved: true } },
+  });
+  assert.equal(job.status, "finalized");
+  assert.match(
+    (await readWorkspaceJobRecord(workspaceRoot, "job-read-only-auto")).errorMessage as string,
+    /policy violation: auto-approved execute update in read-only mode/,
+  );
+});
+
 interface FakeSocket extends BrokerJobSocketLike {
   name: string;
 }
