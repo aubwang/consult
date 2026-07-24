@@ -21,6 +21,11 @@ export interface JobAuthorityPreflightInput {
     args: string[];
     env: Record<string, string>;
   };
+  /**
+   * Optional pass-through for the Claude OAuth refresh skew (ms). Observational
+   * callers set `0` so a still-valid credential is not treated as expired.
+   */
+  oauthRefreshSkewMs?: number;
 }
 
 export type JobAuthorityPreflightResult =

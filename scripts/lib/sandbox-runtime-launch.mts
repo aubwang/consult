@@ -128,6 +128,32 @@ export const CONFINED_PROFILE_POLICIES: Readonly<
   }),
 });
 
+/**
+ * How long before a Claude OAuth credential actually expires Consult should
+ * already treat it as refresh-eligible. A stageable token that is still valid
+ * at preflight but within this window can otherwise expire between staging and
+ * the first confined model call, so a root Job proactively refreshes it (ADR
+ * 0031) instead of failing mid-turn. Overridable through
+ * `CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS`; `0` restores the strict
+ * already-expired behavior.
+ */
+export const CLAUDE_OAUTH_REFRESH_SKEW_ENV = "CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS";
+export const DEFAULT_CLAUDE_OAUTH_REFRESH_SKEW_MS = 120_000;
+
+export function claudeOauthRefreshSkewMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[CLAUDE_OAUTH_REFRESH_SKEW_ENV];
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_CLAUDE_OAUTH_REFRESH_SKEW_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_CLAUDE_OAUTH_REFRESH_SKEW_MS;
+  }
+  return Math.floor(parsed);
+}
+
 type SupportedPlatform = "linux" | "darwin";
 
 interface SandboxRuntimeManagerLike {
@@ -151,6 +177,12 @@ export interface ConfinedSandboxRuntimeLaunchInput extends AgentLaunchOptions {
   jobId?: string;
   resumeSourceJobId?: string | null;
   resumeSessionId?: string | null;
+  /**
+   * Overrides the Claude OAuth refresh skew for this launch. Defaults to
+   * `claudeOauthRefreshSkewMs(hostEnv)`; observational callers (Doctor) pass
+   * `0` so they never treat a still-valid credential as expired.
+   */
+  oauthRefreshSkewMs?: number;
 }
 
 export interface ConfinedSandboxRuntimeLaunchDeps {
@@ -181,6 +213,8 @@ export interface ConfinedSandboxRuntimeProbeInput
   extends JobAuthorityPreflightInput {
   /** Resolved built-in registry identity for configured Profile aliases. */
   profileRegistryId?: string;
+  /** See {@link ConfinedSandboxRuntimeLaunchInput.oauthRefreshSkewMs}. */
+  oauthRefreshSkewMs?: number;
 }
 
 let runtimeState: "idle" | "active" | "poisoned" = "idle";
@@ -267,7 +301,12 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       input.profileRegistryId,
     );
     if (input.profileRegistryId === "claude" && explicitCredentialEnv === null) {
-      await assertClaudeOauthNotExpired(path.join(sourceConfig, profile.credentialFile), now);
+      const skewMs = input.oauthRefreshSkewMs ?? claudeOauthRefreshSkewMs(hostEnv);
+      await assertClaudeOauthNotExpired(
+        path.join(sourceConfig, profile.credentialFile),
+        now,
+        skewMs,
+      );
     }
     await sweepStaleJobRoots(now, deps.pidIsAlive ?? defaultPidIsAlive);
     root = await createPrivateJobRoot(now);
@@ -543,6 +582,7 @@ export async function probeConfinedSandboxRuntime(
         await acquireConfinedSandboxRuntimeLaunch({
           ...launchOptions,
           authority: input.authority,
+          oauthRefreshSkewMs: input.oauthRefreshSkewMs,
         }, deps),
     });
   } catch (error) {
@@ -565,7 +605,7 @@ export async function probeConfinedSandboxRuntime(
           code: "AUTHORITY_PREFLIGHT_FAILED",
           message: `confined authority preflight failed: ${errorMessage(failure)}`,
           remediation:
-            "A trusted root Host invocation automatically refreshes this credential once. Nested invocations cannot mutate Host credentials. You may instead supply CONSULT_CLAUDE_OAUTH_TOKEN or CONSULT_CLAUDE_API_KEY to the Host environment.",
+            "A trusted root Host invocation automatically refreshes this credential once. Nested invocations cannot mutate Host credentials. To avoid repeated expiry, set a long-lived CONSULT_CLAUDE_OAUTH_TOKEN (generate one with `claude setup-token`) or CONSULT_CLAUDE_API_KEY in the Host environment.",
           details: {
             credentialKind: "claude-oauth",
             credentialState: "expired",
@@ -1314,22 +1354,25 @@ class OauthExpiredError extends Error {
   override readonly name = "OauthExpiredError";
 }
 
-async function assertClaudeOauthNotExpired(
+type ClaudeOauthReadResult =
+  | { present: false }
+  | { present: true; expiresAt: number | null };
+
+async function readClaudeOauthExpiresAt(
   credentialFile: string,
-  now: number,
-): Promise<void> {
+): Promise<ClaudeOauthReadResult> {
   let raw: string;
   try {
     raw = await fsp.readFile(credentialFile, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { present: false };
     throw error;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return;
+    return { present: true, expiresAt: null };
   }
   const oauth =
     typeof parsed === "object" && parsed !== null
@@ -1339,9 +1382,74 @@ async function assertClaudeOauthNotExpired(
     typeof oauth === "object" && oauth !== null
       ? (oauth as Record<string, unknown>).expiresAt
       : undefined;
-  if (typeof expiresAt === "number" && expiresAt <= now) {
+  return {
+    present: true,
+    expiresAt: typeof expiresAt === "number" ? expiresAt : null,
+  };
+}
+
+async function assertClaudeOauthNotExpired(
+  credentialFile: string,
+  now: number,
+  skewMs: number,
+): Promise<void> {
+  const result = await readClaudeOauthExpiresAt(credentialFile);
+  if (!result.present || result.expiresAt === null) return;
+  if (result.expiresAt <= now + skewMs) {
     throw new OauthExpiredError(
-      "Claude OAuth credential is expired; re-authenticate by running Claude Code on the Host",
+      "Claude OAuth credential is expired or about to expire; re-authenticate by running Claude Code on the Host",
     );
   }
+}
+
+export type ClaudeHostOauthState =
+  | "explicit-consult-credential"
+  | "absent"
+  | "unreadable"
+  | "valid"
+  | "expiring"
+  | "expired";
+
+export interface ClaudeHostOauthStatus {
+  state: ClaudeHostOauthState;
+  /** OAuth expiry epoch-ms when a numeric one is stageable, else null. */
+  expiresAt: number | null;
+  /** Refresh skew applied when classifying `expiring`. */
+  skewMs: number;
+}
+
+/**
+ * Observationally classifies the Host's stageable Claude OAuth credential
+ * without launching a Profile or mutating any state. Doctor uses it to warn
+ * before a delegation hits an expired credential; it never refreshes.
+ */
+export async function inspectClaudeHostOauth(
+  options: { env?: NodeJS.ProcessEnv; now?: number } = {},
+): Promise<ClaudeHostOauthStatus> {
+  const env = options.env ?? process.env;
+  const now = options.now ?? Date.now();
+  const skewMs = claudeOauthRefreshSkewMs(env);
+  const profile = CONFINED_PROFILE_POLICIES.claude;
+  if (Object.keys(profile.credentialEnv).some((name) => env[name])) {
+    return { state: "explicit-consult-credential", expiresAt: null, skewMs };
+  }
+  let credentialFile: string;
+  try {
+    const sourceConfig = profileSourceConfigDirectory(profile, env, trustedHostHome());
+    credentialFile = path.join(sourceConfig, profile.credentialFile);
+  } catch {
+    return { state: "unreadable", expiresAt: null, skewMs };
+  }
+  let result: ClaudeOauthReadResult;
+  try {
+    result = await readClaudeOauthExpiresAt(credentialFile);
+  } catch {
+    return { state: "unreadable", expiresAt: null, skewMs };
+  }
+  if (!result.present) return { state: "absent", expiresAt: null, skewMs };
+  if (result.expiresAt === null) return { state: "unreadable", expiresAt: null, skewMs };
+  const expiresAt = result.expiresAt;
+  if (expiresAt <= now) return { state: "expired", expiresAt, skewMs };
+  if (expiresAt <= now + skewMs) return { state: "expiring", expiresAt, skewMs };
+  return { state: "valid", expiresAt, skewMs };
 }

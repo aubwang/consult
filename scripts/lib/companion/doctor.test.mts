@@ -254,6 +254,78 @@ test("doctor reports malformed job records inside the diagnostic payload", async
   assert.equal(report.jobs.error, `JOB_RECORD_MALFORMED: ${recordPath}`);
 });
 
+test("doctor reports an expiring Claude OAuth credential without blocking delegation", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "claude",
+    hostDefaults: {},
+    profiles: { claude: profile("claude") },
+  });
+
+  const jsonResult = await runDoctor({
+    args: { positional: [], flags: { json: true } },
+    env: { CONSULT_HOST: "terminal", PATH: "/bin" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "linux",
+      probeConfined: async ({ authority }) => ({ ok: true, authority }),
+      inspectClaudeHostOauth: async () => ({
+        state: "expiring",
+        expiresAt: 2_000_000_000_000,
+        skewMs: 120_000,
+      }),
+    },
+  });
+  const report = JSON.parse(jsonResult.stdout) as DoctorReport;
+  assert.equal(report.canDelegate, true);
+  assert.equal(report.authority.claudeOauth?.state, "expiring");
+
+  const humanResult = await runDoctor({
+    args: { positional: [], flags: {} },
+    env: { CONSULT_HOST: "terminal", PATH: "/bin" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "linux",
+      probeConfined: async ({ authority }) => ({ ok: true, authority }),
+      inspectClaudeHostOauth: async () => ({
+        state: "expiring",
+        expiresAt: 2_000_000_000_000,
+        skewMs: 120_000,
+      }),
+    },
+  });
+  assert.match(humanResult.stdout, /claude oauth: expiring within 120000ms/u);
+  assert.match(humanResult.stdout, /claude setup-token/u);
+});
+
+test("doctor omits the Claude OAuth line for a non-claude profile", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "codex",
+    hostDefaults: {},
+    profiles: { codex: profile("codex") },
+  });
+
+  const result = await runDoctor({
+    args: { positional: [], flags: { json: true } },
+    env: { CONSULT_HOST: "terminal", PATH: "/bin" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "linux",
+      probeConfined: async ({ authority }) => ({ ok: true, authority }),
+      inspectClaudeHostOauth: async () => {
+        throw new Error("must not inspect Claude OAuth for a codex profile");
+      },
+    },
+  });
+  const report = JSON.parse(result.stdout) as DoctorReport;
+  assert.equal(report.authority.claudeOauth, null);
+});
+
 async function makeWorkspace(): Promise<{ workspaceRoot: string; dataDir: string }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-doctor-"));
   const workspaceRoot = path.join(dir, "workspace");

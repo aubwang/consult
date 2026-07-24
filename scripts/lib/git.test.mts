@@ -73,6 +73,23 @@ test("getDiff returns the diff from base ref to HEAD", async () => {
   assert.match(diff, /\+second/);
 });
 
+test("getDiff with --base HEAD pins the working-tree diff instead of an empty range", async () => {
+  const repo = await makeRepo("base-head");
+  await fs.writeFile(path.join(repo, "note.txt"), "committed\n");
+  await git(repo, "add", "note.txt");
+  await git(repo, "commit", "-m", "committed");
+  // Uncommitted working-tree edits the reviewer must actually see.
+  await fs.writeFile(path.join(repo, "note.txt"), "working-tree change\n");
+  const headRef = (await gitOutput(repo, "rev-parse", "HEAD")).trim();
+
+  const diff = await getDiff({ baseRef: headRef, cwd: repo });
+
+  // A `HEAD...HEAD` range would be empty; the working-tree diff has real hunks.
+  assert.match(diff, /diff --git a\/note\.txt b\/note\.txt/);
+  assert.match(diff, /-committed/);
+  assert.match(diff, /\+working-tree change/);
+});
+
 test("getDiff rejects a baseRef shaped like a git option instead of honoring it", async () => {
   const repo = await makeRepo("option-injection");
   await fs.writeFile(path.join(repo, "note.txt"), "first\n");

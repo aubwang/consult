@@ -17,7 +17,11 @@ import { isFinalStatus, listWorkspaceJobRecords } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
 import { isRecord } from "../objects.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
-import { probeConfinedSandboxRuntime } from "../sandbox-runtime-launch.mts";
+import {
+  inspectClaudeHostOauth,
+  probeConfinedSandboxRuntime,
+} from "../sandbox-runtime-launch.mts";
+import type { ClaudeHostOauthStatus } from "../sandbox-runtime-launch.mts";
 import {
   preflightJobAuthority,
   probeInheritedProfileLaunch,
@@ -37,6 +41,7 @@ export interface DoctorDeps extends ResolveInvocationContextDeps {
   arch?: NodeJS.Architecture;
   probeConfined?: typeof probeConfinedSandboxRuntime;
   probeInherited?: typeof probeInheritedProfileLaunch;
+  inspectClaudeHostOauth?: typeof inspectClaudeHostOauth;
   resolveWorkspaceRoot?: () => Promise<string>;
 }
 
@@ -105,6 +110,7 @@ interface JobAuthorityDoctorReport {
     warning: string;
   };
   legacySandboxEnv: string | null;
+  claudeOauth: ClaudeHostOauthStatus | null;
 }
 
 interface BrokerSummary {
@@ -352,6 +358,7 @@ async function inspectAuthority({
         "explicit inheritance adds no Consult OS boundary and should be chosen only by the trusted Host",
     },
     legacySandboxEnv: env.CONSULT_AGENT_SANDBOX ?? null,
+    claudeOauth: null,
   };
   try {
     const context = await resolveInvocationContext({
@@ -414,6 +421,8 @@ async function inspectAuthority({
         args: profileEntry.args,
         env: profileEntry.env,
       },
+      // Doctor only reports; a still-valid credential must not read as expired.
+      oauthRefreshSkewMs: 0,
     }, {
       probeConfined: deps.probeConfined ?? probeConfinedSandboxRuntime,
       probeInherited: deps.probeInherited ?? probeInheritedProfileLaunch,
@@ -432,7 +441,11 @@ async function inspectAuthority({
         args: profileEntry.args,
         env: profileEntry.env,
       },
+      oauthRefreshSkewMs: 0,
         });
+    const claudeOauth = profileEntry.registryId === "claude"
+      ? await (deps.inspectClaudeHostOauth ?? inspectClaudeHostOauth)({ env })
+      : null;
     return {
       ...base,
       ok: requested.ok,
@@ -447,6 +460,7 @@ async function inspectAuthority({
         ok: confined.ok,
         diagnostic: confined.ok ? null : confined.diagnostic,
       },
+      claudeOauth,
     };
   } catch (error) {
     return authorityFailure(base, null, null, {
@@ -467,6 +481,7 @@ function authorityFailure(
     | "requested"
     | "inherit"
     | "legacySandboxEnv"
+    | "claudeOauth"
   >,
   selectedProfile: string | null,
   profileRegistryId: string | null,
@@ -549,7 +564,40 @@ function renderDoctor(report: DoctorReport): string {
     `  explicit inherit available: ${yesNo(report.authority.inherit.available)}`,
     `  inherit warning: ${report.authority.inherit.warning}`,
     `  legacy CONSULT_AGENT_SANDBOX: ${valueOrDash(report.authority.legacySandboxEnv)}`,
+    ...claudeOauthLines(report.authority.claudeOauth),
   ].join("\n")}\n`;
+}
+
+function claudeOauthLines(status: ClaudeHostOauthStatus | null): string[] {
+  if (!status) return [];
+  const durableHint =
+    "set a long-lived CONSULT_CLAUDE_OAUTH_TOKEN via `claude setup-token` (or CONSULT_CLAUDE_API_KEY) to avoid repeated auth expiry";
+  switch (status.state) {
+    case "valid":
+      return ["  claude oauth: valid"];
+    case "explicit-consult-credential":
+      return ["  claude oauth: explicit CONSULT_CLAUDE_* credential (OAuth file bypassed)"];
+    case "expiring":
+      return [
+        `  claude oauth: expiring within ${status.skewMs}ms refresh skew (a root delegate auto-refreshes once)`,
+        `  claude oauth hint: ${durableHint}`,
+      ];
+    case "expired":
+      return [
+        "  claude oauth: expired (a root delegate auto-refreshes once; a logged-out Host needs `claude auth login`)",
+        `  claude oauth hint: ${durableHint}`,
+      ];
+    case "absent":
+      return [
+        "  claude oauth: absent (no stageable credential; Keychain-only login or logged out)",
+        `  claude oauth hint: ${durableHint}`,
+      ];
+    case "unreadable":
+      return [
+        "  claude oauth: unreadable (credential file is unparsable or inaccessible)",
+        `  claude oauth hint: ${durableHint}`,
+      ];
+  }
 }
 
 function valueOrDash(value: string | number | null): string {
