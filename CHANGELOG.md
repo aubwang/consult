@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/aubwang/consult/compare/v0.7.1...v0.8.0) (2026-07-24)
+
+
+### Features
+
+* proactively refresh near-expiry Claude OAuth and surface durable fix ([8898379](https://github.com/aubwang/consult/commit/889837989f7ceacdd8333b257a2f7b2720fc0726))
+
+
+### Bug Fixes
+
+* keep read-only turns alive when a Profile auto-approves safe read tools ([3000797](https://github.com/aubwang/consult/commit/300079726c8946a66f19afafc079e6cb8dd13c77))
+* pin the working-tree diff for --base HEAD instead of an empty range ([53ccb9a](https://github.com/aubwang/consult/commit/53ccb9a818a53d416861127a729d656337db9225))
+
 ## [0.7.1](https://github.com/aubwang/consult/compare/v0.7.0...v0.7.1) (2026-07-14)
 
 
