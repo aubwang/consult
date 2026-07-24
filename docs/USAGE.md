@@ -48,6 +48,12 @@ The captured diff is marked as untrusted data and its resolved base metadata is
 stored on the Job. The Profile sees that pinned snapshot rather than a moving
 working tree.
 
+Without `--base`, Consult pins the working-tree diff (staged and unstaged
+tracked changes against HEAD). With `--base <ref>` it pins the `<ref>...HEAD`
+commit range. `--base HEAD` is treated as the working-tree diff, since a commit
+compared with itself has no hunks; to review uncommitted changes, prefer
+omitting `--base`.
+
 Pass `--model` and `--effort` for optional Profile-specific tuning. Consult
 resolves family aliases only from models advertised by the Profile at Session
 start. Omitting `--model` uses the confined Profile runtime's default; Host
