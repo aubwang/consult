@@ -29,9 +29,14 @@ For a longer second opinion, add `--background --label "<purpose>"`, then run
   model, and preserve a user-requested model, effort, or authority.
 - Host `settings.json` is not copied into confinement, so pass `--model` when
   Host configuration controls the intended choice.
-- An expired stageable Claude OAuth credential gets one automatic no-prompt
-  refresh on a root Job. A fully logged-out Host fails before Job creation;
-  report `claude auth login` as the remediation instead of retrying.
+- An expired or soon-to-expire stageable Claude OAuth credential gets one
+  automatic no-prompt refresh on a root Job (proactive window
+  `CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS`, default two minutes). A fully
+  logged-out Host fails before Job creation; report `claude auth login` as the
+  remediation instead of retrying. If Claude auth expires often, recommend a
+  long-lived `CONSULT_CLAUDE_OAUTH_TOKEN` (from `claude setup-token`) or
+  `CONSULT_CLAUDE_API_KEY` in the Host environment as the durable fix; `consult
+  doctor` surfaces the credential state.
 - macOS Keychain-only logins cannot be staged into confinement; use
   `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`.
 

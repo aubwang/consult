@@ -30,12 +30,35 @@ export async function getDiff({ baseRef = null, cwd }: GetDiffOptions): Promise<
   try {
     const status = await git(cwd, "status", "--porcelain");
     const diff = resolvedBaseRef
-      ? await git(cwd, "diff", "--end-of-options", `${resolvedBaseRef}...HEAD`)
+      ? await baseRangeOrWorkingTreeDiff(cwd, resolvedBaseRef)
       : await trackedWorkingTreeDiff(cwd);
     return [status, diff].filter((part) => part.length > 0).join("\n");
   } catch (error) {
     throw new Error(`could not capture git status and diff: ${gitErrorDetail(error)}`);
   }
+}
+
+async function baseRangeOrWorkingTreeDiff(
+  cwd: string,
+  resolvedBaseRef: string,
+): Promise<string> {
+  // `<ref>...HEAD` is empty when the base resolves to HEAD itself (e.g.
+  // `--base HEAD`): the symmetric-difference range of a commit with itself has
+  // no hunks. Left as-is, the pinned block silently degrades to a bare status
+  // listing and the reviewer receives no diff to review. Treat base-equals-HEAD
+  // as the working-tree review the caller intended instead.
+  let headCommit: string | null = null;
+  try {
+    headCommit = (
+      await git(cwd, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
+    ).trim();
+  } catch {
+    headCommit = null;
+  }
+  if (headCommit !== null && headCommit === resolvedBaseRef) {
+    return await trackedWorkingTreeDiff(cwd);
+  }
+  return await git(cwd, "diff", "--end-of-options", `${resolvedBaseRef}...HEAD`);
 }
 
 async function trackedWorkingTreeDiff(cwd: string): Promise<string> {

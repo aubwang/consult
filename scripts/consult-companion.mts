@@ -141,7 +141,10 @@ CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN explicitly override the
 corresponding Profile file; ambient vendor variables do not. Consult never
 retries with ambient credentials or inheritance. A trusted root Claude
 delegate or review automatically makes one no-prompt Host OAuth refresh attempt
-when the staged file is expired, then reruns exact preflight. Nested Jobs and
+when the staged file is expired or expiring within
+CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS (default two minutes), then reruns exact
+preflight. Set a long-lived CONSULT_CLAUDE_OAUTH_TOKEN (via claude setup-token)
+to avoid repeated expiry. Nested Jobs and
 diagnostic commands never mutate Host credentials.
 
 ## Pinned diffs and review

@@ -48,6 +48,12 @@ The captured diff is marked as untrusted data and its resolved base metadata is
 stored on the Job. The Profile sees that pinned snapshot rather than a moving
 working tree.
 
+Without `--base`, Consult pins the working-tree diff (staged and unstaged
+tracked changes against HEAD). With `--base <ref>` it pins the `<ref>...HEAD`
+commit range. `--base HEAD` is treated as the working-tree diff, since a commit
+compared with itself has no hunks; to review uncommitted changes, prefer
+omitting `--base`.
+
 Pass `--model` and `--effort` for optional Profile-specific tuning. Consult
 resolves family aliases only from models advertised by the Profile at Session
 start. Omitting `--model` uses the confined Profile runtime's default; Host
@@ -150,12 +156,23 @@ project's `OPENAI_API_KEY` does not replace the ChatGPT login represented by
 
 A trusted root `delegate` or `review` using a stageable Claude OAuth file
 automatically makes one no-prompt Host refresh attempt when that file is
-expired, then reruns exact confined preflight once. The attempt uses the exact
+expired **or about to expire**, then reruns exact confined preflight once. The
+proactive window defaults to two minutes and is configurable through
+`CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS` (`0` restores strict already-expired
+behavior); it stops a credential that is valid at preflight from expiring
+between staging and the first confined model call. The attempt uses the exact
 configured Claude ACP Profile against the Host credential store; it never
 copies credentials back from a Job-private home and never sends a model
 prompt. Nested Jobs and diagnostic commands do not refresh Host credentials.
 If the Host is fully logged out, the command fails before Job creation with
 `claude auth login` remediation. No flag or setting is required.
+
+Because each confined Job stages a fresh snapshot of the OAuth file and cannot
+refresh it from inside the sandbox, the most durable fix for frequent expiry is
+a long-lived token: set `CONSULT_CLAUDE_OAUTH_TOKEN` (generate one with `claude
+setup-token`) or `CONSULT_CLAUDE_API_KEY` in the Host environment. Explicit
+Consult credential variables bypass the OAuth file entirely, so they never
+expire mid-run and skip the Host refresh path.
 
 Confined launch does not copy Codex `config.toml` or Claude `settings.json`.
 Pass `--model` explicitly when Host configuration controls model or provider
@@ -380,11 +397,16 @@ consult brokers --cleanup
 ```
 
 If authentication fails, sign in with the Profile's native CLI first, then
-rerun `consult doctor --agent <profile>`. For an expired Claude OAuth file, an
-explicit `CONSULT_CLAUDE_OAUTH_TOKEN` or `CONSULT_CLAUDE_API_KEY` bypasses the
-file. A trusted root Claude `delegate` or `review` automatically tries one
-Host refresh and reruns exact preflight; Doctor and nested Jobs remain
-diagnostic-only. Consult never retries with ambient inheritance automatically.
+rerun `consult doctor --agent <profile>`. For a Claude Profile, `consult doctor`
+reports a `claude oauth` line — `valid`, `expiring`, `expired`, `absent`,
+`unreadable`, or `explicit CONSULT_CLAUDE_* credential` — and points at the
+durable-token fix when the stageable credential needs attention; the check is
+observational and never refreshes. For an expired or soon-to-expire Claude
+OAuth file, an explicit `CONSULT_CLAUDE_OAUTH_TOKEN` (from `claude setup-token`)
+or `CONSULT_CLAUDE_API_KEY` bypasses the file and avoids repeated expiry. A
+trusted root Claude `delegate` or `review` automatically tries one Host refresh
+and reruns exact preflight; Doctor and nested Jobs remain diagnostic-only.
+Consult never retries with ambient inheritance automatically.
 
 ## Optional agent skills
 
