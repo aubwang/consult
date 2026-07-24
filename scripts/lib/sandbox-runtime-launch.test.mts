@@ -11,9 +11,12 @@ import type { JobAuthority } from "./job-authority.mts";
 import { processStartTime } from "./process-identity.mts";
 import {
   CONFINED_PROFILE_POLICIES,
+  DEFAULT_CLAUDE_OAUTH_REFRESH_SKEW_MS,
   MACOS_READ_PATHS,
   acquireConfinedSandboxRuntimeLaunch,
+  claudeOauthRefreshSkewMs,
   executableReadScopes,
+  inspectClaudeHostOauth,
   inspectMachODependencies,
   isMacosSystemRuntimePath,
   linuxExecutableReadScopes,
@@ -881,6 +884,119 @@ test("confined preflight surfaces a specific re-authentication remediation for e
     assert.doesNotMatch(result.diagnostic.remediation, /consult doctor/u);
   }
   assert.deepEqual(harness.events, []);
+});
+
+test("confined claude launch treats a near-expiry OAuth credential as refresh-eligible", async (t) => {
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const sourceCredential = path.join(fixture.home, ".claude", ".credentials.json");
+  await privateFile(
+    sourceCredential,
+    JSON.stringify({
+      // Still valid, but within the default proactive-refresh skew window.
+      claudeAiOauth: { accessToken: "REDACTED", expiresAt: now + 30_000 },
+    }),
+  );
+  const harness = fakeRuntime();
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      args: [],
+      cwd: fixture.workspace,
+      env: { PATH: "/usr/bin:/bin" },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "claude",
+    }, { ...harness.deps, now: () => now }),
+    /Claude OAuth credential is expired or about to expire/u,
+  );
+  assert.deepEqual(harness.events, []);
+});
+
+test("CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS=0 keeps a still-valid near-expiry credential", async (t) => {
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const sourceCredential = path.join(fixture.home, ".claude", ".credentials.json");
+  await privateFile(
+    sourceCredential,
+    JSON.stringify({
+      claudeAiOauth: { accessToken: "REDACTED", expiresAt: now + 30_000 },
+    }),
+  );
+  const harness = fakeRuntime();
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: { PATH: "/usr/bin:/bin", CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS: "0" },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "claude",
+  }, { ...harness.deps, now: () => now });
+  try {
+    assert.ok(await fsp.stat(
+      path.join(lease.launch.env.CLAUDE_CONFIG_DIR!, ".credentials.json"),
+    ));
+  } finally {
+    await lease.release();
+  }
+});
+
+test("claudeOauthRefreshSkewMs uses the default and honors a valid override", () => {
+  assert.equal(claudeOauthRefreshSkewMs({}), DEFAULT_CLAUDE_OAUTH_REFRESH_SKEW_MS);
+  assert.equal(
+    claudeOauthRefreshSkewMs({ CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS: "5000" }),
+    5000,
+  );
+  assert.equal(
+    claudeOauthRefreshSkewMs({ CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS: "0" }),
+    0,
+  );
+  for (const junk of ["", "  ", "-1", "abc", "NaN"]) {
+    assert.equal(
+      claudeOauthRefreshSkewMs({ CONSULT_CLAUDE_OAUTH_REFRESH_SKEW_MS: junk }),
+      DEFAULT_CLAUDE_OAUTH_REFRESH_SKEW_MS,
+      `expected default for ${JSON.stringify(junk)}`,
+    );
+  }
+});
+
+test("inspectClaudeHostOauth classifies stageable Host credential states", async (t) => {
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const credential = path.join(fixture.home, ".claude", ".credentials.json");
+  const env = { PATH: "/usr/bin:/bin" };
+
+  const absent = await inspectClaudeHostOauth({ env, now });
+  assert.equal(absent.state, "absent");
+
+  await privateFile(
+    credential,
+    JSON.stringify({ claudeAiOauth: { accessToken: "REDACTED", expiresAt: now + 10 * 60_000 } }),
+  );
+  assert.equal((await inspectClaudeHostOauth({ env, now })).state, "valid");
+
+  await privateFile(
+    credential,
+    JSON.stringify({ claudeAiOauth: { accessToken: "REDACTED", expiresAt: now + 30_000 } }),
+  );
+  const expiring = await inspectClaudeHostOauth({ env, now });
+  assert.equal(expiring.state, "expiring");
+  assert.equal(expiring.skewMs, DEFAULT_CLAUDE_OAUTH_REFRESH_SKEW_MS);
+
+  await privateFile(
+    credential,
+    JSON.stringify({ claudeAiOauth: { accessToken: "REDACTED", expiresAt: now - 60_000 } }),
+  );
+  assert.equal((await inspectClaudeHostOauth({ env, now })).state, "expired");
+
+  const explicit = await inspectClaudeHostOauth({
+    env: { ...env, CONSULT_CLAUDE_OAUTH_TOKEN: "explicit-token" },
+    now,
+  });
+  assert.equal(explicit.state, "explicit-consult-credential");
 });
 
 test("a new confined launch sweeps an old root whose owner is gone", async (t) => {
