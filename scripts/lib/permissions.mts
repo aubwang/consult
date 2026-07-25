@@ -26,31 +26,45 @@ const TOOL_KINDS = new Set([
   "other",
 ]);
 
-const PATH_FIELD_NAMES = new Set([
-  "path",
-  "paths",
-  "filePath",
-  "file_path",
-  "filename",
-  "fileName",
-  "cwd",
-  "source",
-  "sourcePath",
-  "source_path",
-  "dest",
-  "destination",
-  "destinationPath",
-  "destination_path",
-  "target",
-  "targetPath",
-  "target_path",
-  "to",
-  "from",
-  "oldPath",
-  "old_path",
-  "newPath",
-  "new_path",
-]);
+// Field names are matched after stripping separators and lowercasing, so a single
+// spelling here also covers filePath / file_path / file-path / FilePath.
+const PATH_FIELD_NAMES = new Set(
+  [
+    "path",
+    "paths",
+    "filePath",
+    "filename",
+    "file",
+    "files",
+    "cwd",
+    "dir",
+    "directory",
+    "root",
+    "pathname",
+    "workdir",
+    "workingDir",
+    "notebookPath",
+    "absolutePath",
+    "outputPath",
+    "source",
+    "sourcePath",
+    "dest",
+    "destination",
+    "destinationPath",
+    "target",
+    "targetPath",
+    "to",
+    "from",
+    "oldPath",
+    "newPath",
+  ].map(normalizeFieldName),
+);
+
+// A malformed or hostile rawInput must not be able to exhaust the scan. Both caps
+// fail closed: exceeding them denies the call rather than silently scanning less,
+// so padding cannot be used to hide a path past the limit.
+const MAX_SCAN_DEPTH = 12;
+const MAX_SCAN_NODES = 5000;
 
 export type PermissionMode = "write" | "read-only";
 
@@ -88,9 +102,12 @@ export async function decidePermission(
   const kind = normalizeKind(request.toolCall.kind);
 
   if (PATH_BEARING_KINDS.has(kind)) {
-    const paths = candidatePaths(request.toolCall.rawInput);
-    // Some ACP tool calls do not expose a path in rawInput; there is nothing to confine.
-    for (const targetPath of paths) {
+    const scan = candidatePaths(request.toolCall);
+    if (scan.exceeded) {
+      return { allowed: false, reason: "rawInput exceeds path confinement limits" };
+    }
+    // Some ACP tool calls do not expose a path at all; there is nothing to confine.
+    for (const targetPath of scan.paths) {
       if (!(await isConfined(targetPath, workspaceRoot))) {
         return { allowed: false, reason: `path outside workspace: ${targetPath}` };
       }
@@ -143,23 +160,81 @@ function normalizeKind(kind: unknown): string {
   return TOOL_KINDS.has(normalized) ? normalized : "other";
 }
 
-function candidatePaths(rawInput: unknown): string[] {
-  if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) {
-    return [];
+function normalizeFieldName(key: string): string {
+  return key.replaceAll(/[-_]/gu, "").toLowerCase();
+}
+
+interface ScanBudget {
+  nodes: number;
+  exceeded: boolean;
+}
+
+function candidatePaths(toolCall: RequestPermissionRequest["toolCall"]): {
+  paths: string[];
+  exceeded: boolean;
+} {
+  const paths = new Set<string>();
+
+  // ACP types locations[].path as a file location, so it needs no name guessing.
+  // The Broker's touched-file backstop already reads it; without this the
+  // cooperative gate is strictly weaker than that backstop.
+  for (const location of toolCall.locations ?? []) {
+    if (typeof location?.path === "string") {
+      paths.add(location.path);
+    }
   }
 
-  const paths: string[] = [];
-  for (const [key, value] of Object.entries(rawInput as Record<string, unknown>)) {
-    if (!PATH_FIELD_NAMES.has(key)) {
-      continue;
+  const budget: ScanBudget = { nodes: 0, exceeded: false };
+  collectPaths(toolCall.rawInput, false, 0, budget, paths);
+  return { paths: [...paths], exceeded: budget.exceeded };
+}
+
+function collectPaths(
+  value: unknown,
+  keyIsPathBearing: boolean,
+  depth: number,
+  budget: ScanBudget,
+  out: Set<string>,
+): void {
+  if (budget.exceeded) {
+    return;
+  }
+  if (depth > MAX_SCAN_DEPTH) {
+    budget.exceeded = true;
+    return;
+  }
+  budget.nodes += 1;
+  if (budget.nodes > MAX_SCAN_NODES) {
+    budget.exceeded = true;
+    return;
+  }
+
+  if (typeof value === "string") {
+    if (keyIsPathBearing) {
+      out.add(value);
     }
-    if (typeof value === "string") {
-      paths.push(value);
-    } else if (Array.isArray(value)) {
-      paths.push(...value.filter((item): item is string => typeof item === "string"));
+    return;
+  }
+  if (Array.isArray(value)) {
+    // Arrays inherit their parent key so `paths: [...]` stays confined. Objects
+    // deliberately do not: `{ from: { text: "/usr/bin" } }` describes a
+    // structure, not a path, and inheriting there would deny legitimate calls.
+    for (const entry of value) {
+      collectPaths(entry, keyIsPathBearing, depth + 1, budget, out);
+    }
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      collectPaths(
+        nested,
+        PATH_FIELD_NAMES.has(normalizeFieldName(key)),
+        depth + 1,
+        budget,
+        out,
+      );
     }
   }
-  return paths;
 }
 
 async function isConfined(targetPath: string, workspaceRoot: string): Promise<boolean> {

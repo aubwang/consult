@@ -315,3 +315,148 @@ test("unknown mode throws", async () => {
     /unknown permission mode: supervised/,
   );
 });
+
+test("path confinement reaches nested and array-wrapped rawInput shapes", async () => {
+  const workspaceRoot = makeRoot();
+
+  const shapes: Record<string, unknown>[] = [
+    { edits: [{ file_path: "/etc/passwd" }] },
+    { args: { path: "/etc/passwd" } },
+    { batch: { edits: [{ nested: { target_path: "/etc/passwd" } }] } },
+    { paths: ["/etc/passwd"] },
+  ];
+
+  for (const rawInput of shapes) {
+    assert.deepEqual(
+      await decidePermission({
+        request: request("edit", rawInput),
+        mode: "write",
+        workspaceRoot,
+      }),
+      { allowed: false, reason: "path outside workspace: /etc/passwd" },
+      `expected ${JSON.stringify(rawInput)} to be confined`,
+    );
+  }
+});
+
+test("path confinement scans a top-level array rawInput", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: {
+        toolCall: {
+          toolCallId: "tool-1",
+          kind: "edit",
+          rawInput: [{ file_path: "/etc/passwd" }] as unknown as Record<string, unknown>,
+        },
+      },
+      mode: "write",
+      workspaceRoot,
+    }),
+    { allowed: false, reason: "path outside workspace: /etc/passwd" },
+  );
+});
+
+test("path confinement matches field names regardless of case and separators", async () => {
+  const workspaceRoot = makeRoot();
+
+  for (const key of ["FilePath", "File_Path", "file-path", "NOTEBOOK_PATH", "absolutePath"]) {
+    assert.deepEqual(
+      await decidePermission({
+        request: request("edit", { [key]: "/etc/passwd" }),
+        mode: "write",
+        workspaceRoot,
+      }),
+      { allowed: false, reason: "path outside workspace: /etc/passwd" },
+      `expected key '${key}' to be confined`,
+    );
+  }
+});
+
+test("path confinement covers newly recognized directory-style keys", async () => {
+  const workspaceRoot = makeRoot();
+
+  for (const key of ["directory", "dir", "root", "workdir", "files", "output_path"]) {
+    assert.deepEqual(
+      await decidePermission({
+        request: request("read", { [key]: "/etc/passwd" }),
+        mode: "read-only",
+        workspaceRoot,
+      }),
+      { allowed: false, reason: "path outside workspace: /etc/passwd" },
+      `expected key '${key}' to be confined`,
+    );
+  }
+});
+
+test("path confinement uses the typed toolCall.locations source", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: {
+        toolCall: {
+          toolCallId: "tool-1",
+          kind: "edit",
+          rawInput: {},
+          locations: [{ path: "/etc/passwd" }],
+        },
+      },
+      mode: "write",
+      workspaceRoot,
+    }),
+    { allowed: false, reason: "path outside workspace: /etc/passwd" },
+  );
+});
+
+test("nested objects do not inherit a path-bearing parent key", async () => {
+  const workspaceRoot = makeRoot();
+
+  // `from` is path-bearing, but a nested object under it describes a structure.
+  // Inheriting the key here would deny a legitimate edit payload.
+  assert.deepEqual(
+    await decidePermission({
+      request: request("edit", { from: { line: 1, text: "/usr/bin/env node" } }),
+      mode: "write",
+      workspaceRoot,
+    }),
+    { allowed: true },
+  );
+});
+
+test("nested in-workspace paths remain allowed", async () => {
+  const workspaceRoot = makeRoot();
+  const targetPath = path.join(workspaceRoot, "notes.txt");
+  fs.writeFileSync(targetPath, "hello", "utf8");
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("edit", {
+        edits: [{ file_path: targetPath }, { file_path: "child.txt" }],
+        content: "https://example.com and/or **/*.mts",
+      }),
+      mode: "write",
+      workspaceRoot,
+    }),
+    { allowed: true },
+  );
+});
+
+test("path confinement fails closed when rawInput exceeds the scan depth", async () => {
+  const workspaceRoot = makeRoot();
+
+  let deep: Record<string, unknown> = { path: "/etc/passwd" };
+  for (let index = 0; index < 40; index += 1) {
+    deep = { wrapper: deep };
+  }
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("edit", deep),
+      mode: "write",
+      workspaceRoot,
+    }),
+    { allowed: false, reason: "rawInput exceeds path confinement limits" },
+  );
+});
