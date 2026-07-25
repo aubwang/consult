@@ -10,7 +10,8 @@ import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { startAgent } from "./acp-client.mts";
 import type { AgentLaunchLease } from "./acp-client.mts";
 import { startEgressProxy } from "./egress-proxy.mts";
-import type { EgressProxy, EgressProxyOptions } from "./egress-proxy.mts";
+import type { EgressProxy, EgressProxyOptions, EgressUsage } from "./egress-proxy.mts";
+import { jobArtifactsDir } from "./broker-endpoint.mts";
 import type { JobAuthority } from "./job-authority.mts";
 import type {
   JobAuthorityPreflightInput,
@@ -270,10 +271,18 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       }
     }
     if (proxy) {
+      const usage = proxy.usage();
       try {
         await proxy.close();
       } catch (error) {
         errors.push(error);
+      }
+      // Best-effort by design: egress accounting is observability, so a failed
+      // write must never poison Job cleanup or the runtime state machine.
+      try {
+        await persistEgressUsage(input, usage);
+      } catch {
+        // ignored
       }
     }
     if (root) {
@@ -624,6 +633,29 @@ export async function probeConfinedSandboxRuntime(
     };
   }
   return { ok: true, authority: input.authority };
+}
+
+const EGRESS_USAGE_SCHEMA_VERSION = 1;
+
+/**
+ * Record how much the confined Profile actually relayed, per allowed host. The
+ * proxy tunnels opaque TLS and cannot inspect payloads, so volume is the only
+ * signal Consult can offer that an allowed host carried more than a model turn.
+ */
+async function persistEgressUsage(
+  input: ConfinedSandboxRuntimeLaunchInput,
+  usage: EgressUsage,
+): Promise<void> {
+  if (!input.stateWorkspaceRoot || !input.jobId) {
+    return;
+  }
+  const directory = jobArtifactsDir(input.stateWorkspaceRoot, input.jobId);
+  await fsp.mkdir(directory, { recursive: true });
+  await fsp.writeFile(
+    path.join(directory, "egress.json"),
+    `${JSON.stringify({ schemaVersion: EGRESS_USAGE_SCHEMA_VERSION, ...usage }, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 function confinedProfilePolicy(registryId: string | undefined): ConfinedProfilePolicy {
