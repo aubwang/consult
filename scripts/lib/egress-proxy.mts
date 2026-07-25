@@ -25,6 +25,10 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+// Per-host attribution is what makes an anomalous volume legible, but the map must
+// not grow without bound. Connections past the cap still reach the aggregate
+// totals; only their per-host breakdown is dropped.
+const MAX_TRACKED_EGRESS_HOSTS = 64;
 
 export type EgressDial = (
   target: PinnedEgressTarget,
@@ -44,10 +48,27 @@ export interface EgressProxyOptions {
   idleTimeoutMs?: number;
 }
 
+export interface EgressHostUsage {
+  connections: number;
+  bytesToUpstream: number;
+  bytesFromUpstream: number;
+}
+
+/**
+ * Relayed volume for one proxy lifetime. The proxy tunnels opaque TLS, so this
+ * cannot show what was sent — only how much, and to which allowed host. That is
+ * enough to make a bulk transfer visible against a normal model turn.
+ */
+export interface EgressUsage extends EgressHostUsage {
+  untrackedHosts: number;
+  hosts: Record<string, EgressHostUsage>;
+}
+
 export interface EgressProxy {
   httpPort: number;
   socksPort: number;
   token: string;
+  usage(): EgressUsage;
   close(): Promise<void>;
 }
 
@@ -62,6 +83,69 @@ interface ProxyRuntime {
   clients: Set<Socket>;
   upstreams: Set<Duplex>;
   dialControllers: Set<AbortController>;
+  usage: UsageLedger;
+}
+
+interface UsageLedger extends EgressHostUsage {
+  untrackedHosts: number;
+  hosts: Map<string, EgressHostUsage>;
+}
+
+function createUsageLedger(): UsageLedger {
+  return {
+    connections: 0,
+    bytesToUpstream: 0,
+    bytesFromUpstream: 0,
+    untrackedHosts: 0,
+    hosts: new Map(),
+  };
+}
+
+function recordConnection(ledger: UsageLedger, hostname: string): void {
+  ledger.connections += 1;
+  const tracked = ledger.hosts.get(hostname);
+  if (tracked) {
+    tracked.connections += 1;
+    return;
+  }
+  if (ledger.hosts.size >= MAX_TRACKED_EGRESS_HOSTS) {
+    ledger.untrackedHosts += 1;
+    return;
+  }
+  ledger.hosts.set(hostname, {
+    connections: 1,
+    bytesToUpstream: 0,
+    bytesFromUpstream: 0,
+  });
+}
+
+function recordBytes(
+  ledger: UsageLedger,
+  hostname: string,
+  toUpstream: number,
+  fromUpstream: number,
+): void {
+  ledger.bytesToUpstream += toUpstream;
+  ledger.bytesFromUpstream += fromUpstream;
+  const tracked = ledger.hosts.get(hostname);
+  if (tracked) {
+    tracked.bytesToUpstream += toUpstream;
+    tracked.bytesFromUpstream += fromUpstream;
+  }
+}
+
+function snapshotUsage(ledger: UsageLedger): EgressUsage {
+  const hosts: Record<string, EgressHostUsage> = {};
+  for (const [hostname, tracked] of ledger.hosts) {
+    hosts[hostname] = { ...tracked };
+  }
+  return {
+    connections: ledger.connections,
+    bytesToUpstream: ledger.bytesToUpstream,
+    bytesFromUpstream: ledger.bytesFromUpstream,
+    untrackedHosts: ledger.untrackedHosts,
+    hosts,
+  };
 }
 
 interface ProxyTimeouts {
@@ -106,6 +190,7 @@ export async function startEgressProxy(
     clients: new Set(),
     upstreams: new Set(),
     dialControllers: new Set(),
+    usage: createUsageLedger(),
   };
 
   const authorize = async (hostname: string, port: number): Promise<PinnedEgressTarget> => {
@@ -220,6 +305,8 @@ export async function startEgressProxy(
       httpPort,
       socksPort,
       token,
+      // Readable after close(): the caller snapshots once the Profile is gone.
+      usage: () => snapshotUsage(runtime.usage),
       close: onceAsync(async () => {
         runtime.closing = true;
         for (const controller of runtime.dialControllers) {
@@ -301,10 +388,18 @@ async function handleHttpConnect(context: HttpConnectContext): Promise<void> {
   }
 
   client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+  recordConnection(context.runtime.usage, pinned.hostname);
   if (head.length > 0) {
     upstream.write(head);
+    recordBytes(context.runtime.usage, pinned.hostname, head.length, 0);
   }
-  beginRelay(client, upstream, context.idleTimeoutMs);
+  beginRelay(
+    client,
+    upstream,
+    context.idleTimeoutMs,
+    context.runtime.usage,
+    pinned.hostname,
+  );
 }
 
 interface SocksClientContext {
@@ -447,10 +542,18 @@ async function completeSocksConnect(
   }
 
   context.client.write(socksReply(0x00));
+  recordConnection(context.runtime.usage, pinned.hostname);
   if (initialPayload.length > 0) {
     upstream.write(initialPayload);
+    recordBytes(context.runtime.usage, pinned.hostname, initialPayload.length, 0);
   }
-  beginRelay(context.client, upstream, context.idleTimeoutMs);
+  beginRelay(
+    context.client,
+    upstream,
+    context.idleTimeoutMs,
+    context.runtime.usage,
+    pinned.hostname,
+  );
 }
 
 type ParsedSocksRequest =
@@ -509,7 +612,13 @@ function parseSocksRequest(buffer: Buffer): Exclude<ParsedSocksRequest, { type: 
   };
 }
 
-function beginRelay(client: Socket, upstream: Duplex, idleTimeoutMs: number): void {
+function beginRelay(
+  client: Socket,
+  upstream: Duplex,
+  idleTimeoutMs: number,
+  ledger: UsageLedger,
+  hostname: string,
+): void {
   const destroyPair = (): void => {
     client.destroy();
     upstream.destroy();
@@ -522,6 +631,10 @@ function beginRelay(client: Socket, upstream: Duplex, idleTimeoutMs: number): vo
   upstream.on("error", () => client.destroy());
   client.once("close", () => upstream.destroy());
   upstream.once("close", () => client.destroy());
+  // Registered in the same tick as the pipes below, so no chunk can be observed
+  // by a counter before its pipe exists.
+  client.on("data", (chunk: Buffer) => recordBytes(ledger, hostname, chunk.length, 0));
+  upstream.on("data", (chunk: Buffer) => recordBytes(ledger, hostname, 0, chunk.length));
   client.pipe(upstream);
   upstream.pipe(client);
   client.resume();

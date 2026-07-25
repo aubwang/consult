@@ -1126,6 +1126,19 @@ function fakeRuntime(options: {
           httpPort: 41_001,
           socksPort: 41_002,
           token: TOKEN,
+          usage: () => ({
+            connections: 2,
+            bytesToUpstream: 1_024,
+            bytesFromUpstream: 2_048,
+            untrackedHosts: 0,
+            hosts: {
+              "api.example.com": {
+                connections: 2,
+                bytesToUpstream: 1_024,
+                bytesFromUpstream: 2_048,
+              },
+            },
+          }),
           async close() {
             events.push("proxy-close");
           },

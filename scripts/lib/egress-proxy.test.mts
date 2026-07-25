@@ -504,3 +504,78 @@ function withTestTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T
     );
   });
 }
+
+test("accounts relayed bytes per allowed host over HTTP CONNECT", async () => {
+  const harness = await startHarness({ trustedHosts: ["api.example.com"] });
+  try {
+    const tunnel = await openHttpTunnel(harness.proxy, "api.example.com:443");
+    assert.match(tunnel.header, /^HTTP\/1\.1 200 /u);
+    tunnel.socket.write("hello");
+    assert.equal((await tunnel.reader.readBytes(5)).toString(), "hello");
+    tunnel.socket.destroy();
+
+    const usage = harness.proxy.usage();
+    assert.equal(usage.connections, 1);
+    assert.equal(usage.bytesToUpstream, 5);
+    assert.equal(usage.bytesFromUpstream, 5);
+    assert.equal(usage.untrackedHosts, 0);
+    assert.deepEqual(usage.hosts, {
+      "api.example.com": {
+        connections: 1,
+        bytesToUpstream: 5,
+        bytesFromUpstream: 5,
+      },
+    });
+  } finally {
+    await harness.proxy.close();
+  }
+});
+
+test("accounts relayed bytes over the SOCKS listener", async () => {
+  const harness = await startHarness({ trustedHosts: ["api.example.com"] });
+  try {
+    const tunnel = await openSocksTunnel(harness.proxy, "api.example.com", 443);
+    tunnel.socket.write("hello");
+    assert.equal((await tunnel.reader.readBytes(5)).toString(), "hello");
+    tunnel.socket.destroy();
+
+    const usage = harness.proxy.usage();
+    assert.equal(usage.connections, 1);
+    assert.equal(usage.bytesToUpstream, 5);
+    assert.equal(usage.bytesFromUpstream, 5);
+    assert.equal(usage.hosts["api.example.com"].connections, 1);
+  } finally {
+    await harness.proxy.close();
+  }
+});
+
+test("usage stays readable after the proxy closes", async () => {
+  const harness = await startHarness({ trustedHosts: ["api.example.com"] });
+  const tunnel = await openHttpTunnel(harness.proxy, "api.example.com:443");
+  tunnel.socket.write("abc");
+  assert.equal((await tunnel.reader.readBytes(3)).toString(), "abc");
+  tunnel.socket.destroy();
+  await harness.proxy.close();
+
+  const usage = harness.proxy.usage();
+  assert.equal(usage.connections, 1);
+  assert.equal(usage.bytesToUpstream, 3);
+});
+
+test("per-host accounting is bounded and overflow stays in the totals", async () => {
+  const harness = await startHarness({ allowPublicHosts: true });
+  try {
+    for (let index = 0; index < 65; index += 1) {
+      const tunnel = await openHttpTunnel(harness.proxy, `h${index}.example.com:443`);
+      assert.match(tunnel.header, /^HTTP\/1\.1 200 /u);
+      tunnel.socket.destroy();
+    }
+
+    const usage = harness.proxy.usage();
+    assert.equal(usage.connections, 65);
+    assert.equal(Object.keys(usage.hosts).length, 64);
+    assert.equal(usage.untrackedHosts, 1);
+  } finally {
+    await harness.proxy.close();
+  }
+});

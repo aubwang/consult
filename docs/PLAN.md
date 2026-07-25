@@ -65,7 +65,7 @@ consult/
 │   ├── job-authority.mts                # canonical portable authority model
 │   ├── job-authority-preflight.mts      # fail-closed combination gate
 │   ├── permissions.mts                  # ACP permission decisions
-│   ├── egress-proxy.mts                 # authenticated pinned-address proxy
+│   ├── egress-proxy.mts                 # authenticated pinned-address proxy + accounting
 │   ├── sandbox-runtime-launch.mts       # native confined Profile launch
 │   └── sandbox-runtime-policy.mts       # pinned generated-policy transform
 ├── skills/                              # CLI-calling agent skills
@@ -171,6 +171,9 @@ or authorization.
     ├── jobs/<job-id>.json
     ├── logs/<job-id>.log
     ├── brokers/<job-id>.json
+    ├── artifacts/<job-id>/
+    │   ├── egress.json                  # relayed volume per allowed host
+    │   └── session-state/               # confined resume archive, when captured
     ├── isolated-jobs/<job-id>/
     │   ├── worktree/                    # temporary; removed at cleanup
     │   └── artifacts/
@@ -434,8 +437,22 @@ does not inspect or prove the encrypted application protocol. Because the Profil
 holds its model credential, that grant increases prompt-injection exfiltration
 risk; Consult deliberately does not add a credential broker in this version.
 
+An allowed host is therefore still a data path, and the allowlist is host-granular:
+a Profile that reaches its own model host cannot be distinguished from one that
+abuses it, because the tunnel is opaque TLS. Consult records relayed volume per
+allowed host for each confined Job in `artifacts/<job-id>/egress.json` so that a
+bulk transfer is at least visible against a normal prompt turn. This is
+observability, not enforcement: accounting is written best-effort after the
+Profile tree is gone and never fails a Job. No ceiling is enforced, because a
+blind cap either sits high enough to be useless or truncates a legitimate long
+turn; choosing that number needs real data first.
+
 ACP file handlers and permission-bearing paths remain realpath-confined to the
-Execution Workspace and reject symlink escapes:
+Execution Workspace and reject symlink escapes. Path extraction from ACP tool
+calls recurses nested structures, matches field names case- and
+separator-insensitively, and reads the typed `toolCall.locations` source, so a
+path cannot evade confinement by hiding in a nested or differently-spelled
+field. Extraction is bounded and fails closed if a payload exceeds those bounds:
 
 Profile adapters own the ACP `session/prompt` terminal boundary. Consult does
 not infer provider-internal background-task completion after a Profile has
