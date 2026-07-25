@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/aubwang/consult/compare/v0.8.0...v0.9.0) (2026-07-25)
+
+
+### Features
+
+* account per-Job egress volume per allowed host ([996596a](https://github.com/aubwang/consult/commit/996596a82993244c89566371f8ef7ed038ba8550))
+
+
+### Bug Fixes
+
+* confine ACP tool-call paths in nested and alternately-named fields ([6572e4f](https://github.com/aubwang/consult/commit/6572e4f155ef22be37b7fa7fc9bbb94ec3f1c3b6))
+* confine paths on unrecognized ACP tool kinds in write mode ([8e8acd7](https://github.com/aubwang/consult/commit/8e8acd705181b355ee744862249121cadb06b250))
+
 ## [0.8.0](https://github.com/aubwang/consult/compare/v0.7.1...v0.8.0) (2026-07-24)
 
 
