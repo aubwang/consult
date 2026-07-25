@@ -5,7 +5,19 @@ import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 import { isInsideWorkspace } from "./path-safety.mts";
 import type { AgentSandboxMode } from "./process-sandbox.mts";
 
-const PATH_BEARING_KINDS = new Set(["read", "search", "edit", "delete", "move"]);
+// `other` is included because normalizeKind funnels every unrecognized kind here.
+// Without it, write mode reaches its blanket allow with no confinement at all, so
+// an unknown-kind tool call carrying a path escaped the Workspace boundary.
+// `fetch` is deliberately excluded: its inputs are URLs, it is gated separately by
+// the fetch grant, and confining it would deny legitimate calls.
+const PATH_BEARING_KINDS = new Set([
+  "read",
+  "search",
+  "edit",
+  "delete",
+  "move",
+  "other",
+]);
 const READ_ONLY_DENIED_KINDS = new Set([
   "edit",
   "delete",

@@ -460,3 +460,45 @@ test("path confinement fails closed when rawInput exceeds the scan depth", async
     { allowed: false, reason: "rawInput exceeds path confinement limits" },
   );
 });
+
+test("write-mode confines paths on unrecognized tool kinds", async () => {
+  const workspaceRoot = makeRoot();
+
+  // An unknown kind normalizes to `other`; before this was path-bearing it hit
+  // the write-mode blanket allow with no confinement.
+  for (const kind of ["custom_write", "unknown", "other"]) {
+    assert.deepEqual(
+      await decidePermission({
+        request: request(kind as unknown as ToolKind, { path: "/etc/passwd" }),
+        mode: "write",
+        workspaceRoot,
+      }),
+      { allowed: false, reason: "path outside workspace: /etc/passwd" },
+      `expected kind '${kind}' to be confined`,
+    );
+  }
+});
+
+test("write-mode still allows unrecognized tool kinds inside the workspace", async () => {
+  const workspaceRoot = makeRoot();
+  const targetPath = path.join(workspaceRoot, "notes.txt");
+  fs.writeFileSync(targetPath, "hello", "utf8");
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("custom_write" as unknown as ToolKind, { path: targetPath }),
+      mode: "write",
+      workspaceRoot,
+    }),
+    { allowed: true },
+  );
+  // No path at all remains allowed in write mode; there is nothing to confine.
+  assert.deepEqual(
+    await decidePermission({
+      request: request("custom_write" as unknown as ToolKind, { note: "no path here" }),
+      mode: "write",
+      workspaceRoot,
+    }),
+    { allowed: true },
+  );
+});
