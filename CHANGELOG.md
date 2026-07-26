@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/aubwang/consult/compare/v0.9.2...v0.10.0) (2026-07-26)
+
+
+### Features
+
+* support Node 22.18 and bound dispose waits ([#39](https://github.com/aubwang/consult/issues/39)) ([66ca485](https://github.com/aubwang/consult/commit/66ca485b0d6431896e05472cf021c3409a200ad5))
+
 ## [0.9.2](https://github.com/aubwang/consult/compare/v0.9.1...v0.9.2) (2026-07-26)
 
 
