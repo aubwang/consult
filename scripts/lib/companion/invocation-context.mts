@@ -12,6 +12,12 @@ import type { CliResult } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
 import { workspaceOverrideErrorResult } from "./workspace-override-errors.mts";
 
+// Selection failures are the first wall a new user hits, so the error names the
+// commands that fix it instead of only listing what is installed.
+const SET_DEFAULT_HINT =
+  "Set a default with 'consult agents --set <profile>' " +
+  "(add --host <host> to scope it) or pass --agent <profile>.";
+
 export interface WorkspaceOverride {
   profile?: string;
 }
@@ -123,7 +129,7 @@ export function selectProfile({
       error:
         available.length === 0
           ? "No profile configured (no profiles configured; run 'consult setup')"
-          : `No profile selected. Available profiles: ${available.join(", ")}`,
+          : `No profile selected. Available profiles: ${available.join(", ")}. ${SET_DEFAULT_HINT}`,
     };
   }
   const profileEntry = profiles.profiles?.[profile];

@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 
 import { boolFlag, invalidBooleanFlagValueError, parseArgs } from "./lib/args.mts";
 import type { ParsedArgs } from "./lib/args.mts";
+import { commandUsage, helpRequested } from "./lib/companion/command-help.mts";
 import type { CliResult } from "./lib/companion/job-record-errors.mts";
 import * as agents from "./lib/companion/agents.mts";
 import * as brokers from "./lib/companion/brokers.mts";
@@ -48,7 +49,7 @@ opencode Profile.
 
 Commands:
   setup      Install or verify Profiles.
-  agents     List Profiles or set defaults.
+  agents     List Profiles or set the default Profile.
   delegate   Send one self-contained prompt turn to a Profile.
   review     Run a pinned, read-only Git review.
   doctor     Check Profile and Job Authority readiness.
@@ -61,8 +62,21 @@ Commands:
   brokers    Inspect or clean Broker state.
   help       Show concise help.
 
+Profile selection:
+  Commands pick a Profile in this order: --agent <profile> on the command, the
+  default recorded for the current Host, then the global default. With none of
+  those set, commands report "No profile selected".
+
+  consult agents --set claude --host codex   # default for one Host
+  consult agents --set claude                # global default
+  consult agents --help                      # full selection and default help
+  consult doctor                             # diagnose the current selection
+  consult doctor --agent claude              # diagnose one Profile
+
 Examples:
   consult setup
+  consult agents --set claude
+  consult delegate --read-only -- "review this design"
   consult delegate --agent claude --read-only -- "review this design"
   consult delegate --agent codex --write --isolated -- "implement the fix"
   consult status <job-id> --wait
@@ -263,6 +277,15 @@ export async function dispatch(
       exitCode: 2,
       stdout: "",
       stderr: `unknown subcommand: ${subcommand}\n\n${summaryUsage}`,
+    };
+  }
+  // --help never reaches a handler, so a command that would otherwise reject it
+  // as an unsupported flag still answers with usage.
+  if (helpRequested(parsedArgs?.flags)) {
+    return {
+      exitCode: 0,
+      stdout: commandUsage(subcommand) ?? summaryUsage,
+      stderr: "",
     };
   }
   try {
