@@ -21,6 +21,32 @@ can be configured through Consult's generic Profile configuration.
 The Claude Profile is supported, but Consult does not require or ship a Claude
 Code plugin. Gemini and GitHub Copilot are not supported Profiles.
 
+### Selecting a Profile
+
+Every Profile-bearing command resolves one Profile in this order:
+
+1. Explicit `--agent <profile>` (alias `--profile`) on the command itself.
+2. The default recorded for the current Host identity.
+3. The global default.
+
+When none of those resolve, the command reports
+`No profile selected. Available profiles: ...` and exits without creating a Job.
+`consult agents` lists the configured Profiles with their defaults and records
+new ones:
+
+```sh
+consult agents                            # Profiles, defaults, and hosts
+consult agents --set claude --host codex  # default for the codex Host
+consult agents --set claude               # global default
+consult agents --help                     # selection and default help
+```
+
+Host identity resolves from explicit `--host`, Consult environment values, then
+detected `OPENCODE_SESSION_ID` / `OPENCODE_RUN_ID` or `CODEX_THREAD_ID`, and
+falls back to `terminal`. `consult doctor` prints the resolved `host`,
+`default`, `hostDefault`, and `selected` Profile, and `consult doctor --agent
+<profile>` checks one Profile without changing any default.
+
 ## Cold delegation
 
 A delegate does not receive the Host's current conversation. Everything after
