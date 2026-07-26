@@ -80,6 +80,16 @@ test("selectProfile preserves error wording", () => {
     }).error,
     "Unknown profile 'missing'. Available profiles: codex",
   );
+  assert.equal(
+    selectProfile({
+      args: { flags: {} },
+      profiles: { default: null, profiles: { codex: {}, claude: {} } } as never,
+      override: null,
+      host: "codex",
+    }).error,
+    "No profile selected. Available profiles: codex, claude. Set a default with " +
+      "'consult agents --set <profile>' (add --host <host> to scope it) or pass --agent <profile>.",
+  );
 });
 
 test("resolveInvocationContext returns workspace, host identity, profiles, override, and selection", async () => {

@@ -102,6 +102,40 @@ test("dispatch prints the operational contract with help --reference", async () 
   assert.equal(result.stdout.includes("Host-specific"), false);
 });
 
+test("help documents profile selection and how to set defaults", async () => {
+  const result = await dispatch("help", { positional: [], flags: {} });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /Profile selection:/u);
+  assert.match(result.stdout, /consult agents --set claude --host codex/u);
+  assert.match(result.stdout, /consult agents --set claude\b/u);
+  assert.match(result.stdout, /consult agents --help/u);
+  assert.match(result.stdout, /consult doctor --agent claude/u);
+  assert.match(result.stdout, /No profile selected/u);
+  assert.match(result.stdout, /consult delegate --read-only -- "review this design"/u);
+});
+
+test("dispatch prints command help for agents --help instead of listing profiles", async () => {
+  const result = await dispatch("agents", { positional: [], flags: { help: "" } });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /consult agents --set <profile> \[--host <host>\]/u);
+  assert.match(result.stdout, /Profile selection order:/u);
+  assert.match(result.stdout, /Explicit --agent <profile>/u);
+  assert.match(result.stdout, /consult doctor --agent claude/u);
+  assert.doesNotMatch(result.stdout, /registryId/u);
+});
+
+test("dispatch answers --help for commands without command-specific usage", async () => {
+  const result = await dispatch("doctor", { positional: [], flags: { help: "" } });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /Usage:/u);
+  assert.match(result.stdout, /Profile selection:/u);
+});
+
 test("dispatch prints help for help aliases", async () => {
   for (const subcommand of [undefined, "--help", "-h"]) {
     const result = await dispatch(subcommand, { positional: [], flags: {} });
