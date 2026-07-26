@@ -434,6 +434,15 @@ trusted root Claude `delegate` or `review` automatically tries one Host refresh
 and reruns exact preflight; Doctor and nested Jobs remain diagnostic-only.
 Consult never retries with ambient inheritance automatically.
 
+If preflight, `doctor`, or `setup --install` fails with
+`process target remained alive after SIGKILL`, the Profile's process group
+outlived the teardown grace rather than refusing to die. A Profile group is
+several processes — an ACP shim plus the vendored agent binary and its
+children — and a loaded or containerized host can take a second or more to
+reap all of them. Raise the ceiling with `CONSULT_FORCE_KILL_GRACE_MS`
+(milliseconds, default `5000`); teardown returns as soon as the group is gone,
+so a larger value costs nothing when the host is healthy.
+
 ## Optional agent skills
 
 The repository ships a generic `$consult` skill and convenience skills for

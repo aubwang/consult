@@ -6,8 +6,11 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 
 import {
+  DEFAULT_FORCE_KILL_GRACE_MS,
+  FORCE_KILL_GRACE_ENV,
   pidIsAlive,
   processGroupIsAlive,
+  resolveForceKillGraceMs,
   terminateProcessGroup,
   terminateProcessTree,
   waitForTargetExit,
@@ -96,6 +99,92 @@ test("waitForTargetExit rejects when SIGKILL does not terminate the target", asy
   assert.equal(forceKillCalls, 1);
   assert.equal(now, 150);
 });
+
+test("waitForTargetExit waits the default force-kill grace before rejecting", async (t) => {
+  withForceKillGraceEnv(t, undefined);
+  let now = 0;
+
+  await assert.rejects(
+    waitForTargetExit(() => true, () => {}, 50, {
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+    }),
+    /process target remained alive after SIGKILL/u,
+  );
+  assert.equal(now, 50 + DEFAULT_FORCE_KILL_GRACE_MS);
+});
+
+test("waitForTargetExit honours the force-kill grace environment override", async (t) => {
+  withForceKillGraceEnv(t, "150");
+  let now = 0;
+
+  await assert.rejects(
+    waitForTargetExit(() => true, () => {}, 50, {
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+    }),
+    /process target remained alive after SIGKILL/u,
+  );
+  assert.equal(now, 200);
+});
+
+test("an injected force-kill grace still wins over the environment", async (t) => {
+  withForceKillGraceEnv(t, "9000");
+  let now = 0;
+
+  await assert.rejects(
+    waitForTargetExit(() => true, () => {}, 50, {
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      forceKillGraceMs: 100,
+    }),
+    /process target remained alive after SIGKILL/u,
+  );
+  assert.equal(now, 150);
+});
+
+test("resolveForceKillGraceMs defaults, overrides, and rejects unusable values", () => {
+  assert.equal(resolveForceKillGraceMs(undefined, undefined), DEFAULT_FORCE_KILL_GRACE_MS);
+  assert.equal(resolveForceKillGraceMs(undefined, "250"), 250);
+  assert.equal(resolveForceKillGraceMs(100, "250"), 100);
+  assert.equal(resolveForceKillGraceMs(undefined, "0"), 0);
+  for (const unset of ["", "   "]) {
+    assert.equal(
+      resolveForceKillGraceMs(undefined, unset),
+      DEFAULT_FORCE_KILL_GRACE_MS,
+      `expected ${JSON.stringify(unset)} to read as unset`,
+    );
+  }
+  for (const unusable of ["soon", "-1", "NaN", "Infinity"]) {
+    assert.throws(
+      () => resolveForceKillGraceMs(undefined, unusable),
+      new RegExp(`invalid ${FORCE_KILL_GRACE_ENV}`, "u"),
+      `expected ${JSON.stringify(unusable)} to be rejected`,
+    );
+  }
+});
+
+function withForceKillGraceEnv(t: TestContext, value: string | undefined): void {
+  const original = process.env[FORCE_KILL_GRACE_ENV];
+  if (value === undefined) {
+    delete process.env[FORCE_KILL_GRACE_ENV];
+  } else {
+    process.env[FORCE_KILL_GRACE_ENV] = value;
+  }
+  t.after(() => {
+    if (original === undefined) {
+      delete process.env[FORCE_KILL_GRACE_ENV];
+    } else {
+      process.env[FORCE_KILL_GRACE_ENV] = original;
+    }
+  });
+}
 
 async function spawnNodeChild(
   t: TestContext,
