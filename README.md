@@ -8,7 +8,7 @@ Claude Code → Codex, Codex → Claude Code, opencode → either. Any direction
 
 [![npm](https://img.shields.io/npm/v/%40aubwang%2Fconsult?color=cb3837&logo=npm)](https://www.npmjs.com/package/@aubwang/consult)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![node](https://img.shields.io/badge/node-%E2%89%A524-339933?logo=node.js&logoColor=white)](docs/INSTALL.md)
+[![node](https://img.shields.io/badge/node-%E2%89%A522.18-339933?logo=node.js&logoColor=white)](docs/INSTALL.md)
 
 [Install](#quick-start) · [Why](#why-consult) · [How it works](#how-it-works) · [Docs](docs/USAGE.md)
 
@@ -120,7 +120,7 @@ cost is the price of a real context boundary, and it's the whole point.
 
 ## Quick start
 
-Requires Node.js 24+ on Linux or Apple Silicon macOS
+Requires Node.js 22.18+ on Linux or Apple Silicon macOS
 ([details](docs/INSTALL.md)).
 
 ```sh
