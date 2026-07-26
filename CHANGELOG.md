@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/aubwang/consult/compare/v0.9.1...v0.9.2) (2026-07-26)
+
+
+### Bug Fixes
+
+* widen and configure the process teardown grace ([#36](https://github.com/aubwang/consult/issues/36)) ([01a1e41](https://github.com/aubwang/consult/commit/01a1e4118b1167e9c457b7403f2888249c07b4b9))
+
 ## [0.9.1](https://github.com/aubwang/consult/compare/v0.9.0...v0.9.1) (2026-07-26)
 
 
