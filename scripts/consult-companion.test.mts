@@ -162,6 +162,7 @@ test("help documents the extended exit codes, lineage env, and json coverage", a
   assert.match(result.stdout, /ambient Host\s+environment without confined credential translation/);
   assert.match(result.stdout, /one no-prompt Host OAuth refresh attempt/);
   assert.match(result.stdout, /Nested Jobs and\s+diagnostic commands never mutate Host credentials/);
+  assert.match(result.stdout, /CONSULT_FORCE_KILL_GRACE_MS \(default 5000\)/);
   assert.doesNotMatch(result.stdout, /latest finalized delegate Session/);
 });
 
