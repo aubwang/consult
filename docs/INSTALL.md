@@ -1,19 +1,19 @@
 # Install Consult
 
-Consult uses Node.js 24 or newer at runtime. The project uses Bun for dependency
-management when developing from a checkout, but users do not need Bun to run the
-published package.
+Consult uses Node.js 22.18 or newer at runtime. The project uses Bun for
+dependency management when developing from a checkout, but users do not need Bun
+to run the published package.
 
-If `node --version` is older than 24, update it with the version manager you
+If `node --version` is older than 22.18, update it with the version manager you
 already use. For example:
 
 ```sh
 # mise
-mise use --global node@24
+mise use --global node@22
 
 # or nvm
-nvm install 24
-nvm alias default 24
+nvm install 22
+nvm alias default 22
 ```
 
 Open a new shell and confirm `node --version` before installing Consult.
@@ -109,7 +109,7 @@ consult setup
 consult doctor --agent codex
 ```
 
-`node --version` must report version 24 or newer. `consult setup` lists the
+`node --version` must report version 22.18 or newer. `consult setup` lists the
 available Profiles and whether their agent executables are installed.
 
 Claude background subagents require the maintained ACP adapter 0.59.0 or

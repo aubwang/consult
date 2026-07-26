@@ -27,7 +27,10 @@ import type {
 
 import { buildAgentLaunch } from "./process-sandbox.mts";
 import type { AgentLaunch, AgentLaunchOptions } from "./process-sandbox.mts";
-import { terminateProcessGroup as defaultTerminateProcessGroup } from "./process.mts";
+import {
+  resolveForceKillGraceMs,
+  terminateProcessGroup as defaultTerminateProcessGroup,
+} from "./process.mts";
 
 export const MAX_AGENT_STDERR_BYTES = 64 * 1024;
 
@@ -421,7 +424,7 @@ export async function startAgent(
             agentChild.kill("SIGKILL");
           }
         }
-        await onceExit(agentChild);
+        await waitForConfirmedExit(agentChild);
         processTerminated = true;
         if (options?.archiveSessionState) {
           if (!lease.archiveSessionState) {
@@ -576,10 +579,31 @@ async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
-  await Promise.race([
-    onceExit(child),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
-  ]);
+  // The loser of the race has to be cleared, or a CLI that disposed promptly
+  // still waits out the whole timeout before its event loop can drain.
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      onceExit(child),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// terminateProcessGroup proves a group is gone before returning, but the
+// no-group branch below only fires SIGKILL and hopes, and an injected
+// terminator can report success for a child that never exits. Waiting on the
+// exit event alone therefore hangs forever instead of failing; bound it with
+// the same operator-tunable grace the group path uses.
+async function waitForConfirmedExit(child: ChildProcess): Promise<void> {
+  await waitForExit(child, resolveForceKillGraceMs());
+  if (child.exitCode === null && child.signalCode === null) {
+    throw new Error("process target remained alive after SIGKILL");
+  }
 }
 
 function delay(ms: number): Promise<void> {

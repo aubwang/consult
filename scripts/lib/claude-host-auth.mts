@@ -126,11 +126,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
     return await Promise.race([
       promise,
       new Promise<never>((_resolve, reject) => {
+        // Deliberately not unref'd: an unref'd timer only fires while something
+        // else holds the event loop open, so the timeout stops being a reliable
+        // guard exactly when the refresh has gone quiet. The finally below
+        // clears it, so holding the loop costs nothing.
         timeout = setTimeout(
           () => reject(new Error("automatic Claude Host credential refresh timed out")),
           timeoutMs,
         );
-        timeout.unref?.();
       }),
     ]);
   } finally {

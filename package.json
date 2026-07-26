@@ -29,7 +29,7 @@
   },
   "packageManager": "bun@1.3.14",
   "engines": {
-    "node": ">=24"
+    "node": ">=22.18.0"
   },
   "bin": {
     "consult": "bin/consult"
@@ -47,11 +47,11 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.21.0",
-    "@anthropic-ai/sandbox-runtime": "0.0.64"
+    "@anthropic-ai/sandbox-runtime": "0.0.64",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
-    "typescript": "^6.0.3",
-    "zod": "4.4.3"
+    "typescript": "^6.0.3"
   }
 }

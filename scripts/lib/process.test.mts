@@ -241,5 +241,14 @@ async function waitForChildExit(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
-  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  // spawnNodeChild unrefs its children so a leaked one cannot wedge the test
+  // process, but while we are deliberately waiting for this exit the handle
+  // has to hold the loop open: otherwise the loop drains with this promise
+  // pending and the test runner cancels the test instead of running it.
+  child.ref();
+  try {
+    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  } finally {
+    child.unref();
+  }
 }
