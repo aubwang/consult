@@ -3,6 +3,32 @@ export interface TerminateProcessTreeOptions {
   timeoutMs?: number;
 }
 
+// A SIGKILLed process group is not gone until every member has been reaped, and
+// real Profile groups are not one process: an ACP shim plus a vendored agent
+// binary and its children clear in roughly a second on a loaded host, against
+// the 25ms poll below. The previous one-second grace sat on top of that
+// observed latency, so teardown failed or succeeded by coin flip. Prefer a
+// generous ceiling: the poll returns as soon as the target is gone, so the
+// larger value costs nothing until something is genuinely stuck.
+export const DEFAULT_FORCE_KILL_GRACE_MS = 5000;
+
+export const FORCE_KILL_GRACE_ENV = "CONSULT_FORCE_KILL_GRACE_MS";
+
+export function resolveForceKillGraceMs(
+  optionValue?: number,
+  envValue: string | undefined = process.env[FORCE_KILL_GRACE_ENV],
+): number {
+  // An exported-but-empty variable means "unset", not "no grace at all": Number("")
+  // is 0, which would restore exactly the impatience this default exists to avoid.
+  const configured = envValue?.trim() ? envValue : undefined;
+  const raw = optionValue ?? configured ?? DEFAULT_FORCE_KILL_GRACE_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`invalid ${FORCE_KILL_GRACE_ENV}: ${raw}`);
+  }
+  return parsed;
+}
+
 export function pidIsAlive(pid: number): boolean {
   return processTargetIsAlive(pid);
 }
@@ -85,7 +111,7 @@ export async function waitForTargetExit(
     }
     await sleep(25);
   }
-  const killDeadline = now() + (dependencies.forceKillGraceMs ?? 1000);
+  const killDeadline = now() + resolveForceKillGraceMs(dependencies.forceKillGraceMs);
   while (isAlive() && now() < killDeadline) {
     await sleep(25);
   }

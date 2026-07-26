@@ -150,7 +150,10 @@ require explicit --sandbox inherit. Run consult doctor --agent <profile> before
 delegation to check the exact Profile
 launch in the current Host context. Doctor briefly stages the selected
 credential and initializes/disposes the Profile, but sends no model prompt. A
-failed preflight creates no Job. CONSULT_OPENAI_API_KEY,
+failed preflight creates no Job. Profile teardown waits
+CONSULT_FORCE_KILL_GRACE_MS (default 5000) for a signalled Profile process
+group to disappear before reporting that it remained alive; raise it on hosts
+that are slow to reap agent process groups. CONSULT_OPENAI_API_KEY,
 CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN explicitly override the
 corresponding Profile file; ambient vendor variables do not. Consult never
 retries with ambient credentials or inheritance. A trusted root Claude
