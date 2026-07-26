@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/aubwang/consult/compare/v0.9.0...v0.9.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* make Profile selection and defaults discoverable in CLI help ([#34](https://github.com/aubwang/consult/issues/34)) ([8a4e451](https://github.com/aubwang/consult/commit/8a4e451fb3a6a32fdfe11efaf0fc219bf7cbf0bc))
+
 ## [0.9.0](https://github.com/aubwang/consult/compare/v0.8.0...v0.9.0) (2026-07-25)
 
 
