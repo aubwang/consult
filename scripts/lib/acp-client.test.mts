@@ -223,6 +223,39 @@ test("failed process-group termination retains the launch lease", async () => {
   }
 });
 
+test("dispose fails instead of hanging when termination is reported but never happens", async (t) => {
+  const original = process.env.CONSULT_FORCE_KILL_GRACE_MS;
+  process.env.CONSULT_FORCE_KILL_GRACE_MS = "150";
+  t.after(() => {
+    if (original === undefined) {
+      delete process.env.CONSULT_FORCE_KILL_GRACE_MS;
+    } else {
+      process.env.CONSULT_FORCE_KILL_GRACE_MS = original;
+    }
+  });
+  const agent = await startAgent({
+    binary: process.execPath,
+    args: [fixturePath, "stubborn"],
+    cwd: path.dirname(fixturePath),
+    clientHandlers: {},
+  }, {
+    // Reports success without terminating anything, standing in for the
+    // no-group branch and for any runtime backend that cannot prove death.
+    terminateProcessGroup: async () => {},
+  });
+
+  try {
+    await assert.rejects(
+      agent.dispose(),
+      /process target remained alive after SIGKILL/u,
+    );
+  } finally {
+    if (agent.agentChild.pid !== undefined) {
+      await terminateProcessGroup(agent.agentChild.pid, { timeoutMs: 500 }).catch(() => {});
+    }
+  }
+});
+
 test("dispose escalates to SIGKILL when the agent ignores SIGTERM", async () => {
   const agent = await startAgent({
     binary: process.execPath,

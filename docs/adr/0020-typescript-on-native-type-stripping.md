@@ -1,6 +1,7 @@
 # TypeScript on native Node type stripping
 
-Status: Accepted
+Status: Accepted; the Node floor consequence superseded by
+[0033 Node 22.18 runtime floor](0033-node-22-18-runtime-floor.md)
 
 Consult's source is strict TypeScript in `.mts` files executed directly by
 Node.js native type stripping — there is no build step. `tsconfig.json`
@@ -19,10 +20,11 @@ sockets, and signal handling are verified against Node semantics.
 
 Consequences:
 
-- `engines.node` rises from `>= 22` to `>= 24`, superseding the floor noted in
-  ADR 0019; type stripping is default-on only from Node 23.6.
-- The Claude Code session lifecycle hook (`session-lifecycle-hook.mts`) now
-  requires Node >= 24 on Host machines.
+- `engines.node` rose from `>= 22` to `>= 24` on the understanding that type
+  stripping was default-on only from Node 23.6. It was backported to 22.18.0,
+  and ADR 0033 returns the floor to `>= 22.18.0`.
+- The Claude Code session lifecycle hook (`session-lifecycle-hook.mts`) requires
+  a Host Node that strips types, now 22.18 or newer.
 - Only erasable TypeScript syntax is allowed: no enums, namespaces, parameter
   properties, or decorators.
 - Runtime validation (`isRecord` checks etc.) remains authoritative for data

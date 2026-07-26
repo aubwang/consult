@@ -74,7 +74,7 @@ consult/
 ```
 
 When run from a checkout, `bin/consult` loads erasable `.mts` source through
-Node 24 native type stripping. Installed packages load compiled `.mjs` from
+Node native type stripping. Installed packages load compiled `.mjs` from
 `dist/`; Node intentionally refuses to strip TypeScript in `node_modules`.
 Bun remains the repository package manager and lockfile owner.
 
@@ -499,7 +499,7 @@ authenticated OS boundary.
 ## Packaging and Verification
 
 Development uses Bun for package installation and scripts, while production
-execution uses Node 24 or newer:
+execution uses Node 22.18 or newer:
 
 ```sh
 bun run typecheck

@@ -1,10 +1,11 @@
 # Bun manages packages, Node remains the runtime
 
-Status: Accepted
+Status: Accepted; the Node floor superseded by
+[0033 Node 22.18 runtime floor](0033-node-22-18-runtime-floor.md)
 
 Consult uses Bun as its package manager and script runner: `bun install`
 maintains the tracked `bun.lock`, and `bun link` exposes the local `consult`
-binary from a checkout. Node.js (>= 24, declared in `engines`) remains the
+binary from a checkout. Node.js (>= 22.18, declared in `engines`) remains the
 execution runtime and the test runner: `bin/consult`, Brokers, and the test
 suite all run under `node`, and the suite is `node --test`.
 
@@ -23,8 +24,8 @@ Consequences:
   `bun test`.
 - CI installs dependencies with Bun but executes the suite under the Node
   versions in the support matrix.
-- The package requires Node >= 24 so checkout execution can use stable native
-  erasable-TypeScript stripping.
+- The package requires Node >= 22.18 so checkout execution can use stable
+  native erasable-TypeScript stripping.
 - Checkout execution loads `.mts` directly. Published packages contain
   compiled `.mjs`, because Node refuses to strip TypeScript under
   `node_modules`; `bun run pack:check` verifies both npm and Bun installs.
