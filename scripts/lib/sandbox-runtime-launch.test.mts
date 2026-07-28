@@ -687,6 +687,84 @@ test("confined preflight reports stable nested sandbox diagnostics without relay
   }
 });
 
+test("unexplained confined preflight failures persist Profile stderr instead of discarding it", async (t) => {
+  const fixture = await makeFixture(t);
+  const previousDataDir = process.env.CONSULT_DATA_DIR;
+  const dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-diagnostics-"));
+  process.env.CONSULT_DATA_DIR = dataDir;
+  t.after(async () => {
+    if (previousDataDir === undefined) delete process.env.CONSULT_DATA_DIR;
+    else process.env.CONSULT_DATA_DIR = previousDataDir;
+    await fsp.rm(dataDir, { recursive: true, force: true });
+  });
+
+  const error = Object.assign(new Error("Agent exited before initialize completed"), {
+    stderr: "codex-acp: unrecognized protocol version\nsecret-profile-output",
+  });
+  const result = await probeConfinedSandboxRuntime({
+    authority: authority(),
+    workspaceRoot: fixture.workspace,
+    profile: "codex",
+    profileRegistryId: "codex",
+    profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+  }, {
+    platform: "linux",
+    now: () => 1_700_000_000_000,
+    startAgent: async () => {
+      throw error;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    // The Host-facing message stays free of untrusted Profile output.
+    assert.doesNotMatch(result.diagnostic.message, /secret-profile-output/u);
+    const logPath = result.diagnostic.details?.profileStderrLog;
+    assert.equal(typeof logPath, "string");
+    assert.match(result.diagnostic.remediation, /read .*preflight-codex/u);
+    const contents = await fsp.readFile(String(logPath), "utf8");
+    assert.match(contents, /unrecognized protocol version/u);
+    assert.match(contents, /secret-profile-output/u);
+    assert.equal((await fsp.stat(String(logPath))).mode & 0o777, 0o600);
+  }
+});
+
+test("explained nested sandbox failures do not write a stderr diagnostic file", async (t) => {
+  const fixture = await makeFixture(t);
+  const previousDataDir = process.env.CONSULT_DATA_DIR;
+  const dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-diagnostics-"));
+  process.env.CONSULT_DATA_DIR = dataDir;
+  t.after(async () => {
+    if (previousDataDir === undefined) delete process.env.CONSULT_DATA_DIR;
+    else process.env.CONSULT_DATA_DIR = previousDataDir;
+    await fsp.rm(dataDir, { recursive: true, force: true });
+  });
+
+  const result = await probeConfinedSandboxRuntime({
+    authority: authority(),
+    workspaceRoot: fixture.workspace,
+    profile: "codex",
+    profileRegistryId: "codex",
+    profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+  }, {
+    platform: "linux",
+    startAgent: async () => {
+      throw Object.assign(new Error("Agent exited before initialize completed"), {
+        stderr: "bwrap: Creating new namespace failed: Operation not permitted",
+      });
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.details?.profileStderrLog, undefined);
+  }
+  assert.deepEqual(
+    await fsp.readdir(path.join(dataDir, "diagnostics")).catch(() => []),
+    [],
+  );
+});
+
 test("dependency failures preserve actionable messages", async (t) => {
   const fixture = await makeFixture(t);
   const harness = fakeRuntime({

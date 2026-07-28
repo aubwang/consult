@@ -11,7 +11,8 @@ import { startAgent } from "./acp-client.mts";
 import type { AgentLaunchLease } from "./acp-client.mts";
 import { startEgressProxy } from "./egress-proxy.mts";
 import type { EgressProxy, EgressProxyOptions, EgressUsage } from "./egress-proxy.mts";
-import { jobArtifactsDir } from "./broker-endpoint.mts";
+import { dataDir, jobArtifactsDir } from "./broker-endpoint.mts";
+import { safeSegment } from "./path-segments.mts";
 import type { JobAuthority } from "./job-authority.mts";
 import type {
   JobAuthorityPreflightInput,
@@ -622,13 +623,23 @@ export async function probeConfinedSandboxRuntime(
         },
       };
     }
+    const { message, explained } = preflightFailureMessage(failure);
+    const stderrLog = explained
+      ? null
+      : await persistProfileStderr(
+          profileRegistryId,
+          profileStderrTail(failure),
+          (deps.now ?? Date.now)(),
+        );
     return {
       ok: false,
       diagnostic: {
         code: "AUTHORITY_PREFLIGHT_FAILED",
-        message: `confined authority preflight failed: ${preflightFailureMessage(failure)}`,
-        remediation:
-          "Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created.",
+        message: `confined authority preflight failed: ${message}`,
+        remediation: stderrLog
+          ? `Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created. The Profile wrote output before exiting — read ${stderrLog} for the underlying reason, and delete it once resolved because Profile output can contain credentials.`
+          : "Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created.",
+        ...(stderrLog ? { details: { profileStderrLog: stderrLog } } : {}),
       },
     };
   }
@@ -1359,27 +1370,78 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function preflightFailureMessage(error: unknown): string {
-  const stderr =
-    typeof error === "object" &&
+export function profileStderrTail(error: unknown): string {
+  return typeof error === "object" &&
     error !== null &&
     "stderr" in error &&
     typeof error.stderr === "string"
-      ? error.stderr
-      : "";
+    ? error.stderr
+    : "";
+}
+
+/**
+ * Confined Profile stderr is untrusted output that can carry credentials, so it
+ * never reaches the Host-facing diagnostic message. Recognized launch failures
+ * are translated into stable Consult-authored sentences; anything else keeps the
+ * generic message and relies on {@link persistProfileStderr} to leave the tail
+ * somewhere the operator can read deliberately (ADR 0029).
+ */
+function preflightFailureMessage(error: unknown): {
+  message: string;
+  explained: boolean;
+} {
+  const stderr = profileStderrTail(error);
   if (
     /sandbox-exec:[^\r\n]*(?:sandbox_apply|operation not permitted)/iu.test(stderr)
   ) {
-    return "nested macOS sandbox initialization failed: sandbox-exec was denied by the parent sandbox";
+    return {
+      message:
+        "nested macOS sandbox initialization failed: sandbox-exec was denied by the parent sandbox",
+      explained: true,
+    };
   }
   if (
     /bwrap:[^\r\n]*(?:namespace[^\r\n]*operation not permitted|no permissions to create new namespace)/iu.test(
       stderr,
     )
   ) {
-    return "nested Linux sandbox initialization failed: bwrap namespace creation was denied by the parent sandbox";
+    return {
+      message:
+        "nested Linux sandbox initialization failed: bwrap namespace creation was denied by the parent sandbox",
+      explained: true,
+    };
   }
-  return errorMessage(error);
+  return { message: errorMessage(error), explained: false };
+}
+
+/**
+ * Write the confined Profile's stderr tail to a private Host-side file so a
+ * preflight failure that Consult cannot itself explain is still diagnosable. No
+ * Job exists yet at preflight, so there is no Job log to carry it. Returns the
+ * path, or `null` when nothing was captured or the write failed — persisting a
+ * diagnostic must never mask the failure it describes.
+ */
+async function persistProfileStderr(
+  profileRegistryId: string,
+  stderr: string,
+  now: number,
+): Promise<string | null> {
+  if (stderr.trim() === "") return null;
+  try {
+    const directory = path.join(dataDir(), "diagnostics");
+    await privateDirectory(directory);
+    const file = path.join(
+      directory,
+      `preflight-${safeSegment(profileRegistryId)}-${now}-${process.pid}.log`,
+    );
+    await fsp.writeFile(file, stderr.endsWith("\n") ? stderr : `${stderr}\n`, {
+      mode: 0o600,
+    });
+    await fsp.chmod(file, 0o600);
+    return file;
+  } catch {
+    return null;
+  }
 }
 
 class OauthExpiredError extends Error {
