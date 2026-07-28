@@ -30,10 +30,11 @@ Pick the strongest available mechanism:
    `consult review`; grant it deliberately, and expect the chain to use both
    depth levels (manager at one, its review at two).
 
-Hand the manager: the review target (`--base <ref>` for the current change, or
-`--job <id>` for a completed isolated implementation Job), the verification
-commands the project uses, and the remaining plan (file path or inline list) so
-downstream impact is judged against real upcoming work, not speculation.
+Hand the manager the review target (`--base <ref>` for the current change, or
+`--job <id>` for a completed isolated implementation Job), then brief it as you
+would any cold delegate. Two blind spots decide the briefing: the manager can
+only respect intent it was told about, and can only judge downstream impact
+against work it can see. What that means concretely is the Host's call.
 
 Review applied work. If the implementation was an isolated write Job whose
 patch is not yet applied, either apply it first or review via `--job <id>`;
@@ -55,8 +56,8 @@ The resolution manager, in its own context:
      decision. Do not resolve these; carry the reviewer's claim upward.
 3. **Fix** with the smallest change that resolves each finding. No
    opportunistic refactors, no scope expansion.
-4. **Verify** by running the project's stated checks. A fix that cannot be
-   verified is reported as such, not claimed as done.
+4. **Verify** by running the project's checks. A fix that cannot be verified
+   is reported as such, not claimed as done.
 5. **Optionally re-review once** when fixes were substantial. One round
    maximum; never loop reviewer and fixer.
 6. **Report** using the contract below and nothing else. The transcript,

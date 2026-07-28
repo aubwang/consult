@@ -187,7 +187,6 @@ write a cold prompt, and which authority to grant:
 | `ask-claude` | Ask Claude for a review, explanation, or second opinion. |
 | `ask-codex` | Delegate focused work or review to Codex. |
 | `ask-opencode` | Delegate through a configured opencode provider. |
-| `ask-all` | Fan one question out to every configured Profile and compare. |
 | `resolve-review` | Run the whole review-and-fix loop outside the main thread. |
 
 ```sh
