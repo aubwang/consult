@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/aubwang/consult/compare/v0.10.1...v0.11.0) (2026-07-28)
+
+
+### Features
+
+* add resolve-review and ask-all skills ([#43](https://github.com/aubwang/consult/issues/43)) ([b565a42](https://github.com/aubwang/consult/commit/b565a42b4863fb7579990cf7f18b7e53e0957a84))
+
+
+### Bug Fixes
+
+* bound manager delegation and make the reviewer an explicit choice ([82287b4](https://github.com/aubwang/consult/commit/82287b457800e521150c8e3c368bb8c1112d5d32))
+* drop the ask-all skill and trim resolve-review briefing ([d5ce88f](https://github.com/aubwang/consult/commit/d5ce88fbe1bca13078e88c83683af9c90c7beb2d))
+
 ## [0.10.1](https://github.com/aubwang/consult/compare/v0.10.0...v0.10.1) (2026-07-28)
 
 
