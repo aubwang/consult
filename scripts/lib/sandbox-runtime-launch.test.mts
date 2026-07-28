@@ -21,6 +21,7 @@ import {
   isMacosSystemRuntimePath,
   linuxExecutableReadScopes,
   macosExecutableReadScopes,
+  nodePackageDependencyReadScopes,
   parseLinuxLddPaths,
   parseMachOOtoolLoadCommands,
   probeConfinedSandboxRuntime,
@@ -685,6 +686,93 @@ test("confined preflight reports stable nested sandbox diagnostics without relay
       assert.doesNotMatch(result.diagnostic.message, /secret-profile-output/u);
     }
   }
+});
+
+async function writePackage(
+  dir: string,
+  manifest: Record<string, unknown>,
+): Promise<string> {
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, "package.json"), JSON.stringify(manifest));
+  return dir;
+}
+
+test("confined read scopes cover dependencies hoisted beside the Profile agent", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-hoist-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "lib", "node_modules");
+
+  // The layout a Homebrew or user-level npm prefix produces: the agent's
+  // dependency is hoisted to the shared root rather than nested beneath it.
+  const agent = await writePackage(path.join(modules, "@scope", "agent"), {
+    name: "@scope/agent",
+    dependencies: { "@vendor/cli": "^1.0.0" },
+  });
+  await writePackage(path.join(modules, "@vendor", "cli"), {
+    name: "@vendor/cli",
+    optionalDependencies: {
+      "@vendor/cli-linux-x64": "npm:@vendor/cli@1.0.0-linux-x64",
+      "@vendor/cli-darwin-arm64": "npm:@vendor/cli@1.0.0-darwin-arm64",
+    },
+  });
+  // Only the current platform's package is installed, as npm does.
+  await writePackage(path.join(modules, "@vendor", "cli-linux-x64"), {
+    name: "@vendor/cli-linux-x64",
+  });
+
+  const executable = path.join(agent, "dist", "index.js");
+  await fsp.mkdir(path.dirname(executable), { recursive: true });
+  await fsp.writeFile(executable, "#!/usr/bin/env node\n");
+
+  const scopes = nodePackageDependencyReadScopes(executable, () => {});
+  const real = async (p: string) => await fsp.realpath(p);
+
+  assert.ok(
+    scopes.includes(await real(path.join(modules, "@vendor", "cli"))),
+    "the hoisted dependency the agent resolves at startup must be readable",
+  );
+  assert.ok(
+    scopes.includes(await real(path.join(modules, "@vendor", "cli-linux-x64"))),
+    "the transitive platform package holding the native binary must be readable",
+  );
+  // An optionalDependency npm omitted for another platform is absent, not fatal.
+  assert.ok(!scopes.some((scope) => scope.includes("darwin-arm64")));
+  // Scoping stays bounded to what the agent declares.
+  assert.equal(scopes.length, 2);
+});
+
+test("dependency read scopes terminate on cyclic dependency graphs", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-cycle-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "node_modules");
+
+  const agent = await writePackage(path.join(modules, "agent"), {
+    name: "agent",
+    dependencies: { left: "*" },
+  });
+  await writePackage(path.join(modules, "left"), {
+    name: "left",
+    dependencies: { right: "*" },
+  });
+  await writePackage(path.join(modules, "right"), {
+    name: "right",
+    dependencies: { left: "*", agent: "*" },
+  });
+
+  const executable = path.join(agent, "index.js");
+  await fsp.writeFile(executable, "");
+
+  const scopes = nodePackageDependencyReadScopes(executable, () => {});
+  assert.equal(scopes.length, 2);
+  assert.equal(new Set(scopes).size, 2);
+});
+
+test("a Profile agent outside any package contributes no dependency scopes", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-bare-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "codex-acp");
+  await fsp.writeFile(executable, "");
+  assert.deepEqual(nodePackageDependencyReadScopes(executable, () => {}), []);
 });
 
 test("unexplained confined preflight failures persist Profile stderr instead of discarding it", async (t) => {

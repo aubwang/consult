@@ -397,9 +397,11 @@ export async function acquireConfinedSandboxRuntimeLaunch(
         deps,
       ),
       ...runtimeExecutableReadScopes(resolvedBinary, platform, deps),
-      ...[...runtimeExecutables.values()].flatMap((executable) =>
-        runtimeExecutableReadScopes(executable, platform, deps),
-      ),
+      ...nodePackageDependencyReadScopes(resolvedBinary, deps.warn),
+      ...[...runtimeExecutables.values()].flatMap((executable) => [
+        ...runtimeExecutableReadScopes(executable, platform, deps),
+        ...nodePackageDependencyReadScopes(executable, deps.warn),
+      ]),
     ];
     const readPaths = existingPaths([
       ...(platform === "linux" ? LINUX_READ_PATHS : MACOS_READ_PATHS),
@@ -969,6 +971,113 @@ export function linuxExecutableReadScopes(
   }
   addHomebrewOpenSslDataReadScopes(scopes, inspectedPaths);
   return [...scopes];
+}
+
+/**
+ * Bound on how many dependency packages a single Profile agent may widen the
+ * confined read scope by. Real ACP shims declare a handful; a far larger
+ * closure means the agent is not the thin launcher Consult expects, so stop
+ * and warn rather than quietly mapping an unbounded tree.
+ */
+export const MAX_NODE_DEPENDENCY_READ_SCOPES = 128;
+
+/**
+ * Grant the confined agent the dependency packages it will resolve at startup.
+ *
+ * A Node-script Profile agent reaches its dependencies through the npm layout
+ * around it, and package managers hoist those siblings wherever they like: a
+ * Homebrew or user-level npm prefix puts them next to the agent rather than
+ * inside it. `addExecutableReadScopes` grants only the agent's own package, so
+ * a hoisted dependency is unreadable inside confinement and the agent dies on
+ * `require.resolve` before the ACP handshake ever runs — indistinguishable from
+ * a broken shim. Mirror the agent's own resolver instead, walking the declared
+ * closure so the mapped set stays what the agent actually declares.
+ *
+ * Dependencies that do not resolve are skipped: that is the normal case for the
+ * platform-specific `optionalDependencies` npm omits for other targets.
+ */
+export function nodePackageDependencyReadScopes(
+  executable: string,
+  warn: ((message: string) => void) | undefined = defaultRuntimeWarning,
+): string[] {
+  const entry = owningPackageDirectory(executable);
+  if (!entry) return [];
+
+  const scopes: string[] = [];
+  const visited = new Set<string>([entry]);
+  const queue = [entry];
+  let truncated = false;
+
+  while (queue.length > 0) {
+    const packageDir = queue.shift() as string;
+    for (const name of declaredDependencyNames(packageDir)) {
+      const resolved = resolvePackageDirectory(name, packageDir);
+      if (!resolved || visited.has(resolved)) continue;
+      if (visited.size > MAX_NODE_DEPENDENCY_READ_SCOPES) {
+        truncated = true;
+        break;
+      }
+      visited.add(resolved);
+      scopes.push(resolved);
+      queue.push(resolved);
+    }
+    if (truncated) break;
+  }
+
+  if (truncated) {
+    (warn ?? defaultRuntimeWarning)(
+      `Profile agent ${executable} declares more than ${MAX_NODE_DEPENDENCY_READ_SCOPES} dependency packages; confined read scopes were truncated and the agent may fail to start.`,
+    );
+  }
+  return scopes;
+}
+
+/** Nearest ancestor directory of `executable` that owns a `package.json`. */
+function owningPackageDirectory(executable: string): string | null {
+  let current = path.dirname(executable);
+  for (;;) {
+    if (fs.existsSync(path.join(current, "package.json"))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function declaredDependencyNames(packageDir: string): string[] {
+  let manifest: { dependencies?: unknown; optionalDependencies?: unknown };
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  const names = new Set<string>();
+  for (const field of [manifest.dependencies, manifest.optionalDependencies]) {
+    if (typeof field !== "object" || field === null) continue;
+    for (const name of Object.keys(field as Record<string, unknown>)) names.add(name);
+  }
+  return [...names];
+}
+
+/**
+ * Resolve a dependency to its package directory using Node's `node_modules`
+ * lookup. Deliberately not `require.resolve`, which an `exports` map can refuse
+ * for `package.json` even though the directory is exactly what must be mapped.
+ */
+function resolvePackageDirectory(name: string, fromDir: string): string | null {
+  let current = fromDir;
+  for (;;) {
+    const candidate = path.join(current, "node_modules", name);
+    if (fs.existsSync(path.join(candidate, "package.json"))) {
+      try {
+        return fs.realpathSync(candidate);
+      } catch {
+        return candidate;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
 function runtimeExecutableReadScopes(
