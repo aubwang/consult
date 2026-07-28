@@ -21,6 +21,7 @@ import {
   isMacosSystemRuntimePath,
   linuxExecutableReadScopes,
   macosExecutableReadScopes,
+  nodePackageDependencyReadScopes,
   parseLinuxLddPaths,
   parseMachOOtoolLoadCommands,
   probeConfinedSandboxRuntime,
@@ -685,6 +686,201 @@ test("confined preflight reports stable nested sandbox diagnostics without relay
       assert.doesNotMatch(result.diagnostic.message, /secret-profile-output/u);
     }
   }
+});
+
+async function writePackage(
+  dir: string,
+  manifest: Record<string, unknown>,
+): Promise<string> {
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, "package.json"), JSON.stringify(manifest));
+  return dir;
+}
+
+test("confined read scopes cover dependencies hoisted beside the Profile agent", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-hoist-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "lib", "node_modules");
+
+  // The layout a Homebrew or user-level npm prefix produces: the agent's
+  // dependency is hoisted to the shared root rather than nested beneath it.
+  const agent = await writePackage(path.join(modules, "@scope", "agent"), {
+    name: "@scope/agent",
+    dependencies: { "@vendor/cli": "^1.0.0" },
+  });
+  await writePackage(path.join(modules, "@vendor", "cli"), {
+    name: "@vendor/cli",
+    optionalDependencies: {
+      "@vendor/cli-linux-x64": "npm:@vendor/cli@1.0.0-linux-x64",
+      "@vendor/cli-darwin-arm64": "npm:@vendor/cli@1.0.0-darwin-arm64",
+    },
+  });
+  // Only the current platform's package is installed, as npm does.
+  await writePackage(path.join(modules, "@vendor", "cli-linux-x64"), {
+    name: "@vendor/cli-linux-x64",
+  });
+
+  const executable = path.join(agent, "dist", "index.js");
+  await fsp.mkdir(path.dirname(executable), { recursive: true });
+  await fsp.writeFile(executable, "#!/usr/bin/env node\n");
+
+  const scopes = nodePackageDependencyReadScopes(executable, () => {});
+  const real = async (p: string) => await fsp.realpath(p);
+
+  assert.ok(
+    scopes.includes(await real(path.join(modules, "@vendor", "cli"))),
+    "the hoisted dependency the agent resolves at startup must be readable",
+  );
+  assert.ok(
+    scopes.includes(await real(path.join(modules, "@vendor", "cli-linux-x64"))),
+    "the transitive platform package holding the native binary must be readable",
+  );
+  // An optionalDependency npm omitted for another platform is absent, not fatal.
+  assert.ok(!scopes.some((scope) => scope.includes("darwin-arm64")));
+  // Scoping stays bounded to what the agent declares.
+  assert.equal(scopes.length, 2);
+});
+
+test("dependency read scopes terminate on cyclic dependency graphs", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-cycle-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+  const modules = path.join(root, "node_modules");
+
+  const agent = await writePackage(path.join(modules, "agent"), {
+    name: "agent",
+    dependencies: { left: "*" },
+  });
+  await writePackage(path.join(modules, "left"), {
+    name: "left",
+    dependencies: { right: "*" },
+  });
+  await writePackage(path.join(modules, "right"), {
+    name: "right",
+    dependencies: { left: "*", agent: "*" },
+  });
+
+  const executable = path.join(agent, "index.js");
+  await fsp.writeFile(executable, "");
+
+  const scopes = nodePackageDependencyReadScopes(executable, () => {});
+  assert.equal(scopes.length, 2);
+  assert.equal(new Set(scopes).size, 2);
+});
+
+test("dependency read scopes canonicalize the agent package behind a symlinked prefix", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-symlink-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+
+  // Reproduces the macOS layout on any platform: the agent is reached through a
+  // symlinked prefix (`/var` -> `/private/var` there), so the closure's seed and
+  // its resolved dependencies must canonicalize to the same path.
+  const real = path.join(root, "real");
+  const modules = path.join(real, "node_modules");
+  const agent = await writePackage(path.join(modules, "agent"), {
+    name: "agent",
+    dependencies: { helper: "*" },
+  });
+  await writePackage(path.join(modules, "helper"), {
+    name: "helper",
+    dependencies: { agent: "*" },
+  });
+  const executable = path.join(agent, "index.js");
+  await fsp.writeFile(executable, "");
+
+  const link = path.join(root, "link");
+  await fsp.symlink(real, link);
+  const viaLink = path.join(link, "node_modules", "agent", "index.js");
+
+  const scopes = nodePackageDependencyReadScopes(viaLink, () => {});
+  // Only `helper`: the cycle back to the agent's own package must be recognized.
+  assert.equal(scopes.length, 1);
+  assert.equal(scopes[0], await fsp.realpath(path.join(modules, "helper")));
+});
+
+test("a Profile agent outside any package contributes no dependency scopes", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-bare-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "codex-acp");
+  await fsp.writeFile(executable, "");
+  assert.deepEqual(nodePackageDependencyReadScopes(executable, () => {}), []);
+});
+
+test("unexplained confined preflight failures persist Profile stderr instead of discarding it", async (t) => {
+  const fixture = await makeFixture(t);
+  const previousDataDir = process.env.CONSULT_DATA_DIR;
+  const dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-diagnostics-"));
+  process.env.CONSULT_DATA_DIR = dataDir;
+  t.after(async () => {
+    if (previousDataDir === undefined) delete process.env.CONSULT_DATA_DIR;
+    else process.env.CONSULT_DATA_DIR = previousDataDir;
+    await fsp.rm(dataDir, { recursive: true, force: true });
+  });
+
+  const error = Object.assign(new Error("Agent exited before initialize completed"), {
+    stderr: "codex-acp: unrecognized protocol version\nsecret-profile-output",
+  });
+  const result = await probeConfinedSandboxRuntime({
+    authority: authority(),
+    workspaceRoot: fixture.workspace,
+    profile: "codex",
+    profileRegistryId: "codex",
+    profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+  }, {
+    platform: "linux",
+    now: () => 1_700_000_000_000,
+    startAgent: async () => {
+      throw error;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    // The Host-facing message stays free of untrusted Profile output.
+    assert.doesNotMatch(result.diagnostic.message, /secret-profile-output/u);
+    const logPath = result.diagnostic.details?.profileStderrLog;
+    assert.equal(typeof logPath, "string");
+    assert.match(result.diagnostic.remediation, /read .*preflight-codex/u);
+    const contents = await fsp.readFile(String(logPath), "utf8");
+    assert.match(contents, /unrecognized protocol version/u);
+    assert.match(contents, /secret-profile-output/u);
+    assert.equal((await fsp.stat(String(logPath))).mode & 0o777, 0o600);
+  }
+});
+
+test("explained nested sandbox failures do not write a stderr diagnostic file", async (t) => {
+  const fixture = await makeFixture(t);
+  const previousDataDir = process.env.CONSULT_DATA_DIR;
+  const dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-diagnostics-"));
+  process.env.CONSULT_DATA_DIR = dataDir;
+  t.after(async () => {
+    if (previousDataDir === undefined) delete process.env.CONSULT_DATA_DIR;
+    else process.env.CONSULT_DATA_DIR = previousDataDir;
+    await fsp.rm(dataDir, { recursive: true, force: true });
+  });
+
+  const result = await probeConfinedSandboxRuntime({
+    authority: authority(),
+    workspaceRoot: fixture.workspace,
+    profile: "codex",
+    profileRegistryId: "codex",
+    profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+  }, {
+    platform: "linux",
+    startAgent: async () => {
+      throw Object.assign(new Error("Agent exited before initialize completed"), {
+        stderr: "bwrap: Creating new namespace failed: Operation not permitted",
+      });
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.details?.profileStderrLog, undefined);
+  }
+  assert.deepEqual(
+    await fsp.readdir(path.join(dataDir, "diagnostics")).catch(() => []),
+    [],
+  );
 });
 
 test("dependency failures preserve actionable messages", async (t) => {
