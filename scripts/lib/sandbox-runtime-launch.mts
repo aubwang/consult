@@ -1032,11 +1032,24 @@ export function nodePackageDependencyReadScopes(
   return scopes;
 }
 
-/** Nearest ancestor directory of `executable` that owns a `package.json`. */
+/**
+ * Nearest ancestor directory of `executable` that owns a `package.json`,
+ * canonicalized. Resolved dependencies are canonical, so the closure's seed
+ * must be too — otherwise a dependency that points back at the agent's own
+ * package resolves to a path the visited set does not recognize and the walk
+ * revisits it. Symlinked prefixes make this the normal case rather than an
+ * edge one: macOS `/var` is a symlink to `/private/var`.
+ */
 function owningPackageDirectory(executable: string): string | null {
   let current = path.dirname(executable);
   for (;;) {
-    if (fs.existsSync(path.join(current, "package.json"))) return current;
+    if (fs.existsSync(path.join(current, "package.json"))) {
+      try {
+        return fs.realpathSync(current);
+      } catch {
+        return current;
+      }
+    }
     const parent = path.dirname(current);
     if (parent === current) return null;
     current = parent;
