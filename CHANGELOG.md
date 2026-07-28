@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.1](https://github.com/aubwang/consult/compare/v0.10.0...v0.10.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* canonicalize the dependency closure seed for confined read scopes ([290889d](https://github.com/aubwang/consult/commit/290889d05eee4f70f0d763abd47a09a69eb04838))
+* map Profile agent dependencies into confinement and surface preflight stderr ([067bf27](https://github.com/aubwang/consult/commit/067bf27f1058e69e192434380f2dc3870defcdac))
+* map the Profile agent's declared dependencies into confinement ([6f912ed](https://github.com/aubwang/consult/commit/6f912ed14127aa5f432076e12f6c4950d7863681))
+* persist confined Profile stderr on unexplained preflight failure ([1d288ae](https://github.com/aubwang/consult/commit/1d288ae48e92dc98ebb384f3eb7634017c842fa7))
+
 ## [0.10.0](https://github.com/aubwang/consult/compare/v0.9.2...v0.10.0) (2026-07-26)
 
 
