@@ -11,7 +11,8 @@ import { startAgent } from "./acp-client.mts";
 import type { AgentLaunchLease } from "./acp-client.mts";
 import { startEgressProxy } from "./egress-proxy.mts";
 import type { EgressProxy, EgressProxyOptions, EgressUsage } from "./egress-proxy.mts";
-import { jobArtifactsDir } from "./broker-endpoint.mts";
+import { dataDir, jobArtifactsDir } from "./broker-endpoint.mts";
+import { safeSegment } from "./path-segments.mts";
 import type { JobAuthority } from "./job-authority.mts";
 import type {
   JobAuthorityPreflightInput,
@@ -396,9 +397,11 @@ export async function acquireConfinedSandboxRuntimeLaunch(
         deps,
       ),
       ...runtimeExecutableReadScopes(resolvedBinary, platform, deps),
-      ...[...runtimeExecutables.values()].flatMap((executable) =>
-        runtimeExecutableReadScopes(executable, platform, deps),
-      ),
+      ...nodePackageDependencyReadScopes(resolvedBinary, deps.warn),
+      ...[...runtimeExecutables.values()].flatMap((executable) => [
+        ...runtimeExecutableReadScopes(executable, platform, deps),
+        ...nodePackageDependencyReadScopes(executable, deps.warn),
+      ]),
     ];
     const readPaths = existingPaths([
       ...(platform === "linux" ? LINUX_READ_PATHS : MACOS_READ_PATHS),
@@ -622,13 +625,23 @@ export async function probeConfinedSandboxRuntime(
         },
       };
     }
+    const { message, explained } = preflightFailureMessage(failure);
+    const stderrLog = explained
+      ? null
+      : await persistProfileStderr(
+          profileRegistryId,
+          profileStderrTail(failure),
+          (deps.now ?? Date.now)(),
+        );
     return {
       ok: false,
       diagnostic: {
         code: "AUTHORITY_PREFLIGHT_FAILED",
-        message: `confined authority preflight failed: ${preflightFailureMessage(failure)}`,
-        remediation:
-          "Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created.",
+        message: `confined authority preflight failed: ${message}`,
+        remediation: stderrLog
+          ? `Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created. The Profile wrote output before exiting — read ${stderrLog} for the underlying reason, and delete it once resolved because Profile output can contain credentials.`
+          : "Run consult doctor --json and fix the reported sandbox dependency, credential, or nesting failure; no Job was created.",
+        ...(stderrLog ? { details: { profileStderrLog: stderrLog } } : {}),
       },
     };
   }
@@ -958,6 +971,126 @@ export function linuxExecutableReadScopes(
   }
   addHomebrewOpenSslDataReadScopes(scopes, inspectedPaths);
   return [...scopes];
+}
+
+/**
+ * Bound on how many dependency packages a single Profile agent may widen the
+ * confined read scope by. Real ACP shims declare a handful; a far larger
+ * closure means the agent is not the thin launcher Consult expects, so stop
+ * and warn rather than quietly mapping an unbounded tree.
+ */
+export const MAX_NODE_DEPENDENCY_READ_SCOPES = 128;
+
+/**
+ * Grant the confined agent the dependency packages it will resolve at startup.
+ *
+ * A Node-script Profile agent reaches its dependencies through the npm layout
+ * around it, and package managers hoist those siblings wherever they like: a
+ * Homebrew or user-level npm prefix puts them next to the agent rather than
+ * inside it. `addExecutableReadScopes` grants only the agent's own package, so
+ * a hoisted dependency is unreadable inside confinement and the agent dies on
+ * `require.resolve` before the ACP handshake ever runs — indistinguishable from
+ * a broken shim. Mirror the agent's own resolver instead, walking the declared
+ * closure so the mapped set stays what the agent actually declares.
+ *
+ * Dependencies that do not resolve are skipped: that is the normal case for the
+ * platform-specific `optionalDependencies` npm omits for other targets.
+ */
+export function nodePackageDependencyReadScopes(
+  executable: string,
+  warn: ((message: string) => void) | undefined = defaultRuntimeWarning,
+): string[] {
+  const entry = owningPackageDirectory(executable);
+  if (!entry) return [];
+
+  const scopes: string[] = [];
+  const visited = new Set<string>([entry]);
+  const queue = [entry];
+  let truncated = false;
+
+  while (queue.length > 0) {
+    const packageDir = queue.shift() as string;
+    for (const name of declaredDependencyNames(packageDir)) {
+      const resolved = resolvePackageDirectory(name, packageDir);
+      if (!resolved || visited.has(resolved)) continue;
+      if (visited.size > MAX_NODE_DEPENDENCY_READ_SCOPES) {
+        truncated = true;
+        break;
+      }
+      visited.add(resolved);
+      scopes.push(resolved);
+      queue.push(resolved);
+    }
+    if (truncated) break;
+  }
+
+  if (truncated) {
+    (warn ?? defaultRuntimeWarning)(
+      `Profile agent ${executable} declares more than ${MAX_NODE_DEPENDENCY_READ_SCOPES} dependency packages; confined read scopes were truncated and the agent may fail to start.`,
+    );
+  }
+  return scopes;
+}
+
+/**
+ * Nearest ancestor directory of `executable` that owns a `package.json`,
+ * canonicalized. Resolved dependencies are canonical, so the closure's seed
+ * must be too — otherwise a dependency that points back at the agent's own
+ * package resolves to a path the visited set does not recognize and the walk
+ * revisits it. Symlinked prefixes make this the normal case rather than an
+ * edge one: macOS `/var` is a symlink to `/private/var`.
+ */
+function owningPackageDirectory(executable: string): string | null {
+  let current = path.dirname(executable);
+  for (;;) {
+    if (fs.existsSync(path.join(current, "package.json"))) {
+      try {
+        return fs.realpathSync(current);
+      } catch {
+        return current;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function declaredDependencyNames(packageDir: string): string[] {
+  let manifest: { dependencies?: unknown; optionalDependencies?: unknown };
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  const names = new Set<string>();
+  for (const field of [manifest.dependencies, manifest.optionalDependencies]) {
+    if (typeof field !== "object" || field === null) continue;
+    for (const name of Object.keys(field as Record<string, unknown>)) names.add(name);
+  }
+  return [...names];
+}
+
+/**
+ * Resolve a dependency to its package directory using Node's `node_modules`
+ * lookup. Deliberately not `require.resolve`, which an `exports` map can refuse
+ * for `package.json` even though the directory is exactly what must be mapped.
+ */
+function resolvePackageDirectory(name: string, fromDir: string): string | null {
+  let current = fromDir;
+  for (;;) {
+    const candidate = path.join(current, "node_modules", name);
+    if (fs.existsSync(path.join(candidate, "package.json"))) {
+      try {
+        return fs.realpathSync(candidate);
+      } catch {
+        return candidate;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
 function runtimeExecutableReadScopes(
@@ -1359,27 +1492,78 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function preflightFailureMessage(error: unknown): string {
-  const stderr =
-    typeof error === "object" &&
+export function profileStderrTail(error: unknown): string {
+  return typeof error === "object" &&
     error !== null &&
     "stderr" in error &&
     typeof error.stderr === "string"
-      ? error.stderr
-      : "";
+    ? error.stderr
+    : "";
+}
+
+/**
+ * Confined Profile stderr is untrusted output that can carry credentials, so it
+ * never reaches the Host-facing diagnostic message. Recognized launch failures
+ * are translated into stable Consult-authored sentences; anything else keeps the
+ * generic message and relies on {@link persistProfileStderr} to leave the tail
+ * somewhere the operator can read deliberately (ADR 0029).
+ */
+function preflightFailureMessage(error: unknown): {
+  message: string;
+  explained: boolean;
+} {
+  const stderr = profileStderrTail(error);
   if (
     /sandbox-exec:[^\r\n]*(?:sandbox_apply|operation not permitted)/iu.test(stderr)
   ) {
-    return "nested macOS sandbox initialization failed: sandbox-exec was denied by the parent sandbox";
+    return {
+      message:
+        "nested macOS sandbox initialization failed: sandbox-exec was denied by the parent sandbox",
+      explained: true,
+    };
   }
   if (
     /bwrap:[^\r\n]*(?:namespace[^\r\n]*operation not permitted|no permissions to create new namespace)/iu.test(
       stderr,
     )
   ) {
-    return "nested Linux sandbox initialization failed: bwrap namespace creation was denied by the parent sandbox";
+    return {
+      message:
+        "nested Linux sandbox initialization failed: bwrap namespace creation was denied by the parent sandbox",
+      explained: true,
+    };
   }
-  return errorMessage(error);
+  return { message: errorMessage(error), explained: false };
+}
+
+/**
+ * Write the confined Profile's stderr tail to a private Host-side file so a
+ * preflight failure that Consult cannot itself explain is still diagnosable. No
+ * Job exists yet at preflight, so there is no Job log to carry it. Returns the
+ * path, or `null` when nothing was captured or the write failed — persisting a
+ * diagnostic must never mask the failure it describes.
+ */
+async function persistProfileStderr(
+  profileRegistryId: string,
+  stderr: string,
+  now: number,
+): Promise<string | null> {
+  if (stderr.trim() === "") return null;
+  try {
+    const directory = path.join(dataDir(), "diagnostics");
+    await privateDirectory(directory);
+    const file = path.join(
+      directory,
+      `preflight-${safeSegment(profileRegistryId)}-${now}-${process.pid}.log`,
+    );
+    await fsp.writeFile(file, stderr.endsWith("\n") ? stderr : `${stderr}\n`, {
+      mode: 0o600,
+    });
+    await fsp.chmod(file, 0o600);
+    return file;
+  } catch {
+    return null;
+  }
 }
 
 class OauthExpiredError extends Error {
