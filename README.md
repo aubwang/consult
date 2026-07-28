@@ -187,10 +187,28 @@ write a cold prompt, and which authority to grant:
 | `ask-claude` | Ask Claude for a review, explanation, or second opinion. |
 | `ask-codex` | Delegate focused work or review to Codex. |
 | `ask-opencode` | Delegate through a configured opencode provider. |
+| `ask-all` | Fan one question out to every configured Profile and compare. |
+| `resolve-review` | Run the whole review-and-fix loop outside the main thread. |
 
 ```sh
 npx skills add aubwang/consult
 ```
+
+### Reviewed, not derailed
+
+Delegating a review is cheap — it's the cleanup that eats your thread.
+Findings come back, and suddenly your primary agent is triaging false
+positives and iterating on fixes instead of building the next slice, with
+every round trip landing in its context window.
+
+The `resolve-review` skill evicts that loop too. It hands the findings to a
+**resolution manager** — a native subagent where the Host has one, an
+inherited-authority Consult Job where it doesn't — that triages every claim,
+lands and verifies the clear-cut fixes, and sends back a report shaped like a
+decision, not a transcript: what was fixed, what was rejected and why, what
+genuinely needs your judgment, and — the payload — whether anything changed
+that downstream work depends on. On a clean slice, the answer is one line:
+`Downstream impact: NONE`. Your main thread reads it and keeps moving.
 
 ## Security posture
 
