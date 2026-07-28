@@ -390,6 +390,16 @@ aliases that the pinned runtime canonicalizes, including `/etc` for the already-
 `/private/etc`. When Homebrew OpenSSL is linked, Consult points it at an empty
 Job-private configuration instead of exposing mutable Host OpenSSL config.
 
+A Node-script Profile agent resolves its dependencies through the npm layout
+around it, and package managers hoist those siblings outside the agent's own
+package directory. Confined read scopes therefore follow the agent's declared
+dependency closure — `dependencies` plus `optionalDependencies`, resolved by
+Consult through the same `node_modules` lookup the agent will use — so the
+mapped set stays what the agent declares rather than a whole shared prefix.
+Dependencies that do not resolve are skipped, which is the normal case for
+platform-specific optional packages, and the closure is bounded so an
+unexpectedly large tree warns instead of widening the sandbox silently.
+
 Each confined Job receives a private home, temp directory, XDG directories,
 and a sanitized environment. Only one credential source is exposed: a
 Profile-specific Consult credential variable is translated to the vendor
