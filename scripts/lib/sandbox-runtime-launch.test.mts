@@ -767,6 +767,36 @@ test("dependency read scopes terminate on cyclic dependency graphs", async (t) =
   assert.equal(new Set(scopes).size, 2);
 });
 
+test("dependency read scopes canonicalize the agent package behind a symlinked prefix", async (t) => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-symlink-"));
+  t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
+
+  // Reproduces the macOS layout on any platform: the agent is reached through a
+  // symlinked prefix (`/var` -> `/private/var` there), so the closure's seed and
+  // its resolved dependencies must canonicalize to the same path.
+  const real = path.join(root, "real");
+  const modules = path.join(real, "node_modules");
+  const agent = await writePackage(path.join(modules, "agent"), {
+    name: "agent",
+    dependencies: { helper: "*" },
+  });
+  await writePackage(path.join(modules, "helper"), {
+    name: "helper",
+    dependencies: { agent: "*" },
+  });
+  const executable = path.join(agent, "index.js");
+  await fsp.writeFile(executable, "");
+
+  const link = path.join(root, "link");
+  await fsp.symlink(real, link);
+  const viaLink = path.join(link, "node_modules", "agent", "index.js");
+
+  const scopes = nodePackageDependencyReadScopes(viaLink, () => {});
+  // Only `helper`: the cycle back to the agent's own package must be recognized.
+  assert.equal(scopes.length, 1);
+  assert.equal(scopes[0], await fsp.realpath(path.join(modules, "helper")));
+});
+
 test("a Profile agent outside any package contributes no dependency scopes", async (t) => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "consult-bare-"));
   t.after(async () => await fsp.rm(root, { recursive: true, force: true }));
