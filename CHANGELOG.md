@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/aubwang/consult/compare/v0.11.0...v0.12.0) (2026-08-02)
+
+
+### Features
+
+* detect and pin an existing Codex install at setup ([afb940b](https://github.com/aubwang/consult/commit/afb940b302f16ce1bd11b06b8a98ba2d0f823561))
+
+
+### Bug Fixes
+
+* fail codex setup loudly when the adapter cannot reach a Codex binary ([b9f7bf7](https://github.com/aubwang/consult/commit/b9f7bf7bfcea2d08f3ef046e3a98eba693c47c33))
+* pin delegated Codex sessions to the Job-mode preset ([529cd1a](https://github.com/aubwang/consult/commit/529cd1a4160c4ad012b2a8f460d4c2700a42cbb9))
+
 ## [0.11.0](https://github.com/aubwang/consult/compare/v0.10.1...v0.11.0) (2026-07-28)
 
 
