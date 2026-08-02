@@ -420,6 +420,7 @@ async function inspectAuthority({
         binary: profileEntry.binary,
         args: profileEntry.args,
         env: profileEntry.env,
+        codexPath: profileEntry.codexPath,
       },
       // Doctor only reports; a still-valid credential must not read as expired.
       oauthRefreshSkewMs: 0,
@@ -440,6 +441,7 @@ async function inspectAuthority({
         binary: profileEntry.binary,
         args: profileEntry.args,
         env: profileEntry.env,
+        codexPath: profileEntry.codexPath,
       },
       oauthRefreshSkewMs: 0,
         });

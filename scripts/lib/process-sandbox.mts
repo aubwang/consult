@@ -3,6 +3,7 @@ import path from "node:path";
 
 import {
   SANDBOX_HOME,
+  profileCodexPathEnv,
   profileHomeMounts,
   profileRuntimeMounts,
   profileSessionModeEnv,
@@ -36,6 +37,11 @@ export interface AgentLaunchOptions {
   sandbox?: string;
   profileRegistryId?: string;
   requestedModel?: string;
+  /**
+   * Codex CLI recorded on the Profile at setup (ADR-0036). Always supplied by
+   * the code that reads the Profile record; never read from the environment.
+   */
+  codexPath?: string;
 }
 
 export interface AgentLaunch {
@@ -65,11 +71,15 @@ export function buildAgentLaunch({
   mode,
   sandbox,
   profileRegistryId,
+  codexPath,
 }: AgentLaunchOptions): AgentLaunch {
   const sandboxMode = normalizeAgentSandbox(sandbox);
   const sessionModeEnv = profileSessionModeEnv(profileRegistryId, mode);
+  // Computed last so the recorded Profile value always wins over an ambient
+  // CODEX_PATH inherited from the Host environment.
+  const codexPathEnv = profileCodexPathEnv(profileRegistryId, codexPath);
   if (sandboxMode === "off") {
-    return { binary, args, cwd, env: { ...env, ...sessionModeEnv } };
+    return { binary, args, cwd, env: { ...env, ...sessionModeEnv, ...codexPathEnv } };
   }
   if (sandboxMode !== "bwrap") {
     throw new Error(`unsupported agent sandbox: ${sandboxMode}`);
@@ -117,6 +127,11 @@ export function buildAgentLaunch({
   for (const mount of profileRuntimeMounts(profileRegistryId, env)) {
     addBind(binds, mount.source, "ro", mount.destination);
   }
+  // A pinned CODEX_PATH is useless unless that exact file is visible inside the
+  // sandbox; bind the file alone rather than the directory holding it.
+  if (codexPathEnv.CODEX_PATH) {
+    addBind(binds, codexPathEnv.CODEX_PATH, "ro");
+  }
   addBind(binds, realWorkspaceRoot, mode === "write" ? "rw" : "ro");
 
   for (const target of parentDirectories([...binds.keys(), cwd])) {
@@ -138,6 +153,7 @@ export function buildAgentLaunch({
     env: {
       ...env,
       ...sessionModeEnv,
+      ...codexPathEnv,
       HOME: SANDBOX_HOME,
       TMPDIR: SANDBOX_HOME,
     },

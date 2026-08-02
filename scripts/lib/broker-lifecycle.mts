@@ -33,6 +33,8 @@ export interface BrokerProfileEntry {
   args?: string[];
   env?: Record<string, string>;
   registryId?: string;
+  /** Codex CLI recorded on the Profile at setup (ADR-0036). */
+  codexPath?: string;
 }
 
 export interface BrokerLifecycleInput extends BrokerIdentity {
@@ -145,6 +147,8 @@ export async function ensureBrokerSession({
         JSON.stringify(profileEntry.env ?? {}),
         "--registry-id",
         profileEntry.registryId ?? profile,
+        "--codex-path",
+        profileEntry.codexPath ?? "",
         "--pid-file",
         pidFile,
         "--host",

@@ -112,6 +112,30 @@ consult doctor --agent codex
 `node --version` must report version 22.18 or newer. `consult setup` lists the
 available Profiles and whether their agent executables are installed.
 
+## Codex Profile and the Codex CLI
+
+`consult setup --install codex` installs `@agentclientprotocol/codex-acp` from
+npm, which brings its own compatible Codex CLI. If a `codex-acp` is already on
+PATH, setup adopts that one instead of installing over it — and a standalone
+adapter build has no npm tree to resolve a bundled Codex through.
+
+Setup therefore checks that the adapter can actually reach a Codex CLI before
+recording the Profile (ADR-0036). When it cannot resolve a bundled one, setup
+looks for an existing install — `codex` on PATH, then `~/.local/bin/codex` —
+verifies it with a `codex --version` handshake, and pins that exact path on the
+Profile so every delegated Job runs it. If nothing is reachable the install
+fails with the remediation rather than registering a Profile that would die at
+the first delegated session:
+
+```sh
+# any one of these, then rerun setup
+npm install --global @agentclientprotocol/codex-acp
+consult setup --install codex
+```
+
+The pin is recorded once. Moving or removing the pinned binary later means
+rerunning `consult setup --install codex`.
+
 Claude background subagents require the maintained ACP adapter 0.59.0 or
 newer. Update it through the same global npm prefix, then rerun Doctor:
 

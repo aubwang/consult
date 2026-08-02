@@ -248,6 +248,7 @@ export function createInlineClient({
         authority,
         sandbox,
         profileRegistryId: entry.registryId ?? profile,
+        codexPath: entry.codexPath,
         jobId,
         resumeSourceJobId,
         resumeSessionId,

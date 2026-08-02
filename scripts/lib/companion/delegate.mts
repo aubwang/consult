@@ -215,6 +215,7 @@ export async function runDelegate({
           binary: selected.profileEntry.binary,
           args: selected.profileEntry.args,
           env: selected.profileEntry.env,
+          codexPath: selected.profileEntry.codexPath,
         }
       : undefined,
   };

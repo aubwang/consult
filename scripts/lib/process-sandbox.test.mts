@@ -173,6 +173,79 @@ test("buildAgentLaunch pins the codex session preset to the Job mode on every pa
   assert.equal(claudeOff.env.INITIAL_AGENT_MODE, undefined);
 });
 
+test("buildAgentLaunch carries the recorded Codex pin into CODEX_PATH on every path", () => {
+  const workspaceRoot = makeRoot();
+  const localBin = path.join(makeRoot(), "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  const codexPath = path.join(localBin, "codex");
+  fs.writeFileSync(codexPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(localBin, "unrelated-secret-tool"), "", { mode: 0o755 });
+  const base = {
+    binary: process.execPath,
+    args: ["--version"],
+    cwd: workspaceRoot,
+    workspaceRoot,
+    profileRegistryId: "codex",
+    mode: "read-only",
+  };
+
+  const off = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH },
+    sandbox: "off",
+    codexPath,
+  });
+  assert.equal(off.env.CODEX_PATH, codexPath);
+
+  const bwrap = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH },
+    sandbox: "bwrap",
+    codexPath,
+  });
+  assert.equal(bwrap.env.CODEX_PATH, codexPath);
+  // The pinned file is bound on its own; the directory holding it is not,
+  // so nothing else the user keeps beside codex becomes visible.
+  assert.ok(hasTriple(bwrap.args, "--ro-bind", codexPath, codexPath));
+  assert.equal(hasTriple(bwrap.args, "--ro-bind", localBin, localBin), false);
+});
+
+test("buildAgentLaunch prefers the recorded Codex pin over an ambient CODEX_PATH", () => {
+  const workspaceRoot = makeRoot();
+  const base = {
+    binary: process.execPath,
+    args: ["--version"],
+    cwd: workspaceRoot,
+    workspaceRoot,
+    profileRegistryId: "codex",
+    mode: "read-only",
+    sandbox: "off",
+  };
+
+  const pinned = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH, CODEX_PATH: "/ambient/codex" },
+    codexPath: "/recorded/codex",
+  });
+  assert.equal(pinned.env.CODEX_PATH, "/recorded/codex");
+
+  // With no recorded pin Consult adds nothing: the launch env is passed through
+  // untouched rather than being rewritten from the ambient value.
+  const unpinned = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH, CODEX_PATH: "/ambient/codex" },
+  });
+  assert.equal(unpinned.env.CODEX_PATH, "/ambient/codex");
+
+  const claude = buildAgentLaunch({
+    ...base,
+    profileRegistryId: "claude",
+    env: { PATH: process.env.PATH },
+    codexPath: "/recorded/codex",
+  });
+  assert.equal(claude.env.CODEX_PATH, undefined);
+});
+
 test("buildAgentLaunch does not add profile-specific opencode runtime mounts", () => {
   const workspaceRoot = makeRoot();
   const runtimeDir = makeRoot();

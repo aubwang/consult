@@ -311,6 +311,7 @@ async function runDirectProfileControl(
       mode: "read-only",
       sandbox: "off",
       profileRegistryId: profile.registryId,
+      codexPath: profile.codexPath,
     });
     const session = await newSession(agent.connection, { cwd });
     await applySessionControls(agent.connection, {

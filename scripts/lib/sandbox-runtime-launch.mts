@@ -24,7 +24,7 @@ import {
   archiveConfinedSessionState,
   restoreConfinedSessionState,
 } from "./confined-session-state.mts";
-import { profileSessionModeEnv } from "./profile-launch-policy.mts";
+import { profileCodexPathEnv, profileSessionModeEnv } from "./profile-launch-policy.mts";
 import { pidIsAlive as defaultPidIsAlive } from "./process.mts";
 import { pidMatchesStartTime, processStartTime } from "./process-identity.mts";
 import {
@@ -373,11 +373,15 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     }
 
     const resolvedBinary = resolveExecutable(input.binary, hostEnv);
+    const pinnedCodex = resolvePinnedCodexPath(input.profileRegistryId, input.codexPath);
     const runtimeExecutables = new Map<string, string>();
     for (const command of profile.requiredCommands) {
       runtimeExecutables.set(command, resolveExecutable(command, hostEnv));
     }
     if (await executableNeedsNode(resolvedBinary)) {
+      runtimeExecutables.set("node", resolveExecutable("node", hostEnv));
+    }
+    if (pinnedCodex && (await executableNeedsNode(pinnedCodex.realPath))) {
       runtimeExecutables.set("node", resolveExecutable("node", hostEnv));
     }
     const stagedAgent = path.join(bin, "consult-profile-agent");
@@ -403,6 +407,17 @@ export async function acquireConfinedSandboxRuntimeLaunch(
         ...runtimeExecutableReadScopes(executable, platform, deps),
         ...nodePackageDependencyReadScopes(executable, deps.warn),
       ]),
+      ...(pinnedCodex
+        ? [
+            ...pinnedExecutableReadScopes(
+              pinnedCodex.configuredPath,
+              pinnedCodex.realPath,
+              platform,
+              deps,
+            ),
+            ...nodePackageDependencyReadScopes(pinnedCodex.realPath, deps.warn),
+          ]
+        : []),
     ];
     const readPaths = existingPaths([
       ...(platform === "linux" ? LINUX_READ_PATHS : MACOS_READ_PATHS),
@@ -497,6 +512,7 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       config,
       stagedConfig,
       requestedModel: input.requestedModel,
+      codexPath: pinnedCodex?.realPath,
     });
     Object.assign(childEnv, runtimeEnvironment);
 
@@ -592,6 +608,7 @@ export async function probeConfinedSandboxRuntime(
       mode: input.authority.mode,
       sandbox: "off",
       profileRegistryId,
+      codexPath: input.profileLaunch.codexPath,
     }, {
       acquireLaunch: async (launchOptions) =>
         await acquireConfinedSandboxRuntimeLaunch({
@@ -873,7 +890,12 @@ function sanitizedChildEnv(input: {
   config: string;
   stagedConfig: string;
   requestedModel?: string;
+  codexPath?: string;
 }): NodeJS.ProcessEnv {
+  // Built from an empty object, never from `input.source`: an ambient
+  // CODEX_PATH (like every other unlisted Host variable) must not cross the
+  // confinement boundary, and the only value that may is the one computed from
+  // the recorded Profile.
   const env: NodeJS.ProcessEnv = {
     PATH: `${input.bin}:/usr/bin:/bin`,
     HOME: input.home,
@@ -884,6 +906,7 @@ function sanitizedChildEnv(input: {
     IS_SANDBOX: "1",
     [input.profile.childConfigEnv]: input.stagedConfig,
     ...profileSessionModeEnv(input.profileRegistryId, input.mode),
+    ...profileCodexPathEnv(input.profileRegistryId, input.codexPath),
     ...input.credentialEnv,
   };
   if (input.profile === CONFINED_PROFILE_POLICIES.claude && input.requestedModel) {
@@ -926,6 +949,71 @@ function resolveExecutable(binary: string, env: NodeJS.ProcessEnv): string {
     }
   }
   throw new Error(`confined Profile executable not found: ${binary}`);
+}
+
+interface PinnedCodexBinary {
+  /** The path exactly as recorded on the Profile, used for symlink traversal. */
+  configuredPath: string;
+  realPath: string;
+}
+
+/**
+ * Resolve the Codex CLI recorded on the Profile for a confined launch, failing
+ * closed when it has gone missing since setup. A silently dropped pin would put
+ * the Job back on codex-acp's npm fallback and reproduce exactly the lazy
+ * session-time death setup exists to prevent (ADR-0036).
+ */
+function resolvePinnedCodexPath(
+  registryId: string | undefined,
+  codexPath: string | undefined,
+): PinnedCodexBinary | null {
+  if (registryId !== "codex" || !codexPath) {
+    return null;
+  }
+  if (!path.isAbsolute(codexPath)) {
+    throw new Error(
+      `configured Codex binary for the confined codex Profile must be an absolute path: ${codexPath}`,
+    );
+  }
+  let realPath: string;
+  try {
+    fs.accessSync(codexPath, fs.constants.X_OK);
+    realPath = fs.realpathSync(codexPath);
+  } catch {
+    throw new Error(
+      `configured Codex binary for the confined codex Profile is missing or not executable: ${codexPath}; rerun \`consult setup --install codex\``,
+    );
+  }
+  assertSandboxRuntimeLiteralPath(codexPath, "Codex binary path");
+  assertSandboxRuntimeLiteralPath(realPath, "Codex binary path");
+  return { configuredPath: codexPath, realPath };
+}
+
+/**
+ * Read scopes for a Profile-pinned helper binary that lives in a shared user
+ * bin directory.
+ *
+ * Deliberately narrower than {@link runtimeExecutableReadScopes}: that path
+ * grants `path.dirname(executable)` so a Profile agent can reach files packaged
+ * beside it, but a pinned `~/.local/bin/codex` would then hand the confined
+ * Profile every other tool the user keeps in that directory. The binary file,
+ * the symlinks needed to traverse to it, and its linked runtime closure are
+ * everything required to exec it.
+ */
+export function pinnedExecutableReadScopes(
+  configuredPath: string,
+  realPath: string,
+  platform: SupportedPlatform,
+  deps: Pick<ConfinedSandboxRuntimeLaunchDeps, "inspectMachO" | "warn"> = {},
+): string[] {
+  const scopes = new Set<string>([realPath]);
+  addSymlinkAncestorScopes(scopes, configuredPath);
+  const withheldDirectory = path.dirname(realPath);
+  for (const scope of runtimeExecutableReadScopes(realPath, platform, deps)) {
+    if (scope === withheldDirectory) continue;
+    scopes.add(scope);
+  }
+  return [...scopes];
 }
 
 async function executableNeedsNode(executable: string): Promise<boolean> {

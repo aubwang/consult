@@ -184,6 +184,7 @@ export async function runReview({
           binary: selected.profileEntry.binary,
           args: selected.profileEntry.args,
           env: selected.profileEntry.env,
+          codexPath: selected.profileEntry.codexPath,
         }
       : undefined,
   };

@@ -179,7 +179,12 @@ Codex's own approval/sandbox preset to the Job mode via `INITIAL_AGENT_MODE`
 (ADR-0035): read-only Jobs run Codex's `read-only` preset, which both prevents
 auto-approved edits at the source and keeps Codex's Linux bubblewrap
 per-command sandbox from needing to create `.git`/`.agents`/`.codex`
-mount points inside the read-only Workspace mount. `--sandbox inherit` is an explicit
+mount points inside the read-only Workspace mount. Where the codex adapter
+cannot resolve a bundled Codex, setup pins the detected Codex CLI on the Profile
+record and every launch derives `CODEX_PATH` from that recorded value (ADR-0036):
+an ambient `CODEX_PATH` never crosses the confinement boundary, and the pinned
+binary is read-scoped as a single file rather than by granting the directory
+that holds it. `--sandbox inherit` is an explicit
 ambient-authority escape hatch and is never an automatic retry. The opencode
 and custom Profile paths currently require inheritance; native Windows, Intel
 macOS, and confined nesting are unsupported.

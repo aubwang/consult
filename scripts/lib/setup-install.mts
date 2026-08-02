@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, realpathSync } from "node:fs";
+import { accessSync, constants as fsConstants, createReadStream, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 
 import { startAgent as defaultStartAgent } from "./acp-client.mts";
@@ -32,6 +33,13 @@ export interface InstalledProfile {
   installedAt: string;
   installedVia: string;
   lastVerifiedAt: string;
+  /**
+   * Absolute path to the Codex CLI the adapter must run, present only when the
+   * adapter cannot resolve a bundled Codex itself (ADR-0036).
+   */
+  codexPath?: string;
+  /** Version reported by `<codexPath> --version` at setup, for diagnostics. */
+  codexVersion?: string;
 }
 
 export interface InstallSuccess {
@@ -93,6 +101,7 @@ export interface InstallDeps {
     cwd: string;
     clientHandlers: Record<string, never>;
     initTimeoutMs: number;
+    codexPath?: string;
   }) => Promise<InstallSmokeAgent>;
   spawnInstall?: (command: string) => Promise<SpawnInstallResult>;
   whichBinary?: (binary: string) => Promise<string | null> | string | null;
@@ -107,6 +116,11 @@ export interface InstallDeps {
    * the adapter has no npm tree to resolve it through.
    */
   resolveBundledCodex?: (adapterBinaryPath: string) => string | null;
+  /** Real path of an executable candidate, or null when missing/not executable. */
+  resolveCodexCandidate?: (candidate: string) => string | null;
+  /** Runs `<candidate> --version` under a bounded timeout. */
+  probeCodexVersion?: (candidate: string) => Promise<SpawnInstallResult>;
+  homeDir?: () => string;
 }
 
 export interface InstallAndVerifyOptions {
@@ -148,9 +162,10 @@ export async function installAndVerify({
   // reach a Codex CLI: codex-acp spawns Codex lazily, so `initialize` succeeds
   // and the Profile only dies later, at session creation, inside a Job. Decide
   // reachability here so a dead Profile is never written to disk (ADR-0036).
+  let codexRuntime: CodexRuntimePin | null = null;
   if (registryEntry.id === "codex") {
     try {
-      assertCodexReachable(installed.binaryPath, deps);
+      codexRuntime = await resolveCodexRuntimePin(installed.binaryPath, deps);
     } catch (error) {
       if (error instanceof InstallStageError) {
         return error.toResult();
@@ -167,6 +182,7 @@ export async function installAndVerify({
       cwd: process.cwd(),
       clientHandlers: {},
       initTimeoutMs: 10000,
+      ...(codexRuntime ? { codexPath: codexRuntime.codexPath } : {}),
     });
     await agent.dispose();
   } catch (error) {
@@ -190,31 +206,100 @@ export async function installAndVerify({
       installedAt: now(),
       installedVia: "registry",
       lastVerifiedAt: now(),
+      ...(codexRuntime
+        ? { codexPath: codexRuntime.codexPath, codexVersion: codexRuntime.codexVersion }
+        : {}),
     },
   };
 }
 
+interface CodexRuntimePin {
+  codexPath: string;
+  codexVersion: string;
+}
+
+const CODEX_VERSION_PATTERN = /\d+\.\d+\.\d+/u;
+const CODEX_VERSION_TIMEOUT_MS = 5000;
+
 /**
- * Refuse a codex adapter that cannot reach a Codex CLI.
+ * Decide how the adopted codex-acp will reach a Codex CLI.
  *
- * codex-acp resolves `@openai/codex/bin/codex.js` through the npm tree around
- * itself, which the standalone compiled adapter builds do not have. Resolving
- * it here the same way the adapter does turns an install that would die at the
- * first delegated session into an install failure the user can act on
- * (ADR-0036).
+ * Returns null when the adapter resolves its own bundled Codex — that install
+ * needs no recorded pin, and adding one would freeze a path npm owns. Returns a
+ * pin when an existing Codex CLI was detected and passed a version handshake.
+ * Throws when neither holds: an adapter with no reachable Codex is a Profile
+ * that fails at delegate time, so setup refuses it here instead.
  */
-function assertCodexReachable(adapterBinaryPath: string, deps: InstallDeps): void {
-  if ((deps.resolveBundledCodex ?? defaultResolveBundledCodex)(adapterBinaryPath)) {
-    return;
+async function resolveCodexRuntimePin(
+  adapterBinaryPath: string,
+  deps: InstallDeps,
+): Promise<CodexRuntimePin | null> {
+  const bundled = (deps.resolveBundledCodex ?? defaultResolveBundledCodex)(adapterBinaryPath);
+  if (bundled) {
+    return null;
   }
+
+  const rejected: string[] = [];
+  let lastCaptured: InstallCaptured | undefined;
+  for (const candidate of await codexCandidatePaths(deps)) {
+    const resolved = (deps.resolveCodexCandidate ?? defaultResolveCodexCandidate)(candidate);
+    if (!resolved) {
+      rejected.push(`${candidate}: not an executable file`);
+      continue;
+    }
+    let probe: SpawnInstallResult;
+    try {
+      probe = await (deps.probeCodexVersion ?? defaultProbeCodexVersion)(resolved);
+    } catch (error) {
+      rejected.push(`${resolved}: ${(error as Error).message}`);
+      continue;
+    }
+    lastCaptured = probe;
+    if (probe.exitCode !== 0) {
+      rejected.push(`${resolved}: \`--version\` exited ${probe.exitCode}`);
+      continue;
+    }
+    const version = CODEX_VERSION_PATTERN.exec(`${probe.stdout}\n${probe.stderr}`)?.[0];
+    if (!version) {
+      rejected.push(`${resolved}: \`--version\` printed no recognizable version`);
+      continue;
+    }
+    return { codexPath: resolved, codexVersion: version };
+  }
+
   throw new InstallStageError(
     "codex-runtime",
-    `${adapterBinaryPath} cannot reach a Codex CLI: it resolves no bundled ` +
-      "@openai/codex. Reinstall the adapter with its bundled Codex " +
-      "(`npm install -g @agentclientprotocol/codex-acp`) or install " +
-      "`@openai/codex` next to the adapter, then rerun " +
-      "`consult setup --install codex`.",
+    codexUnreachableMessage(adapterBinaryPath, rejected),
+    lastCaptured,
   );
+}
+
+function codexUnreachableMessage(adapterBinaryPath: string, rejected: string[]): string {
+  const detail = rejected.length > 0 ? ` Rejected candidates: ${rejected.join("; ")}.` : "";
+  return (
+    `${adapterBinaryPath} cannot reach a Codex CLI: it resolves no bundled ` +
+    "@openai/codex, and no usable `codex` binary was found on PATH or at " +
+    `~/.local/bin/codex.${detail} Reinstall the adapter with its bundled Codex ` +
+    "(`npm install -g @agentclientprotocol/codex-acp`), install `@openai/codex` " +
+    "next to the adapter, or make a working `codex` binary available on PATH, " +
+    "then rerun `consult setup --install codex`."
+  );
+}
+
+async function codexCandidatePaths(deps: InstallDeps): Promise<string[]> {
+  const candidates: string[] = [];
+  const onPath = await probeBinaryOnPath("codex", deps);
+  if (onPath.found && onPath.path) {
+    candidates.push(onPath.path);
+  }
+  const home = (deps.homeDir ?? os.homedir)();
+  if (home) {
+    const local = path.join(home, ".local", "bin", "codex");
+    if (!candidates.includes(local)) {
+      candidates.push(local);
+    }
+  }
+  return candidates;
 }
 
 /**
@@ -235,6 +320,38 @@ function defaultResolveBundledCodex(adapterBinaryPath: string): string | null {
   } catch {
     return null;
   }
+}
+
+function defaultResolveCodexCandidate(candidate: string): string | null {
+  try {
+    accessSync(candidate, fsConstants.X_OK);
+    return realpathSync(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function defaultProbeCodexVersion(candidate: string): Promise<SpawnInstallResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(candidate, ["--version"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: CODEX_VERSION_TIMEOUT_MS,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (exitCode) => {
+      resolve({ stdout, stderr, exitCode });
+    });
+  });
 }
 
 class InstallStageError extends Error {

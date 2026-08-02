@@ -20,6 +20,8 @@ export interface JobAuthorityPreflightInput {
     binary: string;
     args: string[];
     env: Record<string, string>;
+    /** Codex CLI recorded on the Profile at setup (ADR-0036). */
+    codexPath?: string;
   };
   /**
    * Optional pass-through for the Claude OAuth refresh skew (ms). Observational
@@ -167,6 +169,7 @@ export async function probeInheritedProfileLaunch(
       mode: input.authority.mode,
       sandbox: "off",
       profileRegistryId: input.profileRegistryId,
+      codexPath: input.profileLaunch.codexPath,
     });
   } catch (error) {
     launchFailure = error;
