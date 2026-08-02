@@ -2,9 +2,11 @@
 
 # Consult
 
-**A cross-agent CLI your coding agent uses to delegate work. It gets back an answer, a review, or a patch — not the delegate's working context.**
+**A cross-agent CLI your coding agent uses to delegate work and preserve context.**
 
-Claude Code → Codex, Codex → Claude Code, opencode → either. Any direction, one CLI.
+Claude Code ↔️ Codex
+
+Opencode ↔️ either
 
 [![npm](https://img.shields.io/npm/v/%40aubwang%2Fconsult?color=cb3837&logo=npm)](https://www.npmjs.com/package/@aubwang/consult)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -12,20 +14,27 @@ Claude Code → Codex, Codex → Claude Code, opencode → either. Any direction
 
 [Install](#quick-start) · [Why](#why-consult) · [How it works](#how-it-works) · [Docs](docs/USAGE.md)
 
+
+
 </div>
 
----
+Let your largest, most expensive model focus its effort and context on design, have a separate
+model focus on implementation, and have another model provide a different opinion, all within
+the same agent thread.
 
-You already run more than one coding agent. Claude Code is great at one thing,
-Codex at another, and your strongest model shouldn't burn its context window
-babysitting a 40-minute implementation thread.
+Why should Claude Fable (or some other giant model) burn context and money writing 
+basic code and running tests? 
 
-**Consult** is a small, host-neutral CLI that lets any coding environment — a
+**Consult** is a small, host-neutral CLI that lets a coding environment — a
 Claude Code session, a Codex session, opencode, or your own terminal — hand a
-single, self-contained **Job** to another configured agent and get back a
-result, a review, or a patch. It reuses the agent installations and
-authentication you already have. No new platform, no second set of accounts,
-no daemon.
+self-contained **Job** to another configured agent and get back a
+result, a review, or a patch. It uses the [Agent Client Protocol](https://agentclientprotocol.com)
+to hook into your existing Claude/Codex/opencode install and auth.
+
+
+<div align="center">
+<img width="588" height="265" alt="image" src="https://github.com/user-attachments/assets/45bb8340-471b-40e7-985a-6e771e945b02" />
+</div>
 
 ```text
 ── your session · claude-fable-5 (primary agent) ──────────────────────
@@ -55,68 +64,37 @@ no daemon.
 
 **Context is the scarcest resource in agentic coding.** Every file an agent
 reads, every test run, every dead end lands in its context window — the same
-window it needs for decomposition, review, and judgment. Long implementation
-threads make your best model dumber exactly when you need it sharpest.
+window it needs for decomposition, review, and judgment. Why not save your 
+context and tokens for the important stuff instead?
 
-Consult gives that model a boundary. The orchestrating agent (the **Host**)
+With Consult, the orchestrating agent (the **Host**)
 writes one cold, self-contained prompt; a delegate agent (a **Profile**) does
 the work in its own context; the Host gets back only what it asked for.
 
-- 🧠 **Keep the working detail out of your context.** Delegates start cold and
+- 🧠 **Keep working detail out of your context.** Delegates start cold and
   return bounded summaries, final answers, or patch artifacts — never their
-  tool transcript. The boundary is opt-in depth, not a black box: every Job
-  keeps a full activity log on disk, one `consult logs <job-id>` away when
+  tool transcript. The boundary is opt-in depth; every Job
+  keeps its full activity log on disk and is a single command away when
   something deserves a closer look.
 - 🔀 **Cross agent boundaries without switching stacks.** Invoke Claude from
-  Codex, Codex from Claude Code, or either from opencode — over the open
-  [Agent Client Protocol](https://agentclientprotocol.com), using your
-  existing local installs and logins.
-- 🔒 **Authority travels with the Job, not the machine.** Delegation defaults
+  Codex, Codex from Claude Code, or either from opencode, and vice versa --
+  using your existing local installs and logins.
+- 🔒 **Job level authority controls.** Delegation defaults
   to read-only, OS-level confinement. Writes, network access, and ambient
-  authority inheritance are separate, explicit grants — never silent
-  fallbacks.
+  authority inheritance are separate, explicit grants.
 - 🧪 **Transactional writes.** An implementation Job can run in a disposable
   Git worktree; Consult captures only its delta as a patch and touched-files
   manifest, and your checkout stays untouched until you decide to apply it.
-- 📋 **Orchestration as durable work.** Background Jobs have status, logs,
+- 📋 **Orchestration as durable work.** Jobs have status, logs,
   results, labels, cancellation, dependencies, and resume. Wait once for known
   work instead of spending model turns polling it.
 - 💸 **Route by capability, speed, or cost.** Keep the expensive model on
-  decisions and hand well-scoped work to a fast one — or fan a question out to
+  decisions and hand well-scoped work to a fast one, or fan a question out to
   three different agents and compare.
 
 Consult is deliberately a CLI, not another agent platform. If your coding
 agent can run a command, it can use Consult.
 
-## How it works
-
-The invoking environment is the **Host**. A configured agent is a **Profile**
-(`claude`, `codex`, or `opencode` out of the box). Each delegation creates one
-durable **Job** carrying exactly one prompt turn and one explicit **Job
-Authority**.
-
-```text
-┌──────────────────────────────┐
-│ Host context                 │
-│ decisions · decomposition    │
-└──────────────┬───────────────┘
-               │  cold prompt + Job Authority
-        ┌──────┼──────┐
-        ▼      ▼      ▼
-     Claude  Codex  opencode
-        │      │      │
-        └──────┼──────┘
-               │  result · review · patch artifact
-               ▼
-┌──────────────────────────────┐
-│ Host context                 │
-│ integration · decisions      │
-└──────────────────────────────┘
-```
-
-Cold doesn't mean context-free — the Host names the relevant paths,
-constraints, and acceptance checks in the prompt. That small prompt-writing
-cost is the price of a real context boundary, and it's the whole point.
 
 ## Quick start
 
@@ -175,7 +153,7 @@ upstream result, `consult logs --follow` tails a running Job, `--json` makes
 every result machine-readable, and `--resume` reopens a Profile session for a
 follow-up turn. The [usage reference](docs/USAGE.md) covers all of it.
 
-## Teach your agent to delegate
+### Teach your agent to delegate
 
 The CLI is self-describing (`consult help`), but the npm package also ships
 agent **skills** that give a Host judgment about *when* to delegate, how to
@@ -195,21 +173,53 @@ npx skills add aubwang/consult
 
 ### Reviewed, not derailed
 
-Delegating a review is cheap — it's the cleanup that eats your thread.
-Findings come back, and suddenly your primary agent is triaging false
-positives and iterating on fixes instead of building the next slice, with
-every round trip landing in its context window.
+Delegating a review is cheap, but cleanup can eat all of your thread's context too.
 
-The `resolve-review` skill evicts that loop too. It hands the findings to a
-**resolution manager** — a native subagent where the Host has one, an
-inherited-authority Consult Job where it doesn't — that triages every claim,
-lands and verifies the clear-cut fixes, and sends back a report shaped like a
-decision, not a transcript: what was fixed, what was rejected and why, what
-genuinely needs your judgment, and — the payload — whether anything changed
-that downstream work depends on. On a clean slice, the answer is one line:
-`Downstream impact: NONE`. Your main thread reads it and keeps moving.
+The `resolve-review` skill  hands the findings to a **resolution manager** that triages every claim,
+lands and verifies the clear-cut fixes, and sends back a report with what was fixed, 
+what was rejected, what needs additional input, and if any of its fixes affect downstream work.
 
-## Security posture
+This way, your main model can keep making progress, and minor bugs/edge cases don't slow you down.
+
+
+
+## How it works
+
+The invoking environment is the **Host**. A configured agent is a **Profile**
+(`claude`, `codex`, or `opencode` out of the box). Each delegation creates one
+durable **Job** carrying exactly one prompt turn and one explicit **Job
+Authority**.
+
+```text
+┌──────────────────────────────┐
+│ Host context                 │
+│ decisions · decomposition    │
+└──────────────┬───────────────┘
+               │  cold prompt + Job Authority
+        ┌──────┼──────┐
+        ▼      ▼      ▼
+     Claude  Codex  opencode
+        │      │      │
+        └──────┼──────┘
+               │  result · review · patch artifact
+               ▼
+┌──────────────────────────────┐
+│ Host context                 │
+│ integration · decisions      │
+└──────────────────────────────┘
+```
+Please note that Job Authority behavior will vary depending on if you use Claude, Codex, or Opencode, see below.
+
+## Security
+
+**It's recommended to run Consult within an isolated VM/sandbox, or 
+anywhere where you'd be comfortable running an agent in YOLO mode.
+There are no guarantees that all risk has been abated. Use Consult
+at your own risk.**
+
+The full boundary model is documented in
+[Job Authority](docs/USAGE.md#job-authority), and the tested platform matrix
+lives in the [conformance reports](docs/conformance/README.md).
 
 A delegated Job is a real agent working against your repository, so the
 defaults stay conservative:
@@ -222,11 +232,6 @@ defaults stay conservative:
   Host's ambient authority when confinement fails.
 - Isolated write Jobs are **transactional**: the delegate edits a disposable
   worktree, and only a reviewable patch comes back.
-
-Confinement narrows what a delegate can touch; it doesn't make untrusted
-content harmless. The full boundary model is documented in
-[Job Authority](docs/USAGE.md#job-authority), and the tested platform matrix
-lives in the [conformance reports](docs/conformance/README.md).
 
 ## Learn more
 
