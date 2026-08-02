@@ -5,6 +5,7 @@ import {
   profileHomeMounts,
   profileLaunchPolicy,
   profileRuntimeMounts,
+  profileSessionModeEnv,
 } from "./profile-launch-policy.mts";
 
 test("profileLaunchPolicy exposes supported live launch policies only", () => {
@@ -45,4 +46,21 @@ test("profileHomeMounts maps codex auth files without whole-directory access", (
 test("profiles without specific launch policies add no sandbox mounts", () => {
   assert.deepEqual(profileHomeMounts("opencode", { HOME: "/host/home" }), []);
   assert.deepEqual(profileRuntimeMounts("opencode", { XDG_RUNTIME_DIR: "/run/user/1000" }), []);
+});
+
+test("profileSessionModeEnv pins the codex session preset to the Job mode", () => {
+  assert.deepEqual(profileSessionModeEnv("codex", "read-only"), {
+    INITIAL_AGENT_MODE: "read-only",
+  });
+  assert.deepEqual(profileSessionModeEnv("codex", "write"), {
+    INITIAL_AGENT_MODE: "agent",
+  });
+});
+
+test("profileSessionModeEnv stays inert for other profiles and unknown modes", () => {
+  assert.deepEqual(profileSessionModeEnv("claude", "read-only"), {});
+  assert.deepEqual(profileSessionModeEnv("opencode", "read-only"), {});
+  assert.deepEqual(profileSessionModeEnv(undefined, "read-only"), {});
+  assert.deepEqual(profileSessionModeEnv("codex", undefined), {});
+  assert.deepEqual(profileSessionModeEnv("codex", "danger-full-access"), {});
 });

@@ -5,6 +5,7 @@ import {
   SANDBOX_HOME,
   profileHomeMounts,
   profileRuntimeMounts,
+  profileSessionModeEnv,
 } from "./profile-launch-policy.mts";
 
 const SYSTEM_READ_ONLY_ROOTS = ["/usr", "/bin", "/lib", "/lib64"];
@@ -66,8 +67,9 @@ export function buildAgentLaunch({
   profileRegistryId,
 }: AgentLaunchOptions): AgentLaunch {
   const sandboxMode = normalizeAgentSandbox(sandbox);
+  const sessionModeEnv = profileSessionModeEnv(profileRegistryId, mode);
   if (sandboxMode === "off") {
-    return { binary, args, cwd, env };
+    return { binary, args, cwd, env: { ...env, ...sessionModeEnv } };
   }
   if (sandboxMode !== "bwrap") {
     throw new Error(`unsupported agent sandbox: ${sandboxMode}`);
@@ -135,6 +137,7 @@ export function buildAgentLaunch({
     cwd,
     env: {
       ...env,
+      ...sessionModeEnv,
       HOME: SANDBOX_HOME,
       TMPDIR: SANDBOX_HOME,
     },
