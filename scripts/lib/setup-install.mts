@@ -1,14 +1,15 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 
 import { startAgent as defaultStartAgent } from "./acp-client.mts";
 import { dataDir as defaultDataDir } from "./broker-endpoint.mts";
 import { probeBinaryOnPath } from "./setup-probe.mts";
 
-export type InstallStage = "install" | "discover" | "smoke";
+export type InstallStage = "install" | "discover" | "smoke" | "codex-runtime";
 
 export interface InstallCaptured {
   stdout?: string;
@@ -100,6 +101,12 @@ export interface InstallDeps {
   dataDir?: () => string;
   fetchAssetDigest?: (params: FetchAssetDigestParams) => Promise<string>;
   downloadAndExtract?: (params: DownloadAndExtractParams) => Promise<void>;
+  /**
+   * Mirrors codex-acp's own bundled-Codex resolution from the adapter binary's
+   * real path. Returns the resolved `@openai/codex/bin/codex.js`, or null when
+   * the adapter has no npm tree to resolve it through.
+   */
+  resolveBundledCodex?: (adapterBinaryPath: string) => string | null;
 }
 
 export interface InstallAndVerifyOptions {
@@ -137,6 +144,21 @@ export async function installAndVerify({
     throw error;
   }
 
+  // The ACP handshake below cannot tell whether the codex adapter can actually
+  // reach a Codex CLI: codex-acp spawns Codex lazily, so `initialize` succeeds
+  // and the Profile only dies later, at session creation, inside a Job. Decide
+  // reachability here so a dead Profile is never written to disk (ADR-0036).
+  if (registryEntry.id === "codex") {
+    try {
+      assertCodexReachable(installed.binaryPath, deps);
+    } catch (error) {
+      if (error instanceof InstallStageError) {
+        return error.toResult();
+      }
+      throw error;
+    }
+  }
+
   try {
     const agent = await (deps.startAgent ?? defaultStartAgent)({
       binary: installed.binaryPath,
@@ -170,6 +192,49 @@ export async function installAndVerify({
       lastVerifiedAt: now(),
     },
   };
+}
+
+/**
+ * Refuse a codex adapter that cannot reach a Codex CLI.
+ *
+ * codex-acp resolves `@openai/codex/bin/codex.js` through the npm tree around
+ * itself, which the standalone compiled adapter builds do not have. Resolving
+ * it here the same way the adapter does turns an install that would die at the
+ * first delegated session into an install failure the user can act on
+ * (ADR-0036).
+ */
+function assertCodexReachable(adapterBinaryPath: string, deps: InstallDeps): void {
+  if ((deps.resolveBundledCodex ?? defaultResolveBundledCodex)(adapterBinaryPath)) {
+    return;
+  }
+  throw new InstallStageError(
+    "codex-runtime",
+    `${adapterBinaryPath} cannot reach a Codex CLI: it resolves no bundled ` +
+      "@openai/codex. Reinstall the adapter with its bundled Codex " +
+      "(`npm install -g @agentclientprotocol/codex-acp`) or install " +
+      "`@openai/codex` next to the adapter, then rerun " +
+      "`consult setup --install codex`.",
+  );
+}
+
+/**
+ * Resolve `@openai/codex/bin/codex.js` the way codex-acp itself does. npm global
+ * bins are symlinks into the package tree, so resolution has to start from the
+ * adapter's real location or it walks the wrong `node_modules` chain entirely
+ * (the same lesson as ADR-0034).
+ */
+function defaultResolveBundledCodex(adapterBinaryPath: string): string | null {
+  let realAdapterPath: string;
+  try {
+    realAdapterPath = realpathSync(adapterBinaryPath);
+  } catch {
+    return null;
+  }
+  try {
+    return createRequire(realAdapterPath).resolve("@openai/codex/bin/codex.js");
+  } catch {
+    return null;
+  }
 }
 
 class InstallStageError extends Error {

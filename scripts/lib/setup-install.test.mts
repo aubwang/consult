@@ -14,6 +14,13 @@ import {
 } from "./setup-install.mts";
 
 const execFileAsync = promisify(execFile);
+
+// Adapter installs that carry their own `@openai/codex` need no recorded pin.
+// Tests that are not about Codex reachability take that branch explicitly so
+// they never depend on whatever Codex the machine running them happens to have.
+const BUNDLED_CODEX = {
+  resolveBundledCodex: () => "/fake/lib/node_modules/@openai/codex/bin/codex.js",
+};
 import type {
   DownloadAndExtractParams,
   InstallCaptured,
@@ -55,6 +62,7 @@ test("installAndVerify skips shell install when the binary is already on PATH", 
         return { dispose: async () => {} };
       },
       now: fixedClock(["2026-05-15T10:00:00.000Z", "2026-05-15T10:00:01.000Z"]),
+      ...BUNDLED_CODEX,
     },
   })) as InstallSuccess;
 
@@ -94,6 +102,7 @@ test("installAndVerify stops when the smoke probe fails", async () => {
       startAgent: async () => {
         throw smokeError;
       },
+      ...BUNDLED_CODEX,
     },
   })) as InstallFailure;
 
@@ -119,6 +128,7 @@ test("installAndVerify returns a verified profile after install, discover, and s
         whichCalls += 1;
         return whichCalls === 1 ? null : "/fake/codex-acp";
       },
+      ...BUNDLED_CODEX,
       startAgent: async (params) => {
         assert.deepEqual(params, {
           binary: "/fake/codex-acp",
@@ -184,6 +194,74 @@ test("parseInstallCommand parses registry install commands without a shell", () 
   );
 });
 
+test("installAndVerify accepts a codex adapter that resolves its bundled Codex", async () => {
+  const resolvedFrom: string[] = [];
+
+  const result = (await installAndVerify({
+    registryEntry: registryEntryFixture(),
+    deps: {
+      spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+      whichBinary: async () => "/npm/bin/codex-acp",
+      resolveBundledCodex: (adapterBinaryPath) => {
+        resolvedFrom.push(adapterBinaryPath);
+        return "/npm/lib/node_modules/@openai/codex/bin/codex.js";
+      },
+      startAgent: async () => ({ dispose: async () => {} }),
+      now: fixedClock(["2026-08-01T10:00:00.000Z", "2026-08-01T10:00:01.000Z"]),
+    },
+  })) as InstallSuccess;
+
+  assert.equal(result.ok, true);
+  // Resolution is anchored at the adapter binary, the way codex-acp does it.
+  assert.deepEqual(resolvedFrom, ["/npm/bin/codex-acp"]);
+});
+
+test("installAndVerify fails the codex install when no Codex binary is reachable", async () => {
+  let smokeRan = false;
+
+  const result = (await installAndVerify({
+    registryEntry: registryEntryFixture(),
+    deps: {
+      spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+      whichBinary: async () => "/opt/bin/codex-acp",
+      resolveBundledCodex: () => null,
+      startAgent: async () => {
+        smokeRan = true;
+        return { dispose: async () => {} };
+      },
+    },
+  })) as InstallFailure;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.stage, "codex-runtime");
+  assert.equal((result as unknown as InstallSuccess).profile, undefined);
+  // The ACP handshake passes even with no Codex anywhere, so it cannot be the
+  // thing that decides this.
+  assert.equal(smokeRan, false, "reachability is decided before the ACP smoke probe");
+  assert.match(result.message, /cannot reach a Codex CLI/);
+  assert.match(result.message, /npm install -g @agentclientprotocol\/codex-acp/);
+  assert.match(result.message, /install `@openai\/codex` next to the adapter/);
+});
+
+test("installAndVerify leaves non-codex profiles untouched by Codex reachability", async () => {
+  for (const id of ["claude", "opencode"]) {
+    const result = (await installAndVerify({
+      registryEntry: registryEntryFixture({ id, binary: `${id}-acp` }),
+      deps: {
+        spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+        whichBinary: async () => `/fake/${id}-acp`,
+        resolveBundledCodex: () => {
+          throw new Error("codex resolution must not run for non-codex profiles");
+        },
+        startAgent: async () => ({ dispose: async () => {} }),
+        now: fixedClock(["2026-08-01T10:00:00.000Z", "2026-08-01T10:00:01.000Z"]),
+      },
+    })) as InstallSuccess;
+
+    assert.equal(result.ok, true);
+  }
+});
+
 function registryEntryFixture(overrides = {}) {
   return {
     id: "codex",
@@ -235,6 +313,7 @@ test("installAndVerify github-release: downloads, extracts, and reports the abso
         assert.equal(binary, expectedBinary);
         return { dispose: async () => {} };
       },
+      ...BUNDLED_CODEX,
       now: fixedClock(["2026-05-15T10:00:00.000Z", "2026-05-15T10:00:01.000Z"]),
     },
   })) as InstallSuccess;
@@ -274,6 +353,7 @@ test("installAndVerify github-release: skips download when the target binary alr
         return { dispose: async () => {} };
       },
       now: fixedClock(["2026-05-15T10:00:00.000Z", "2026-05-15T10:00:01.000Z"]),
+      ...BUNDLED_CODEX,
     },
   })) as InstallSuccess;
 
