@@ -174,7 +174,12 @@ application protocol is HTTP.
 
 Whole Host config is not staged: Codex `config.toml` and Claude `settings.json`
 are absent. Exact Profile initialization happens before Job creation, and
-`consult doctor` runs that same live check. `--sandbox inherit` is an explicit
+`consult doctor` runs that same live check. Codex sessions additionally pin
+Codex's own approval/sandbox preset to the Job mode via `INITIAL_AGENT_MODE`
+(ADR-0035): read-only Jobs run Codex's `read-only` preset, which both prevents
+auto-approved edits at the source and keeps Codex's Linux bubblewrap
+per-command sandbox from needing to create `.git`/`.agents`/`.codex`
+mount points inside the read-only Workspace mount. `--sandbox inherit` is an explicit
 ambient-authority escape hatch and is never an automatic retry. The opencode
 and custom Profile paths currently require inheritance; native Windows, Intel
 macOS, and confined nesting are unsupported.

@@ -133,6 +133,44 @@ test("buildAgentLaunch mounts profile auth config into the sandbox home", () => 
   );
   assert.equal(hasTriple(codexLaunch.args, "--ro-bind", fs.realpathSync(codexDir), "/tmp/.codex"), false);
   assert.equal(codexLaunch.env.HOME, "/tmp");
+  assert.equal(codexLaunch.env.INITIAL_AGENT_MODE, "read-only");
+  assert.equal(claudeLaunch.env.INITIAL_AGENT_MODE, undefined);
+});
+
+test("buildAgentLaunch pins the codex session preset to the Job mode on every path", () => {
+  const workspaceRoot = makeRoot();
+  const base = {
+    binary: process.execPath,
+    args: ["--version"],
+    cwd: workspaceRoot,
+    workspaceRoot,
+    profileRegistryId: "codex",
+  };
+
+  const readOnlyOff = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH, INITIAL_AGENT_MODE: "agent-full-access" },
+    mode: "read-only",
+    sandbox: "off",
+  });
+  assert.equal(readOnlyOff.env.INITIAL_AGENT_MODE, "read-only");
+
+  const writeBwrap = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH, INITIAL_AGENT_MODE: "agent-full-access" },
+    mode: "write",
+    sandbox: "bwrap",
+  });
+  assert.equal(writeBwrap.env.INITIAL_AGENT_MODE, "agent");
+
+  const claudeOff = buildAgentLaunch({
+    ...base,
+    profileRegistryId: "claude",
+    env: { PATH: process.env.PATH },
+    mode: "read-only",
+    sandbox: "off",
+  });
+  assert.equal(claudeOff.env.INITIAL_AGENT_MODE, undefined);
 });
 
 test("buildAgentLaunch does not add profile-specific opencode runtime mounts", () => {

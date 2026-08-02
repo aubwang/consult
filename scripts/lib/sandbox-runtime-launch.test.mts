@@ -288,6 +288,7 @@ test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient"
       PATH: `${fixture.bin}:/usr/bin:/bin`,
       CODEX_HOME: path.join(fixture.home, ".codex"),
       OPENAI_API_KEY: "project-key",
+      INITIAL_AGENT_MODE: "agent-full-access",
       GH_TOKEN: "must-not-leak",
       OP_SERVICE_ACCOUNT_TOKEN: "must-not-leak",
       HTTP_PROXY: "http://ambient.invalid",
@@ -316,6 +317,7 @@ test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient"
     assert.equal(lease.launch.env.HTTP_PROXY, undefined);
     assert.equal(lease.launch.env.CONSULT_PARENT_JOB, "parent-job");
     assert.equal(lease.launch.env.HOME, lease.launch.env.CODEX_HOME?.replace(/\/\.codex$/u, ""));
+    assert.equal(lease.launch.env.INITIAL_AGENT_MODE, "read-only");
     assert.ok(
       lease.launch.args[1].includes(`http://consult:${TOKEN}@127.0.0.1:3128`),
     );
@@ -489,6 +491,7 @@ test("write and fetch authority only broaden Workspace writes and public TCP/443
       lease.launch.env.TMPDIR,
       fs.realpathSync(fixture.workspace),
     ]);
+    assert.equal(lease.launch.env.INITIAL_AGENT_MODE, "agent");
   } finally {
     await lease.release();
   }
@@ -991,6 +994,7 @@ test("confined Claude launch maps CONSULT_CLAUDE_API_KEY to ANTHROPIC_API_KEY", 
   try {
     assert.equal(lease.launch.env.ANTHROPIC_API_KEY, "explicit-key");
     assert.equal(lease.launch.env.CONSULT_CLAUDE_API_KEY, undefined);
+    assert.equal(lease.launch.env.INITIAL_AGENT_MODE, undefined);
   } finally {
     await lease.release();
   }

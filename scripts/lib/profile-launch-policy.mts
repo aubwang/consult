@@ -61,6 +61,34 @@ export function profileRuntimeMounts(
   ];
 }
 
+/**
+ * Environment that pins a delegated Profile session's own sandbox preset to
+ * the Job mode. codex-acp reads `INITIAL_AGENT_MODE` when it creates a
+ * session; without it every Job runs Codex's default `agent` preset
+ * (workspace-write). That preset's Linux bubblewrap sandbox must mount
+ * read-only protections over `.git`/`.agents`/`.codex` beneath each writable
+ * root, creating any missing mount point first — and a read-only Job mounts
+ * the Workspace read-only, so that mkdir fails with EROFS and every
+ * shell-mediated command dies before it runs. Pinning the preset to the Job
+ * mode keeps the inner sandbox aligned with Job Authority instead of wider
+ * than it.
+ */
+export function profileSessionModeEnv(
+  registryId: string | undefined,
+  mode: string | undefined,
+): Record<string, string> {
+  if (registryId !== "codex") {
+    return {};
+  }
+  if (mode === "read-only") {
+    return { INITIAL_AGENT_MODE: "read-only" };
+  }
+  if (mode === "write") {
+    return { INITIAL_AGENT_MODE: "agent" };
+  }
+  return {};
+}
+
 function homeMounts(home: string, relativePaths: string[]): ProfileMount[] {
   return relativePaths.map((relativePath) => ({
     source: path.join(home, relativePath),
