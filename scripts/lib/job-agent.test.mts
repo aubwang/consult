@@ -244,6 +244,49 @@ test("startJobAgent acquires the confined runtime lease only for confined author
   assert.equal(capturedOptions?.sandbox, "off");
 });
 
+test("startJobAgent carries the recorded Codex pin into the confined launch", async () => {
+  let capturedOptions: StartAgentOptions | undefined;
+  let capturedDeps: StartAgentDeps | undefined;
+  let confinedInput: ConfinedSandboxRuntimeLaunchInput | undefined;
+  const fakeStartAgent: typeof startAgent = async (options, deps) => {
+    capturedOptions = options;
+    capturedDeps = deps;
+    return {} as StartedAgent;
+  };
+
+  await startJobAgent({
+    binary: "/profile-agent",
+    cwd: "/workspace",
+    // An ambient CODEX_PATH in the Job environment is not the pin and must not
+    // be mistaken for one.
+    env: { CODEX_PATH: "/ambient/codex" },
+    authority: authority(),
+    profileRegistryId: "codex",
+    codexPath: "/recorded/codex",
+    runtime: runtimeHooks(authority()),
+  }, {
+    startAgent: fakeStartAgent,
+    acquireConfinedLaunch: async (input) => {
+      confinedInput = input;
+      return lease(input);
+    },
+  });
+
+  assert.equal(capturedOptions?.codexPath, "/recorded/codex");
+  await capturedDeps!.acquireLaunch!({
+    binary: capturedOptions!.binary,
+    args: [],
+    cwd: capturedOptions!.cwd,
+    env: {},
+    workspaceRoot: capturedOptions!.workspaceRoot,
+    mode: capturedOptions!.mode,
+    sandbox: capturedOptions!.sandbox,
+    profileRegistryId: capturedOptions!.profileRegistryId,
+    codexPath: capturedOptions!.codexPath,
+  });
+  assert.equal(confinedInput?.codexPath, "/recorded/codex");
+});
+
 test("startJobAgent does not promote unknown Claude models into the confined launch", async () => {
   let confinedInput: ConfinedSandboxRuntimeLaunchInput | undefined;
   await startJobAgent({

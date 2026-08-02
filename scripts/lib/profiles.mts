@@ -13,6 +13,14 @@ export interface ProfileRecord {
   installedAt: string;
   installedVia?: string;
   lastVerifiedAt?: string;
+  /**
+   * Absolute path to the Codex CLI this Profile's adapter must run, recorded by
+   * setup when the adapter cannot resolve a bundled Codex itself (ADR-0036).
+   * Absent means the adapter self-resolves and needs no pin.
+   */
+  codexPath?: string;
+  /** Version reported by `<codexPath> --version` at setup, for diagnostics. */
+  codexVersion?: string;
 }
 
 export interface ProfilesData {
@@ -125,7 +133,9 @@ function validateProfiles(profiles: Record<string, unknown>, profilesPath: strin
       typeof profile.binary !== "string" ||
       !Array.isArray(profile.args) ||
       !isRecord(profile.env) ||
-      typeof profile.installedAt !== "string"
+      typeof profile.installedAt !== "string" ||
+      !isOptionalString(profile.codexPath) ||
+      !isOptionalString(profile.codexVersion)
     ) {
       const error = profilesError("Profiles file is malformed", "PROFILES_MALFORMED", profilesPath);
       error.profileName = profileName;
@@ -133,6 +143,10 @@ function validateProfiles(profiles: Record<string, unknown>, profilesPath: strin
     }
     profile.installedVia ??= "registry";
   }
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
 }
 
 function profilesError(message: string, code: string, profilesPath: string): ProfilesError {

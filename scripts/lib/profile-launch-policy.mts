@@ -89,6 +89,27 @@ export function profileSessionModeEnv(
   return {};
 }
 
+/**
+ * Environment that points codex-acp at the Codex CLI Consult pinned during
+ * setup. codex-acp spawns `$CODEX_PATH app-server` when the variable is set and
+ * otherwise resolves `@openai/codex/bin/codex.js` through the npm tree around
+ * itself — a fallback that cannot work for the standalone compiled adapter
+ * builds, or when Consult adopted a `codex-acp` that was installed without its
+ * bundled Codex. Setup records the reachable binary once (ADR-0036) and every
+ * launch path replays that recorded value; nothing here reads an ambient
+ * `CODEX_PATH`, because which Codex a delegate runs is Consult's decision and
+ * not the Host environment's.
+ */
+export function profileCodexPathEnv(
+  registryId: string | undefined,
+  codexPath: string | undefined,
+): Record<string, string> {
+  if (registryId !== "codex" || !codexPath) {
+    return {};
+  }
+  return { CODEX_PATH: codexPath };
+}
+
 function homeMounts(home: string, relativePaths: string[]): ProfileMount[] {
   return relativePaths.map((relativePath) => ({
     source: path.join(home, relativePath),

@@ -4,7 +4,7 @@
     {
       "id": "codex",
       "label": "OpenAI Codex (ACP adapter: codex-acp)",
-      "notes": "Includes a compatible Codex CLI. Run `codex login` first to authenticate with OpenAI (or set CONSULT_OPENAI_API_KEY).",
+      "notes": "The npm install bundles a compatible Codex CLI; otherwise setup pins an existing `codex` binary. Run `codex login` first to authenticate with OpenAI (or set CONSULT_OPENAI_API_KEY).",
       "binary": "codex-acp",
       "args": [],
       "install": { "type": "npm", "cmd": "npm install -g @agentclientprotocol/codex-acp" },

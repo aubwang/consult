@@ -54,6 +54,8 @@ export interface StartJobAgentOptions {
   authority: JobAuthority;
   sandbox?: string;
   profileRegistryId?: string;
+  /** Codex CLI recorded on the Profile at setup (ADR-0036). */
+  codexPath?: string;
   jobId?: string | null;
   resumeSourceJobId?: string | null;
   resumeSessionId?: string | null;
@@ -78,6 +80,7 @@ export async function startJobAgent(
     authority,
     sandbox = "off",
     profileRegistryId,
+    codexPath,
     jobId = null,
     resumeSourceJobId = null,
     resumeSessionId = null,
@@ -130,6 +133,7 @@ export async function startJobAgent(
     mode: canonicalAuthority.mode,
     sandbox: sandboxMode,
     profileRegistryId,
+    codexPath,
     requestedModel:
       profileRegistryId === "claude" && model
         ? knownClaudeModelControl(model) ?? undefined

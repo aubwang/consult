@@ -71,6 +71,8 @@ export interface StartAgentOptions {
   mode?: string;
   profileRegistryId?: string;
   requestedModel?: string;
+  /** Codex CLI recorded on the Profile at setup (ADR-0036). */
+  codexPath?: string;
   onSpawn?: (pid: number) => void | Promise<void>;
 }
 
@@ -251,6 +253,7 @@ export async function startAgent(
     mode = "read-only",
     profileRegistryId,
     requestedModel,
+    codexPath,
     onSpawn,
   }: StartAgentOptions,
   deps: StartAgentDeps = {},
@@ -266,6 +269,7 @@ export async function startAgent(
     sandbox,
     profileRegistryId,
     requestedModel,
+    codexPath,
   });
   const { launch } = lease;
   let releasePromise: Promise<void> | undefined;

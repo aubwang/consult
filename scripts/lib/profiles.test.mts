@@ -62,6 +62,60 @@ test("saveProfiles and loadProfiles round-trip profile data", async () => {
   assert.deepEqual(await loadProfiles(profilesPath), data);
 });
 
+test("saveProfiles and loadProfiles round-trip a recorded Codex pin", async () => {
+  const profilesPath = path.join(makeRoot(), "profiles.json");
+  const data = {
+    schemaVersion: 1,
+    default: "codex",
+    hostDefaults: {},
+    profiles: {
+      codex: {
+        registryId: "codex",
+        binary: "/usr/local/bin/codex-acp",
+        args: [],
+        env: {},
+        installedAt: "2026-08-01T17:30:00Z",
+        installedVia: "registry",
+        lastVerifiedAt: "2026-08-01T17:30:05Z",
+        codexPath: "/home/tester/.local/bin/codex",
+        codexVersion: "0.55.0",
+      },
+    },
+  };
+
+  await saveProfiles(profilesPath, data);
+
+  const loaded = await loadProfiles(profilesPath);
+  assert.deepEqual(loaded, data);
+  assert.equal(loaded.profiles.codex.codexPath, "/home/tester/.local/bin/codex");
+  assert.equal(loaded.profiles.codex.codexVersion, "0.55.0");
+});
+
+test("loadProfiles rejects a non-string Codex pin", async () => {
+  const profilesPath = path.join(makeRoot(), "profiles.json");
+  await fsp.writeFile(
+    profilesPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      default: null,
+      hostDefaults: {},
+      profiles: {
+        codex: {
+          registryId: "codex",
+          binary: "/usr/local/bin/codex-acp",
+          args: [],
+          env: {},
+          installedAt: "2026-08-01T17:30:00Z",
+          codexPath: 42,
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  await assert.rejects(loadProfiles(profilesPath), { code: "PROFILES_MALFORMED" });
+});
+
 test("loadProfiles rejects a wrong schema version", async () => {
   const profilesPath = path.join(makeRoot(), "profiles.json");
   await fsp.writeFile(

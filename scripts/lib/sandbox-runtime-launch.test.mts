@@ -24,6 +24,7 @@ import {
   nodePackageDependencyReadScopes,
   parseLinuxLddPaths,
   parseMachOOtoolLoadCommands,
+  pinnedExecutableReadScopes,
   probeConfinedSandboxRuntime,
 } from "./sandbox-runtime-launch.mts";
 
@@ -360,6 +361,143 @@ test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient"
   assert.equal(await fsp.readFile(sourceAuth, "utf8"), '{"token":"host-only"}');
   assert.equal(fs.existsSync(stagedHome), false);
   assert.deepEqual(harness.events, ["initialize", "wrap", "cleanup", "reset", "proxy-close"]);
+});
+
+test("confined Codex launch pins CODEX_PATH and reads the binary without its directory", async (t) => {
+  const fixture = await makeFixture(t);
+  // A shared user bin directory: the pin must expose `codex` and nothing else.
+  const localBin = path.join(fixture.root, "local-bin");
+  await fsp.mkdir(localBin, { recursive: true });
+  const codexPath = path.join(localBin, "codex");
+  await fsp.writeFile(codexPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await fsp.writeFile(path.join(localBin, "unrelated-tool"), "#!/bin/sh\n", { mode: 0o755 });
+  const harness = fakeRuntime();
+
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+      CONSULT_OPENAI_API_KEY: "explicit-key",
+      CODEX_PATH: "/ambient/codex",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "codex",
+    codexPath,
+  }, harness.deps);
+
+  try {
+    const realCodexPath = await fsp.realpath(codexPath);
+    assert.equal(lease.launch.env.CODEX_PATH, realCodexPath);
+    const allowRead: string[] = harness.configs[0].filesystem.allowRead;
+    assert.ok(allowRead.includes(realCodexPath), "the pinned binary itself is readable");
+    assert.equal(
+      allowRead.includes(localBin),
+      false,
+      "the directory holding the pinned binary stays unreadable",
+    );
+    assert.equal(
+      allowRead.includes(path.dirname(realCodexPath)),
+      false,
+      "no parent directory scope leaks in through the executable scope helper",
+    );
+  } finally {
+    await lease.release();
+  }
+});
+
+test("confined Codex launch scrubs an ambient CODEX_PATH when nothing is pinned", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority(),
+    binary: "/usr/bin/true",
+    args: [],
+    cwd: fixture.workspace,
+    env: {
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+      CONSULT_OPENAI_API_KEY: "explicit-key",
+      CODEX_PATH: "/ambient/codex",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "codex",
+  }, harness.deps);
+
+  try {
+    assert.equal(lease.launch.env.CODEX_PATH, undefined);
+  } finally {
+    await lease.release();
+  }
+});
+
+test("confined Codex launch fails closed when the pinned Codex is gone", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  const missing = path.join(fixture.root, "local-bin", "codex");
+
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      args: [],
+      cwd: fixture.workspace,
+      env: {
+        PATH: `${fixture.bin}:/usr/bin:/bin`,
+        CONSULT_OPENAI_API_KEY: "explicit-key",
+      },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "codex",
+      codexPath: missing,
+    }, harness.deps),
+    /configured Codex binary .* is missing or not executable/u,
+  );
+
+  const notExecutable = path.join(fixture.root, "plain-codex");
+  await fsp.writeFile(notExecutable, "no exec bit", { mode: 0o600 });
+  await assert.rejects(
+    acquireConfinedSandboxRuntimeLaunch({
+      authority: authority(),
+      binary: "/usr/bin/true",
+      args: [],
+      cwd: fixture.workspace,
+      env: {
+        PATH: `${fixture.bin}:/usr/bin:/bin`,
+        CONSULT_OPENAI_API_KEY: "explicit-key",
+      },
+      workspaceRoot: fixture.workspace,
+      mode: "read-only",
+      profileRegistryId: "codex",
+      codexPath: notExecutable,
+    }, harness.deps),
+    /configured Codex binary .* is missing or not executable/u,
+  );
+});
+
+test("pinnedExecutableReadScopes keeps the file and symlink hops but not the bin directory", async (t) => {
+  const root = await fsp.realpath(
+    await fsp.mkdtemp(path.join(os.tmpdir(), "consult-pinned-scopes-")),
+  );
+  t.after(() => fsp.rm(root, { recursive: true, force: true }));
+  const versioned = path.join(root, "versions", "0.55.0", "codex");
+  const localBin = path.join(root, "local-bin");
+  await fsp.mkdir(path.dirname(versioned), { recursive: true });
+  await fsp.mkdir(localBin, { recursive: true });
+  await fsp.writeFile(versioned, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const configured = path.join(localBin, "codex");
+  await fsp.symlink(versioned, configured);
+
+  const scopes = pinnedExecutableReadScopes(configured, versioned, "linux");
+
+  assert.ok(scopes.includes(versioned));
+  assert.ok(scopes.includes(configured), "the symlink hop stays traversable");
+  assert.equal(scopes.includes(localBin), false);
+  assert.equal(scopes.includes(path.dirname(versioned)), false);
 });
 
 test("confined Codex launch uses CONSULT_OPENAI_API_KEY instead of auth.json", async (t) => {

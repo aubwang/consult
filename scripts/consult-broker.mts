@@ -39,6 +39,8 @@ export interface ServeBrokerOptions {
   args?: string[];
   env?: NodeJS.ProcessEnv;
   profileRegistryId?: string;
+  /** Codex CLI recorded on the Profile at setup (ADR-0036). */
+  codexPath?: string;
   jobId?: string | null;
   pidFile?: string;
   host?: string;
@@ -348,6 +350,7 @@ export async function serveBroker(
       authority,
       sandbox: config.sandbox,
       profileRegistryId: config.profileRegistryId,
+      codexPath: config.codexPath,
       jobId,
       resumeSourceJobId,
       resumeSessionId,
@@ -722,6 +725,7 @@ function normalizeOptions(options: ServeBrokerOptions): BrokerConfig {
     args: options.args ?? [],
     env: options.env ?? {},
     profileRegistryId: options.profileRegistryId ?? options.profile,
+    codexPath: options.codexPath || undefined,
     jobId: options.jobId || null,
     host: options.host ?? "terminal",
     hostSessionId: options.hostSessionId ?? "default",
@@ -898,6 +902,7 @@ export function parseArgs(argv: string[]): ServeBrokerOptions {
     args: parsed.args ? JSON.parse(parsed.args) : [],
     env: parsed.env ? JSON.parse(parsed.env) : {},
     profileRegistryId: parsed.registry_id,
+    codexPath: parsed.codex_path || undefined,
     jobId: parsed.job_id || null,
     pidFile: parsed.pid_file,
     host: parsed.host,

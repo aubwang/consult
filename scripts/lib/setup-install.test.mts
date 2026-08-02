@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -194,26 +194,97 @@ test("parseInstallCommand parses registry install commands without a shell", () 
   );
 });
 
-test("installAndVerify accepts a codex adapter that resolves its bundled Codex", async () => {
+test("installAndVerify records no Codex pin when the adapter resolves its bundled Codex", async () => {
   const resolvedFrom: string[] = [];
+  let smokeCodexPath: string | undefined = "unset";
 
   const result = (await installAndVerify({
     registryEntry: registryEntryFixture(),
     deps: {
       spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
-      whichBinary: async () => "/npm/bin/codex-acp",
+      whichBinary: async (binary) => (binary === "codex-acp" ? "/npm/bin/codex-acp" : null),
       resolveBundledCodex: (adapterBinaryPath) => {
         resolvedFrom.push(adapterBinaryPath);
         return "/npm/lib/node_modules/@openai/codex/bin/codex.js";
       },
+      resolveCodexCandidate: () => {
+        throw new Error("detection should not run when the adapter self-resolves");
+      },
+      probeCodexVersion: async () => {
+        throw new Error("version handshake should not run when the adapter self-resolves");
+      },
+      startAgent: async ({ codexPath }) => {
+        smokeCodexPath = codexPath;
+        return { dispose: async () => {} };
+      },
+      now: fixedClock(["2026-08-01T10:00:00.000Z", "2026-08-01T10:00:01.000Z"]),
+    },
+  })) as InstallSuccess;
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(resolvedFrom, ["/npm/bin/codex-acp"]);
+  assert.equal(result.profile.codexPath, undefined);
+  assert.equal(result.profile.codexVersion, undefined);
+  assert.equal(smokeCodexPath, undefined);
+});
+
+test("installAndVerify pins a detected Codex when the adapter cannot self-resolve", async () => {
+  const versionProbes: string[] = [];
+  let smokeCodexPath: string | undefined;
+
+  const result = (await installAndVerify({
+    registryEntry: registryEntryFixture(),
+    deps: {
+      spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+      whichBinary: async (binary) =>
+        binary === "codex-acp" ? "/opt/bin/codex-acp" : "/home/tester/.local/bin/codex",
+      resolveBundledCodex: () => null,
+      resolveCodexCandidate: (candidate) =>
+        candidate === "/home/tester/.local/bin/codex" ? "/opt/codex/0.55.0/codex" : null,
+      probeCodexVersion: async (candidate) => {
+        versionProbes.push(candidate);
+        return { stdout: "codex-cli 0.55.0\n", stderr: "", exitCode: 0 };
+      },
+      startAgent: async ({ codexPath }) => {
+        smokeCodexPath = codexPath;
+        return { dispose: async () => {} };
+      },
+      now: fixedClock(["2026-08-01T10:00:00.000Z", "2026-08-01T10:00:01.000Z"]),
+    },
+  })) as InstallSuccess;
+
+  assert.equal(result.ok, true);
+  // The recorded pin is the realpath'd candidate, not the configured symlink.
+  assert.equal(result.profile.codexPath, "/opt/codex/0.55.0/codex");
+  assert.equal(result.profile.codexVersion, "0.55.0");
+  assert.deepEqual(versionProbes, ["/opt/codex/0.55.0/codex"]);
+  assert.equal(smokeCodexPath, "/opt/codex/0.55.0/codex");
+});
+
+test("installAndVerify falls back to ~/.local/bin/codex when PATH has no codex", async () => {
+  const candidates: string[] = [];
+
+  const result = (await installAndVerify({
+    registryEntry: registryEntryFixture(),
+    deps: {
+      spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+      whichBinary: async (binary) => (binary === "codex-acp" ? "/opt/bin/codex-acp" : null),
+      homeDir: () => "/home/tester",
+      resolveBundledCodex: () => null,
+      resolveCodexCandidate: (candidate) => {
+        candidates.push(candidate);
+        return candidate;
+      },
+      probeCodexVersion: async () => ({ stdout: "0.55.1", stderr: "", exitCode: 0 }),
       startAgent: async () => ({ dispose: async () => {} }),
       now: fixedClock(["2026-08-01T10:00:00.000Z", "2026-08-01T10:00:01.000Z"]),
     },
   })) as InstallSuccess;
 
   assert.equal(result.ok, true);
-  // Resolution is anchored at the adapter binary, the way codex-acp does it.
-  assert.deepEqual(resolvedFrom, ["/npm/bin/codex-acp"]);
+  assert.deepEqual(candidates, [path.join("/home/tester", ".local", "bin", "codex")]);
+  assert.equal(result.profile.codexPath, path.join("/home/tester", ".local", "bin", "codex"));
+  assert.equal(result.profile.codexVersion, "0.55.1");
 });
 
 test("installAndVerify fails the codex install when no Codex binary is reachable", async () => {
@@ -223,8 +294,13 @@ test("installAndVerify fails the codex install when no Codex binary is reachable
     registryEntry: registryEntryFixture(),
     deps: {
       spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
-      whichBinary: async () => "/opt/bin/codex-acp",
+      whichBinary: async (binary) => (binary === "codex-acp" ? "/opt/bin/codex-acp" : null),
+      homeDir: () => "/home/tester",
       resolveBundledCodex: () => null,
+      resolveCodexCandidate: () => null,
+      probeCodexVersion: async () => {
+        throw new Error("version handshake should not run for a missing candidate");
+      },
       startAgent: async () => {
         smokeRan = true;
         return { dispose: async () => {} };
@@ -234,13 +310,64 @@ test("installAndVerify fails the codex install when no Codex binary is reachable
 
   assert.equal(result.ok, false);
   assert.equal(result.stage, "codex-runtime");
-  assert.equal((result as unknown as InstallSuccess).profile, undefined);
-  // The ACP handshake passes even with no Codex anywhere, so it cannot be the
-  // thing that decides this.
   assert.equal(smokeRan, false, "reachability is decided before the ACP smoke probe");
   assert.match(result.message, /cannot reach a Codex CLI/);
   assert.match(result.message, /npm install -g @agentclientprotocol\/codex-acp/);
   assert.match(result.message, /install `@openai\/codex` next to the adapter/);
+  assert.match(result.message, /available on PATH/);
+});
+
+test("installAndVerify rejects a detected Codex that fails the version handshake", async () => {
+  for (const probe of [
+    { stdout: "", stderr: "boom", exitCode: 1 },
+    { stdout: "not a version at all", stderr: "", exitCode: 0 },
+  ]) {
+    const result = (await installAndVerify({
+      registryEntry: registryEntryFixture(),
+      deps: {
+        spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+        whichBinary: async (binary) => (binary === "codex-acp" ? "/opt/bin/codex-acp" : null),
+        homeDir: () => "/home/tester",
+        resolveBundledCodex: () => null,
+        resolveCodexCandidate: (candidate) => candidate,
+        probeCodexVersion: async () => probe,
+        startAgent: async () => {
+          throw new Error("smoke should not run after a failed version handshake");
+        },
+      },
+    })) as InstallFailure;
+
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, "codex-runtime");
+    assert.equal((result as unknown as InstallSuccess).profile, undefined);
+    assert.match(result.message, /cannot reach a Codex CLI/);
+    assert.match(
+      result.message,
+      probe.exitCode === 0 ? /no recognizable version/ : /`--version` exited 1/,
+    );
+  }
+});
+
+test("installAndVerify runs a real version handshake against an executable candidate", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "consult-codex-probe-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const codex = path.join(dir, "codex");
+  await writeFile(codex, "#!/bin/sh\necho 'codex-cli 0.55.0'\n", { mode: 0o755 });
+
+  const result = (await installAndVerify({
+    registryEntry: registryEntryFixture(),
+    deps: {
+      spawnInstall: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+      whichBinary: async (binary) => (binary === "codex-acp" ? "/opt/bin/codex-acp" : codex),
+      resolveBundledCodex: () => null,
+      startAgent: async () => ({ dispose: async () => {} }),
+      now: fixedClock(["2026-08-01T10:00:00.000Z", "2026-08-01T10:00:01.000Z"]),
+    },
+  })) as InstallSuccess;
+
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.codexPath, await realpath(codex));
+  assert.equal(result.profile.codexVersion, "0.55.0");
 });
 
 test("installAndVerify leaves non-codex profiles untouched by Codex reachability", async () => {
@@ -253,12 +380,20 @@ test("installAndVerify leaves non-codex profiles untouched by Codex reachability
         resolveBundledCodex: () => {
           throw new Error("codex resolution must not run for non-codex profiles");
         },
+        resolveCodexCandidate: () => {
+          throw new Error("codex detection must not run for non-codex profiles");
+        },
+        probeCodexVersion: async () => {
+          throw new Error("codex handshake must not run for non-codex profiles");
+        },
         startAgent: async () => ({ dispose: async () => {} }),
         now: fixedClock(["2026-08-01T10:00:00.000Z", "2026-08-01T10:00:01.000Z"]),
       },
     })) as InstallSuccess;
 
     assert.equal(result.ok, true);
+    assert.equal(result.profile.codexPath, undefined);
+    assert.equal(result.profile.codexVersion, undefined);
   }
 });
 
