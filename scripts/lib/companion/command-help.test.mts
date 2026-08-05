@@ -26,7 +26,33 @@ test("agents usage explains selection order and both default scopes", () => {
   assert.match(usage, /consult doctor --agent claude/u);
 });
 
-test("commandUsage returns null for commands without command-specific usage", () => {
-  assert.equal(commandUsage("doctor"), null);
+test("commandUsage returns null for an unknown command", () => {
   assert.equal(commandUsage("nonsense"), null);
+});
+
+// Falling back to the summary usage hides the flags the user actually asked
+// about, so every documented command owns command-specific help.
+test("every user-facing command has command-specific usage", () => {
+  const documented = [
+    "setup",
+    "agents",
+    "delegate",
+    "review",
+    "doctor",
+    "status",
+    "wait",
+    "logs",
+    "result",
+    "chain",
+    "cancel",
+    "brokers",
+  ];
+
+  for (const command of documented) {
+    const usage = commandUsage(command);
+
+    assert.ok(usage, `${command} has no command-specific usage`);
+    assert.match(usage, new RegExp(`^Usage:\\n {2}consult ${command}\\b`, "u"), command);
+    assert.match(usage, /\n {2}--help {2,}/u, `${command} usage does not document --help`);
+  }
 });

@@ -42,9 +42,34 @@ test("dispatch rejects an unknown subcommand", async () => {
 
   assert.equal(result.exitCode, 2);
   assert.equal(result.stderr.startsWith("unknown subcommand:"), true);
-  assert.equal(result.stderr.includes("Usage:"), true);
   assert.equal(result.stderr.includes("consult help"), true);
+  // The correction is the useful part; reprinting the whole usage block buries it.
+  assert.equal(result.stderr.includes("Usage:"), false);
   assert.equal(result.stderr.includes("Operational contract"), false);
+});
+
+test("dispatch suggests the nearest subcommand for a typo", async () => {
+  const result = await dispatch("sttus", { positional: [], flags: {} });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "unknown subcommand: sttus\ndid you mean 'consult status'?\n");
+});
+
+test("dispatch does not suggest internal subcommands", async () => {
+  const result = await dispatch("task-workr", { positional: [], flags: {} });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr.includes("task-worker"), false);
+});
+
+test("dispatch reports the package version", async () => {
+  for (const token of ["--version", "-v", "version"]) {
+    const result = await dispatch(token, { positional: [], flags: {} });
+
+    assert.equal(result.exitCode, 0, token);
+    assert.match(result.stdout, /^\d+\.\d+\.\d+/u);
+    assert.equal(result.stderr, "");
+  }
 });
 
 test("dispatch rejects an unrecognized boolean flag value", async () => {
@@ -127,8 +152,16 @@ test("dispatch prints command help for agents --help instead of listing profiles
   assert.doesNotMatch(result.stdout, /registryId/u);
 });
 
-test("dispatch answers --help for commands without command-specific usage", async () => {
+test("dispatch answers --help with command-specific usage", async () => {
   const result = await dispatch("doctor", { positional: [], flags: { help: "" } });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /^Usage:\n {2}consult doctor/u);
+});
+
+test("dispatch falls back to the summary for commands without command-specific usage", async () => {
+  const result = await dispatch("task-worker", { positional: [], flags: { help: "" } });
 
   assert.equal(result.exitCode, 0);
   assert.equal(result.stderr, "");

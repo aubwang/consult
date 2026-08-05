@@ -4,6 +4,15 @@ This page holds the operational details behind the shorter examples in the
 [README](../README.md). Run `consult help` for a quick command overview or
 `consult help --reference` for the exact CLI contract installed on your machine.
 
+Every command also answers `--help` with its own flags and examples, and
+`consult --version` prints the installed package version:
+
+```sh
+consult delegate --help   # authority, background, session, and output flags
+consult review --help     # pinned-diff and review-a-Job flags
+consult --version         # installed version, useful in bug reports
+```
+
 ## Profiles
 
 Consult ships three built-in Profile definitions:
