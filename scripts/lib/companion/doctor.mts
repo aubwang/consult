@@ -171,7 +171,7 @@ export async function runDoctor({
   // gate on `consult doctor` without parsing the report.
   return {
     exitCode: report.canDelegate ? 0 : 1,
-    stdout: args.flags?.json ? `${JSON.stringify(report)}\n` : renderDoctor(report),
+    stdout: boolFlag(args.flags?.json) ? `${JSON.stringify(report)}\n` : renderDoctor(report),
     stderr: "",
   };
 }

@@ -95,6 +95,33 @@ test("brokers --cleanup removes stale and malformed brokers but leaves live brok
   assert.equal(await fileExists(malformedFile), false);
 });
 
+test("brokers --cleanup=false does not remove broker state", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const staleFile = await writeBrokerState(workspaceRoot, {
+    jobId: "job-stale",
+    host: "terminal",
+    hostSessionId: "default",
+    profile: "claude",
+    pid: 200,
+  });
+
+  // An explicitly negated --cleanup must never reach the destructive path.
+  for (const flags of [{ cleanup: "false" }, { cleanup: false }]) {
+    const result = await runBrokers({
+      args: { positional: [], flags },
+      deps: {
+        resolveWorkspaceRoot: async () => workspaceRoot,
+        pidAlive: async () => false,
+      },
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout.includes("removed"), false);
+    assert.equal(await fileExists(staleFile), true);
+  }
+});
+
 test("brokers --cleanup with a job id tears down a running broker", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

@@ -1,48 +1,45 @@
 import { pathToFileURL } from "node:url";
 
-import { boolFlag, invalidBooleanFlagValueError, parseArgs } from "./lib/args.mts";
+import { boolFlag, closestName, invalidBooleanFlagValueError, parseArgs } from "./lib/args.mts";
 import type { ParsedArgs } from "./lib/args.mts";
 import { commandUsage, helpRequested } from "./lib/companion/command-help.mts";
 import type { CliResult } from "./lib/companion/job-record-errors.mts";
-import * as agents from "./lib/companion/agents.mts";
-import * as brokers from "./lib/companion/brokers.mts";
-import * as cancel from "./lib/companion/cancel.mts";
-import * as chain from "./lib/companion/chain.mts";
-import * as delegate from "./lib/companion/delegate.mts";
-import * as doctor from "./lib/companion/doctor.mts";
-import * as logs from "./lib/companion/logs.mts";
-import * as result from "./lib/companion/result.mts";
-import * as review from "./lib/companion/review.mts";
-import * as setup from "./lib/companion/setup.mts";
-import * as status from "./lib/companion/status.mts";
-import * as taskResumeCandidate from "./lib/companion/task-resume-candidate.mts";
-import * as taskWorker from "./lib/companion/task-worker.mts";
-import * as wait from "./lib/companion/wait.mts";
+import { resolvePackageVersion } from "./lib/companion/version.mts";
 
 interface CompanionHandler {
   run(subcommand: string, parsedArgs: ParsedArgs): Promise<CliResult>;
 }
 
-const handlers: Record<string, CompanionHandler> = {
-  setup,
-  agents,
-  delegate,
-  doctor,
-  chain,
-  logs,
-  review,
-  status,
-  result,
-  cancel,
-  wait,
-  brokers,
-  "task-worker": taskWorker,
-  "task-resume-candidate": taskResumeCandidate,
+// Handlers load on demand. Importing all of them eagerly pulled the ACP SDK,
+// the sandbox runtime, and zod into every invocation, so commands that never
+// launch a Profile (help, status, logs, agents) paid a few hundred milliseconds
+// of module loading before printing anything.
+const handlers: Record<string, () => Promise<CompanionHandler>> = {
+  setup: () => import("./lib/companion/setup.mts"),
+  agents: () => import("./lib/companion/agents.mts"),
+  delegate: () => import("./lib/companion/delegate.mts"),
+  doctor: () => import("./lib/companion/doctor.mts"),
+  chain: () => import("./lib/companion/chain.mts"),
+  logs: () => import("./lib/companion/logs.mts"),
+  review: () => import("./lib/companion/review.mts"),
+  status: () => import("./lib/companion/status.mts"),
+  result: () => import("./lib/companion/result.mts"),
+  cancel: () => import("./lib/companion/cancel.mts"),
+  wait: () => import("./lib/companion/wait.mts"),
+  brokers: () => import("./lib/companion/brokers.mts"),
+  "task-worker": () => import("./lib/companion/task-worker.mts"),
+  "task-resume-candidate": () => import("./lib/companion/task-resume-candidate.mts"),
 };
+
+// Internal plumbing invoked by Consult itself, not part of the documented
+// surface a user is expected to type or have typo'd.
+const INTERNAL_COMMANDS = new Set(["task-worker", "task-resume-candidate"]);
 
 const summaryUsage = `Usage:
   consult <command> [options]
+  consult <command> --help
   consult help --reference
+  consult --version
 
 Delegate focused work from the current Host to a configured Claude, Codex, or
 opencode Profile.
@@ -61,6 +58,8 @@ Commands:
   cancel     Cancel an active Job and descendants.
   brokers    Inspect or clean Broker state.
   help       Show concise help.
+
+Every command above accepts --help for its own flags and examples.
 
 Profile selection:
   Commands pick a Profile in this order: --agent <profile> on the command, the
@@ -274,12 +273,15 @@ export async function dispatch(
       stderr: "",
     };
   }
-  const handler = handlers[subcommand];
-  if (!handler) {
+  if (subcommand === "--version" || subcommand === "-v" || subcommand === "version") {
+    return { exitCode: 0, stdout: `${resolvePackageVersion()}\n`, stderr: "" };
+  }
+  const loadHandler = handlers[subcommand];
+  if (!loadHandler) {
     return {
       exitCode: 2,
       stdout: "",
-      stderr: `unknown subcommand: ${subcommand}\n\n${summaryUsage}`,
+      stderr: unknownSubcommandError(subcommand),
     };
   }
   // --help never reaches a handler, so a command that would otherwise reject it
@@ -292,6 +294,7 @@ export async function dispatch(
     };
   }
   try {
+    const handler = await loadHandler();
     return await handler.run(subcommand, parsedArgs);
   } catch (error) {
     if ((error as { code?: string }).code === "NO_WORKSPACE") {
@@ -303,6 +306,16 @@ export async function dispatch(
     }
     throw error;
   }
+}
+
+// A wrong subcommand is usually a typo, so lead with the correction and a
+// pointer to help instead of reprinting the whole usage block over the error
+// the user needs to read.
+export function unknownSubcommandError(subcommand: string): string {
+  const known = Object.keys(handlers).filter((name) => !INTERNAL_COMMANDS.has(name));
+  const suggestion = closestName(subcommand, known);
+  const hint = suggestion ? `did you mean 'consult ${suggestion}'?` : "run 'consult help'";
+  return `unknown subcommand: ${subcommand}\n${hint}\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

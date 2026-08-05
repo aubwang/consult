@@ -8,6 +8,7 @@ import { jobResultEnvelope } from "../job-result-contract.mts";
 import { addJobRelationships } from "../delegation-chain.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
+import { boolFlag, invalidBooleanFlagValueError, unsupportedFlagError } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import type { CommandResult } from "./output.mts";
 
@@ -26,6 +27,14 @@ export async function run(subcommand: string, parsedArgs: ParsedArgs): Promise<C
 }
 
 export async function runResult({ args, deps = {} }: RunResultOptions): Promise<CommandResult> {
+  const unsupported = unsupportedFlagError(args.flags, ["json"]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  const invalidBoolean = invalidBooleanFlagValueError(args.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
   const jobId = args.positional?.[0];
   if (!jobId) {
@@ -44,7 +53,7 @@ export async function runResult({ args, deps = {} }: RunResultOptions): Promise<
       stderr: `job not finished; current status: ${record.status}\n`,
     };
   }
-  if (args.flags?.json) {
+  if (boolFlag(args.flags?.json)) {
     let records;
     try {
       records = await listWorkspaceJobRecords(workspaceRoot);
