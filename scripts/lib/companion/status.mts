@@ -16,7 +16,7 @@ import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.
 import { pollUntilFinalRecord } from "./job-poll.mts";
 import { runLogs } from "./logs.mts";
 import type { CommandResult, OutputDeps } from "./output.mts";
-import { boolFlag } from "../args.mts";
+import { boolFlag, invalidBooleanFlagValueError, unsupportedFlagError } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 
 const DEFAULT_STATUS_JOB_LIMIT = 20;
@@ -42,7 +42,16 @@ export async function runStatus({
   args: ParsedArgs;
   deps?: StatusDeps;
 }): Promise<CommandResult> {
-  if (args.flags?.follow !== undefined) {
+  const unsupported = unsupportedFlagError(args.flags, ["follow", "wait", "json", "all", "tail"]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  const invalidBoolean = invalidBooleanFlagValueError(args.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
+  const json = boolFlag(args.flags?.json);
+  if (boolFlag(args.flags?.follow)) {
     if (!args.positional?.[0]) {
       return { exitCode: 2, stdout: "", stderr: "job id is required\n" };
     }
@@ -53,7 +62,7 @@ export async function runStatus({
   if (jobId) {
     let record: JobRecord;
     try {
-      record = args.flags?.wait
+      record = boolFlag(args.flags?.wait)
         ? await waitForFinalRecord(workspaceRoot, jobId, deps)
         : await readWorkspaceJobRecord(workspaceRoot, jobId);
     } catch (error) {
@@ -73,7 +82,7 @@ export async function runStatus({
       throw error;
     }
     const enrichedRecord = addJobRelationships(record, records);
-    if (args.flags?.json) {
+    if (json) {
       return {
         exitCode: 0,
         stdout: `${JSON.stringify({
@@ -108,7 +117,7 @@ export async function runStatus({
     : enrichedRecords.slice(0, DEFAULT_STATUS_JOB_LIMIT);
   return {
     exitCode: 0,
-    stdout: args.flags?.json
+    stdout: json
       ? `${JSON.stringify({
           schemaVersion: JOB_RESULT_SCHEMA_VERSION,
           jobs: visibleRecords.map((record) =>

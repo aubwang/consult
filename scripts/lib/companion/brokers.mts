@@ -11,6 +11,7 @@ import {
 import type { TeardownBrokerSessionResult } from "../broker-lifecycle.mts";
 import { isRecord } from "../objects.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
+import { boolFlag, invalidBooleanFlagValueError, unsupportedFlagError } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import type { CliResult } from "./job-record-errors.mts";
 
@@ -55,6 +56,15 @@ export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<
 }
 
 export async function runBrokers({ args, deps = {} }: RunBrokersOptions): Promise<CliResult> {
+  const unsupported = unsupportedFlagError(args.flags, ["cleanup", "json"]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  const invalidBoolean = invalidBooleanFlagValueError(args.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
+  const json = boolFlag(args.flags?.json);
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
   const brokers = await listBrokerRows(workspaceRoot, deps);
   const jobId = args.positional?.[0];
@@ -64,7 +74,7 @@ export async function runBrokers({ args, deps = {} }: RunBrokersOptions): Promis
     return { exitCode: 2, stdout: "", stderr: `broker not found for job: ${jobId}\n` };
   }
 
-  if (args.flags?.cleanup) {
+  if (boolFlag(args.flags?.cleanup)) {
     const cleaned = await cleanupBrokers({
       workspaceRoot,
       brokers: selected,
@@ -73,16 +83,14 @@ export async function runBrokers({ args, deps = {} }: RunBrokersOptions): Promis
     });
     return {
       exitCode: 0,
-      stdout: args.flags?.json
-        ? `${JSON.stringify(cleaned)}\n`
-        : renderCleanup(cleaned, Boolean(jobId)),
+      stdout: json ? `${JSON.stringify(cleaned)}\n` : renderCleanup(cleaned, Boolean(jobId)),
       stderr: "",
     };
   }
 
   return {
     exitCode: 0,
-    stdout: args.flags?.json ? `${JSON.stringify(selected)}\n` : renderBrokerTable(selected),
+    stdout: json ? `${JSON.stringify(selected)}\n` : renderBrokerTable(selected),
     stderr: "",
   };
 }

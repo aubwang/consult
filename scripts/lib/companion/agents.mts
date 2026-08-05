@@ -1,4 +1,10 @@
-import { missingFlagValueError, stringFlag } from "../args.mts";
+import {
+  boolFlag,
+  invalidBooleanFlagValueError,
+  missingFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { profilesPath } from "../broker-endpoint.mts";
 import {
@@ -37,6 +43,14 @@ export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<
 
 export async function runAgents({ args, deps = {} }: RunAgentsOptions): Promise<CliResult> {
   const profilePath = profilesPath();
+  const unsupported = unsupportedFlagError(args.flags, ["set", "host", "json"]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  const invalidBoolean = invalidBooleanFlagValueError(args.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
   const usageError = missingFlagValueError(args.flags, ["set", "host"]);
   if (usageError) {
     return { exitCode: 2, stdout: "", stderr: `${usageError}\n` };
@@ -93,7 +107,7 @@ export async function runAgents({ args, deps = {} }: RunAgentsOptions): Promise<
   const rows = profileRows(profiles);
   return {
     exitCode: 0,
-    stdout: args.flags?.json ? `${JSON.stringify(rows)}\n` : renderProfilesTable(rows),
+    stdout: boolFlag(args.flags?.json) ? `${JSON.stringify(rows)}\n` : renderProfilesTable(rows),
     stderr: "",
   };
 }

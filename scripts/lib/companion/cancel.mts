@@ -1,3 +1,5 @@
+import { unsupportedFlagError } from "../args.mts";
+import type { FlagValue } from "../args.mts";
 import type { BrokerClient } from "../broker-client.mts";
 import { connectBrokerSession as defaultConnectBrokerSession } from "../broker-lifecycle.mts";
 import type { BrokerLifecycleInput } from "../broker-lifecycle.mts";
@@ -33,7 +35,7 @@ interface CancelDeps {
 }
 
 interface RunCancelOptions {
-  args: { positional?: string[]; flags?: Record<string, unknown> };
+  args: { positional?: string[]; flags?: Record<string, FlagValue | undefined> };
   env?: NodeJS.ProcessEnv;
   deps?: CancelDeps;
 }
@@ -50,6 +52,10 @@ export async function runCancel({
   env = process.env,
   deps = {},
 }: RunCancelOptions): Promise<CliResult> {
+  const unsupported = unsupportedFlagError(args.flags, []);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
   const jobId = args.positional?.[0];
   if (!jobId) {

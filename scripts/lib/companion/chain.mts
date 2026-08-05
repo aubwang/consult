@@ -10,6 +10,7 @@ import {
   jobResultPayload,
 } from "../job-result-contract.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
+import { boolFlag, invalidBooleanFlagValueError, unsupportedFlagError } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { briefText } from "./brief-text.mts";
 import type { CommandResult } from "./output.mts";
@@ -54,6 +55,14 @@ export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<
 }
 
 export async function runChain({ args, deps = {} }: RunChainOptions): Promise<CommandResult> {
+  const unsupported = unsupportedFlagError(args.flags, ["json"]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  const invalidBoolean = invalidBooleanFlagValueError(args.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
   const jobId = args.positional?.[0];
   if (!jobId) {
     return { exitCode: 2, stdout: "", stderr: "job id is required\n" };
@@ -85,7 +94,7 @@ export async function runChain({ args, deps = {} }: RunChainOptions): Promise<Co
   const rollup = chainRollup(enrichedRequested, enrichedRecords);
   const chainRecordRows = enrichedRecords.map((record) => chainRecord(record, rollup, jobId));
 
-  if (args.flags?.json) {
+  if (boolFlag(args.flags?.json)) {
     return {
       exitCode: 0,
       stdout: `${JSON.stringify({

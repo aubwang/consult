@@ -124,7 +124,10 @@ test("logs rejects unknown flags and an empty tail value before workspace discov
   });
 
   assert.equal(unknown.exitCode, 2);
-  assert.equal(unknown.stderr, "--tial is not supported by this command\n");
+  assert.equal(
+    unknown.stderr,
+    "--tial is not supported by this command; did you mean --tail?\n",
+  );
   assert.equal(emptyTail.exitCode, 2);
   assert.match(emptyTail.stderr, /non-negative integer/u);
 });

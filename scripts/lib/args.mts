@@ -71,8 +71,52 @@ export function unsupportedFlagError(
   allowedNames: readonly string[],
 ): string | null {
   const allowed = new Set(allowedNames);
-  const unsupported = Object.keys(flags ?? {}).find((name) => !allowed.has(name));
-  return unsupported ? `--${unsupported} is not supported by this command` : null;
+  const unsupported = Object.keys(flags ?? {}).find(
+    (name) => !allowed.has(name) && !ALWAYS_ALLOWED_FLAGS.has(name),
+  );
+  if (!unsupported) return null;
+  const suggestion = closestName(unsupported, allowedNames);
+  return suggestion
+    ? `--${unsupported} is not supported by this command; did you mean --${suggestion}?`
+    : `--${unsupported} is not supported by this command`;
+}
+
+// `--help` is answered by the dispatcher before a handler runs, so no command
+// needs to repeat it in its allow-list to avoid rejecting it as unsupported.
+const ALWAYS_ALLOWED_FLAGS = new Set(["help"]);
+
+// Suggest a near-miss only when the typo is close enough that the guess is more
+// likely to help than to mislead.
+export function closestName(
+  candidate: string,
+  names: readonly string[],
+  maxDistance = 3,
+): string | null {
+  let best: string | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const limit = Math.min(maxDistance, Math.max(1, Math.floor(candidate.length / 2) + 1));
+  for (const name of names) {
+    const distance = editDistance(candidate, name);
+    if (distance < bestDistance) {
+      best = name;
+      bestDistance = distance;
+    }
+  }
+  return best !== null && bestDistance <= limit ? best : null;
+}
+
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitution = previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1);
+      current[j] = Math.min(current[j - 1] + 1, previous[j] + 1, substitution);
+    }
+    previous = current;
+  }
+  return previous[b.length];
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
