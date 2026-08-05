@@ -70,7 +70,10 @@ Profile and model:
                       not read Host agent config, so pass this when Host config
                       would otherwise choose the model.
   --effort <level>    Reasoning effort passed through to the Profile.
-  --label <text>      Non-unique human metadata, trimmed to 80 characters.
+  --label <text>      Non-unique human metadata. Surrounding whitespace is
+                      trimmed; the result must be 1-80 characters with no
+                      control characters, and a longer label is rejected
+                      rather than shortened.
 
 Authority (default is read-only):
   --read-only         Inspect only; edits, fetch, and execute are denied.
@@ -86,7 +89,10 @@ Authority (default is read-only):
 
 Background and dependencies:
   --background        Queue the Job, start a detached worker, and return now.
-  --wait              Foreground-style blocking for a backgrounded Job.
+  --wait              Block until the turn finishes. Delegate already blocks by
+                      default, so this only states that explicitly and cannot be
+                      combined with --background. To queue a Job and block on it
+                      later, use --background and then consult wait <job-id>.
   --after <job-id>    Repeatable prerequisite; requires --background. A failed,
                       cancelled, or skipped prerequisite skips this Job.
 

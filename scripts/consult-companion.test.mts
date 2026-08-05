@@ -6,7 +6,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { dispatch } from "./consult-companion.mts";
 import type { ParsedArgs } from "./lib/args.mts";
@@ -450,6 +450,60 @@ test("stable consult CLI drains large JSON responses to a pipe", async (t) => {
   assert.equal(result.code, 0);
   assert.ok(Buffer.byteLength(stdout) > 4 * 1024 * 1024);
   assert.equal(JSON.parse(stdout).jobs[0].job.id, "job-large");
+});
+
+// Attaching a stream 'error' listener suppresses Node's default throw, so the
+// handler in bin/consult owns every failure mode. A silent return would drop
+// output and still report success.
+test("stable consult CLI fails loudly when writing output errors", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-cli-write-error-"));
+  const preloadPath = path.join(root, "force-write-error.mjs");
+  t.after(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+  fs.writeFileSync(
+    preloadPath,
+    [
+      "const stream = process.stdout;",
+      "const original = stream.write.bind(stream);",
+      "let failed = false;",
+      "stream.write = (chunk, enc, cb) => {",
+      "  if (!failed) {",
+      "    failed = true;",
+      "    const error = new Error('forced EIO');",
+      "    error.code = 'EIO';",
+      "    process.nextTick(() => stream.emit('error', error));",
+      "    return true;",
+      "  }",
+      "  return original(chunk, enc, cb);",
+      "};",
+    ].join("\n"),
+  );
+
+  let child: ChildProcess | undefined;
+  try {
+    child = spawn(
+      process.execPath,
+      ["--import", pathToFileURL(preloadPath).href, stableCliPath, "help"],
+      { env: { ...process.env, CONSULT_DATA_DIR: root }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    t.skip(`spawn failed: ${(error as Error).message}`);
+    return;
+  }
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr!.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+  child.stdout!.resume();
+
+  const result = await waitForChild(child);
+  if (result.error) {
+    t.skip(`spawn failed: ${result.error.message}`);
+    return;
+  }
+
+  assert.notEqual(result.code, 0);
+  assert.match(Buffer.concat(stderrChunks).toString("utf8"), /error writing output: EIO/u);
 });
 
 interface WaitForChildResult {

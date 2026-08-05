@@ -3,11 +3,28 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// A broken pipe (`consult status | head`) is a normal way to stop reading
-// output, not an error worth a stack trace. Registered before any write.
+// Registered before any write. Attaching these listeners suppresses Node's
+// default throw-on-stream-error, so they have to decide every case: a silent
+// return here would drop output and still exit 0.
+let reportedStreamError = false;
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (error) => {
+    // A broken pipe (`consult status | head`) is a normal way to stop reading
+    // output, not an error worth a stack trace.
     if (error?.code === "EPIPE") process.exit(0);
+    // Anything else (EIO, ENOSPC) means output was lost. Fail loudly rather
+    // than handing back a truncated result under a success exit code.
+    process.exitCode = 1;
+    if (reportedStreamError) return;
+    reportedStreamError = true;
+    // Only stdout failures can be explained on stderr; a broken stderr has
+    // nowhere left to report to, and writing would re-enter this handler.
+    if (stream === process.stderr) return;
+    try {
+      process.stderr.write(`consult: error writing output: ${error?.code ?? error}\n`);
+    } catch {
+      // stderr is unusable too; the nonzero exit code is the only signal left.
+    }
   });
 }
 
