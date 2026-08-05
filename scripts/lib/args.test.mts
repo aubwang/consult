@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   BOOLEAN_FLAGS,
   boolFlag,
+  closestName,
   invalidBooleanFlagValueError,
   missingFlagValueError,
   parseArgs,
@@ -160,4 +161,31 @@ test("unsupportedFlagError rejects flags outside a command contract", () => {
     "--allow-fetch is not supported by this command",
   );
   assert.equal(unsupportedFlagError({ agent: "codex" }, ["agent"]), null);
+});
+
+test("unsupportedFlagError suggests a near-miss and allows --help", () => {
+  assert.equal(
+    unsupportedFlagError({ agnt: "codex" }, ["agent", "json"]),
+    "--agnt is not supported by this command; did you mean --agent?",
+  );
+  // A flag with no plausible neighbour must not get a misleading guess.
+  assert.equal(
+    unsupportedFlagError({ "allow-fetch": true }, ["json"]),
+    "--allow-fetch is not supported by this command",
+  );
+  // The dispatcher answers --help before a handler runs, so no allow-list
+  // needs to repeat it.
+  assert.equal(unsupportedFlagError({ help: "" }, ["json"]), null);
+});
+
+test("closestName only suggests names within a proportional edit distance", () => {
+  const commands = ["status", "delegate", "review", "logs", "result"];
+
+  assert.equal(closestName("sttus", commands), "status");
+  assert.equal(closestName("delgate", commands), "delegate");
+  assert.equal(closestName("frobnicate", commands), null);
+  // Very short input is close to everything, so it must not guess.
+  assert.equal(closestName("l", commands), null);
+  assert.equal(closestName("logs", commands), "logs");
+  assert.equal(closestName("anything", []), null);
 });

@@ -62,7 +62,9 @@ export async function runLogs({
   if (!jobId) {
     return { exitCode: 2, stdout: "", stderr: "job id is required\n" };
   }
-  if (args.flags?.follow && args.flags?.json) {
+  const follow = boolFlag(args.flags?.follow);
+  const json = boolFlag(args.flags?.json);
+  if (follow && json) {
     return { exitCode: 2, stdout: "", stderr: "--json is not supported with --follow\n" };
   }
   const tail = resolveTailLines(args);
@@ -77,7 +79,7 @@ export async function runLogs({
     return jobLookupErrorResult(error, jobId);
   }
 
-  if (args.flags?.follow) {
+  if (follow) {
     return await followLogs(workspaceRoot, jobId, tail.value, deps);
   }
 
@@ -90,7 +92,7 @@ export async function runLogs({
 
   return {
     exitCode: 0,
-    stdout: args.flags?.json
+    stdout: json
       ? `${JSON.stringify(tailEntries(parsed.entries, tail.value))}\n`
       : tailRenderedText(renderLogEntries(parsed.entries), tail.value),
     stderr: "",

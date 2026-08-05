@@ -14,7 +14,13 @@ import { installAndVerify as defaultInstallAndVerify } from "../setup-install.mt
 import type { InstallAndVerifyOptions, InstallDeps, InstallResult } from "../setup-install.mts";
 import { buildStatusTable } from "../setup-probe.mts";
 import type { ProbeDeps, StatusRow } from "../setup-probe.mts";
-import { missingFlagValueError, stringFlag } from "../args.mts";
+import {
+  boolFlag,
+  invalidBooleanFlagValueError,
+  missingFlagValueError,
+  stringFlag,
+  unsupportedFlagError,
+} from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import type { CliResult, CodedError } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
@@ -39,6 +45,14 @@ export async function runSetup({
   deps?: SetupDeps;
 }): Promise<CliResult> {
   const profilePath = profilesPath();
+  const unsupported = unsupportedFlagError(args.flags, ["set-default", "install", "json"]);
+  if (unsupported) {
+    return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
+  }
+  const invalidBoolean = invalidBooleanFlagValueError(args.flags);
+  if (invalidBoolean) {
+    return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
+  }
   const usageError = missingFlagValueError(args.flags, ["set-default", "install"]);
   if (usageError) {
     return { exitCode: 2, stdout: "", stderr: `${usageError}\n` };
@@ -82,7 +96,7 @@ export async function runSetup({
     throw error;
   }
   const registryStatus: StatusRow[] = await buildStatusTable(registry, profiles, deps);
-  if (args.flags?.json) {
+  if (boolFlag(args.flags?.json)) {
     return {
       exitCode: 0,
       stdout: `${JSON.stringify({

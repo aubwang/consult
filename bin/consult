@@ -3,20 +3,45 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const sourceEntry = new URL("../scripts/consult-companion.mts", import.meta.url);
-const installedEntry = new URL("../dist/scripts/consult-companion.mjs", import.meta.url);
-const entry = fs.existsSync(fileURLToPath(sourceEntry)) ? sourceEntry : installedEntry;
-const { dispatch } = await import(entry.href);
+// A broken pipe (`consult status | head`) is a normal way to stop reading
+// output, not an error worth a stack trace. Registered before any write.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error) => {
+    if (error?.code === "EPIPE") process.exit(0);
+  });
+}
 
-const sourceArgs = new URL("../scripts/lib/args.mts", import.meta.url);
-const installedArgs = new URL("../dist/scripts/lib/args.mjs", import.meta.url);
-const argsEntry = fs.existsSync(fileURLToPath(sourceArgs)) ? sourceArgs : installedArgs;
-const { parseArgs } = await import(argsEntry.href);
+function resolveEntry(relativeSource, relativeInstalled) {
+  const source = new URL(relativeSource, import.meta.url);
+  return fs.existsSync(fileURLToPath(source))
+    ? source
+    : new URL(relativeInstalled, import.meta.url);
+}
+
+const { dispatch } = await import(
+  resolveEntry("../scripts/consult-companion.mts", "../dist/scripts/consult-companion.mjs").href
+);
+const { parseArgs } = await import(
+  resolveEntry("../scripts/lib/args.mts", "../dist/scripts/lib/args.mjs").href
+);
 
 const [, , sub, ...rest] = process.argv;
-const parsed = parseArgs(rest ?? []);
-const { exitCode, stdout, stderr } = await dispatch(sub ?? "help", parsed);
 
-if (stdout) process.stdout.write(stdout);
-if (stderr) process.stderr.write(stderr);
-process.exitCode = exitCode;
+try {
+  const { exitCode, stdout, stderr } = await dispatch(sub ?? "help", parseArgs(rest ?? []));
+  if (stdout) process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
+  process.exitCode = exitCode;
+} catch (error) {
+  // An unexpected throw reaching here is a Consult bug, not user error. Print a
+  // single actionable line and keep the stack behind CONSULT_DEBUG so the
+  // normal failure mode is readable.
+  if (process.env.CONSULT_DEBUG) {
+    console.error(error);
+  } else {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`consult: internal error: ${message}\n`);
+    process.stderr.write("re-run with CONSULT_DEBUG=1 for the full stack trace\n");
+  }
+  process.exitCode = 1;
+}

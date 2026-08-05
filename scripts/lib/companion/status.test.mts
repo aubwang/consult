@@ -21,6 +21,47 @@ test("status lists an empty table when there are no jobs", async (t) => {
   assert.match(result.stdout, /\(no jobs\)/);
 });
 
+test("status honours negated boolean flags", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const deps = { resolveWorkspaceRoot: async () => workspaceRoot };
+
+  // `--json=false` and `--no-json` both mean "human output", so neither may be
+  // read as a bare presence check.
+  for (const flags of [{ json: "false" }, { json: false }]) {
+    const result = await runStatus({ args: { positional: [], flags }, deps });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /\(no jobs\)/);
+  }
+
+  // `--no-follow` must not route into follow mode and demand a job id.
+  const notFollowing = await runStatus({
+    args: { positional: [], flags: { follow: false } },
+    deps,
+  });
+
+  assert.equal(notFollowing.exitCode, 0);
+  assert.match(notFollowing.stdout, /\(no jobs\)/);
+});
+
+test("status rejects an unsupported flag with a suggestion", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+
+  const result = await runStatus({
+    args: { positional: [], flags: { jsn: "" } },
+    deps: {
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "--jsn is not supported by this command; did you mean --json?\n");
+});
+
 test("status lists all jobs newest first", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
