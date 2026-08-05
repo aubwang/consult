@@ -22,9 +22,10 @@ For a longer second opinion, add `--background --label "<purpose>"`, then run
 ## opencode specifics
 
 - Pass `--model <provider>/<model>` as configured in opencode, or leave
-  `--model` unset to use opencode's configured default. Run
-  `consult help --reference` rather than guessing names, and preserve a
-  user-requested provider/model or effort.
+  `--model` unset to use opencode's configured default. The prefix picks the
+  provider, so qualify it when the same model is served by more than one; a
+  bare name does not resolve. Run `consult help --reference` rather than
+  guessing names, and preserve a user-requested provider/model or effort.
 - Confinement is unavailable, so Jobs run with the Host's ambient authority;
   read-only is cooperative under inheritance. State this limitation when it
   materially affects the task.
