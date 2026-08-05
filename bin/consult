@@ -6,17 +6,22 @@ import { fileURLToPath } from "node:url";
 // Registered before any write. Attaching these listeners suppresses Node's
 // default throw-on-stream-error, so they have to decide every case: a silent
 // return here would drop output and still exit 0.
-let reportedStreamError = false;
+let fatalStreamError = false;
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (error) => {
-    // A broken pipe (`consult status | head`) is a normal way to stop reading
-    // output, not an error worth a stack trace.
-    if (error?.code === "EPIPE") process.exit(0);
+    if (error?.code === "EPIPE") {
+      // A broken pipe (`consult status | head`) is a normal way to stop reading
+      // output — but only when nothing has already failed fatally. Reporting an
+      // earlier EIO can itself hit EPIPE on a closed stderr, and exiting 0 there
+      // would turn lost output back into a success.
+      if (!fatalStreamError) process.exit(0);
+      return;
+    }
     // Anything else (EIO, ENOSPC) means output was lost. Fail loudly rather
     // than handing back a truncated result under a success exit code.
     process.exitCode = 1;
-    if (reportedStreamError) return;
-    reportedStreamError = true;
+    if (fatalStreamError) return;
+    fatalStreamError = true;
     // Only stdout failures can be explained on stderr; a broken stderr has
     // nowhere left to report to, and writing would re-enter this handler.
     if (stream === process.stderr) return;

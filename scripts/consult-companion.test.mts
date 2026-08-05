@@ -461,24 +461,7 @@ test("stable consult CLI fails loudly when writing output errors", async (t) => 
   t.after(async () => {
     await fsp.rm(root, { recursive: true, force: true });
   });
-  fs.writeFileSync(
-    preloadPath,
-    [
-      "const stream = process.stdout;",
-      "const original = stream.write.bind(stream);",
-      "let failed = false;",
-      "stream.write = (chunk, enc, cb) => {",
-      "  if (!failed) {",
-      "    failed = true;",
-      "    const error = new Error('forced EIO');",
-      "    error.code = 'EIO';",
-      "    process.nextTick(() => stream.emit('error', error));",
-      "    return true;",
-      "  }",
-      "  return original(chunk, enc, cb);",
-      "};",
-    ].join("\n"),
-  );
+  writeStdoutFailurePreload(preloadPath);
 
   let child: ChildProcess | undefined;
   try {
@@ -505,6 +488,63 @@ test("stable consult CLI fails loudly when writing output errors", async (t) => 
   assert.notEqual(result.code, 0);
   assert.match(Buffer.concat(stderrChunks).toString("utf8"), /error writing output: EIO/u);
 });
+
+// Reporting a fatal stdout failure writes to stderr, which can itself EPIPE on
+// a closed pipe. Treating that EPIPE as a clean exit would turn output we
+// already lost back into a success.
+test("stable consult CLI keeps a fatal output failure when stderr is closed", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "consult-cli-write-error-epipe-"));
+  const preloadPath = path.join(root, "force-write-error.mjs");
+  t.after(async () => {
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+  writeStdoutFailurePreload(preloadPath);
+
+  let child: ChildProcess | undefined;
+  try {
+    child = spawn(
+      process.execPath,
+      ["--import", pathToFileURL(preloadPath).href, stableCliPath, "help"],
+      { env: { ...process.env, CONSULT_DATA_DIR: root }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    t.skip(`spawn failed: ${(error as Error).message}`);
+    return;
+  }
+
+  child.stdout!.resume();
+  // Slam the stderr pipe shut so the EIO report itself hits EPIPE.
+  child.stderr!.destroy();
+
+  const result = await waitForChild(child);
+  if (result.error) {
+    t.skip(`spawn failed: ${result.error.message}`);
+    return;
+  }
+
+  assert.notEqual(result.code, 0);
+});
+
+function writeStdoutFailurePreload(preloadPath: string): void {
+  fs.writeFileSync(
+    preloadPath,
+    [
+      "const stream = process.stdout;",
+      "const original = stream.write.bind(stream);",
+      "let failed = false;",
+      "stream.write = (chunk, enc, cb) => {",
+      "  if (!failed) {",
+      "    failed = true;",
+      "    const error = new Error('forced EIO');",
+      "    error.code = 'EIO';",
+      "    process.nextTick(() => stream.emit('error', error));",
+      "    return true;",
+      "  }",
+      "  return original(chunk, enc, cb);",
+      "};",
+    ].join("\n"),
+  );
+}
 
 interface WaitForChildResult {
   error?: Error;
