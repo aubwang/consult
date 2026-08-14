@@ -11,8 +11,9 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 
 - Consult Core owns Profile setup, Host Identity, Jobs, Broker/inline ACP
   transport, permissions, artifacts, resume, cancellation, and lineage.
-- The public surface is the `consult` CLI plus optional agent skills that call
-  that CLI.
+- The public surface is the `consult` CLI and nothing else. Delegation
+  judgment ships as `consult help` topics inside the binary, not as agent
+  skills, plugins, or Host adapters.
 - Shipped Host autodetection covers terminal, Codex, and opencode. Explicit
   `CONSULT_HOST` values support custom Hosts without a Host-specific adapter.
 - The built-in Profile registry contains `claude`, `codex`, and `opencode`.
@@ -51,11 +52,13 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 ```text
 consult/
 ├── bin/consult                         # stable JS executable
-├── scripts/consult-companion.mts       # CLI dispatch and public help
+├── scripts/consult-companion.mts       # CLI dispatch
 ├── scripts/consult-broker.mts          # background Job ACP process
 ├── scripts/registry.json               # built-in Profile catalog
 ├── scripts/lib/
 │   ├── companion/                      # command implementations
+│   ├── companion/help.mts              # overview and progressive topics
+│   ├── companion/command-help.mts      # per-command usage
 │   ├── inline-turn-runner.mts          # foreground/isolated inline transport
 │   ├── broker-job-runtime.mts           # shared Job/session runtime
 │   ├── job-agent.mts                    # shared ACP agent wiring
@@ -68,7 +71,6 @@ consult/
 │   ├── egress-proxy.mts                 # authenticated pinned-address proxy + accounting
 │   ├── sandbox-runtime-launch.mts       # native confined Profile launch
 │   └── sandbox-runtime-policy.mts       # pinned generated-policy transform
-├── skills/                              # CLI-calling agent skills
 ├── docs/conformance/                    # Profile probe records
 └── docs/adr/                            # accepted decisions
 ```

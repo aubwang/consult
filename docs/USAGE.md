@@ -1,17 +1,23 @@
 # Consult Usage Reference
 
 This page holds the operational details behind the shorter examples in the
-[README](../README.md). Run `consult help` for a quick command overview or
-`consult help --reference` for the exact CLI contract installed on your machine.
-
-Every command also answers `--help` with its own flags and examples, and
-`consult --version` prints the installed package version:
+[README](../README.md). The installed CLI documents itself, and its help is
+authoritative for the version on your machine:
 
 ```sh
-consult delegate --help   # authority, background, session, and output flags
-consult review --help     # pinned-diff and review-a-Job flags
+consult help              # commands, topics, and where to start
+consult help <topic>      # delegation, authority, profiles, review, jobs,
+                          # chains, contracts, guardrails
+consult help <command>    # one command's flags and examples
+consult delegate --help   # the same thing, from the command itself
+consult help --all        # every topic at once
 consult --version         # installed version, useful in bug reports
 ```
+
+`consult help` is deliberately short and names the topics; each topic page is
+one focused read. That is also how a coding agent learns to delegate well —
+Consult ships no skills or plugins, so the CLI can never disagree with a
+separately installed document.
 
 ## Profiles
 
@@ -452,33 +458,32 @@ reap all of them. Raise the ceiling with `CONSULT_FORCE_KILL_GRACE_MS`
 (milliseconds, default `5000`); teardown returns as soon as the group is gone,
 so a larger value costs nothing when the host is healthy.
 
-## Optional agent skills
+## Teaching a Host to delegate
 
-The repository ships a generic `$consult` skill and convenience skills for
-asking Claude, Codex, and opencode under [`skills/`](../skills/). Install the
-desired skill for coding agents in the current project with:
+Consult ships no agent skills, plugins, or Host adapters: the CLI is the whole
+product surface, and `consult help` carries the judgment a Host needs. Point
+your agent at it once, in whatever instruction file it already reads
+(`AGENTS.md`, `CLAUDE.md`, a system prompt):
 
-```sh
-npx skills add aubwang/consult
-```
+> For second opinions, delegated implementation, or cold review, use Consult.
+> Run `consult help` first.
 
-Project-local installation is the default. To make the selected skill available
-to the selected coding agents across projects, install it globally:
+From there the agent discloses what it needs progressively:
 
-```sh
-npx skills add aubwang/consult --global
-```
+| Topic | Covers |
+| --- | --- |
+| `delegation` | When a handoff pays for itself, cold-prompt structure, model and effort routing. |
+| `authority` | Read-only, write, isolated, fetch, and sandbox modes, and how to phrase authority constraints in a prompt. |
+| `profiles` | Claude, Codex, and opencode specifics: model naming, authentication, per-Profile limits. |
+| `review` | Pinned reviews, reviewing a completed Job, and running the fix loop outside the main thread. |
+| `jobs` | Background Jobs, waiting, dependencies, sessions, and bounded inspection. |
+| `chains` | Nested delegation, authority ceilings, and lineage. |
+| `contracts` | The semantic report contract, Job Result JSON, and exit codes. |
+| `guardrails` | Treating results as data, secrets, and never widening authority on failure. |
 
-The Skills CLI prompts for the Consult skill and detected coding agents. Its
-explicit selection flags remain available for non-interactive setup, but the
-short commands above are the recommended interactive path.
+`consult help --all` prints the whole set in one pass for a Host that wants it
+preloaded rather than fetched on demand.
 
-Skill installation is optional and separate from installing the Consult CLI.
-If you do not want to use the Skills CLI, copy or symlink one of the four
-user-facing folders (`consult`, `ask-claude`, `ask-codex`, or `ask-opencode`)
-from the installed npm package into the relevant agent's local or global skill
-directory.
-
-The tracked [`opencode` skill entrypoint](../.opencode/skills/consult) exposes
-the generic skill from a repository checkout. These helpers teach a Host when
-and how to delegate, but the CLI remains the integration boundary.
+An agent that only ever runs `consult help` is reading the same version it is
+about to invoke, which is the point: guidance shipped separately from the binary
+drifts from it.

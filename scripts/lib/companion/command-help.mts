@@ -114,8 +114,9 @@ Examples:
   consult delegate --read-only --include-diff --base main -- "review this branch"
   consult delegate --background --label "api audit" -- "audit the API surface"
 
---write and --read-only are mutually exclusive. Run consult help --reference for
-full authority, isolation, and JSON semantics.
+--write and --read-only are mutually exclusive.
+
+See also: consult help delegation, consult help authority, consult help jobs
 `;
 
 const reviewUsage = `Usage:
@@ -142,6 +143,8 @@ Options:
 Examples:
   consult review --base main
   consult review --agent claude --job job-01H...
+
+See also: consult help review, consult help profiles
 `;
 
 const doctorUsage = `Usage:
@@ -171,6 +174,8 @@ Examples:
   consult doctor
   consult doctor --agent claude
   consult doctor --agent codex --write --isolated
+
+See also: consult help profiles, consult help authority
 `;
 
 const statusUsage = `Usage:
@@ -221,6 +226,8 @@ Exit codes:
 Examples:
   consult wait <job-id>
   consult wait --summary <job-id> <job-id>
+
+See also: consult help jobs, consult help contracts
 `;
 
 const logsUsage = `Usage:
@@ -309,6 +316,9 @@ Examples:
   consult brokers <job-id> --cleanup
 `;
 
+// Every user-facing command owns command-specific usage. `consult help <name>`
+// resolves against this set too, so a Host that guesses `consult help delegate`
+// lands on the flags instead of an error.
 const commandUsages: Record<string, string> = {
   agents: agentsUsage,
   brokers: brokersUsage,
@@ -323,6 +333,8 @@ const commandUsages: Record<string, string> = {
   status: statusUsage,
   wait: waitUsage,
 };
+
+export const COMMANDS_WITH_USAGE: readonly string[] = Object.keys(commandUsages);
 
 export function helpRequested(flags: Record<string, FlagValue | undefined> | undefined): boolean {
   const value = flags?.help;

@@ -6,14 +6,16 @@ job-scoped Brokers.
 
 ## Product Boundaries
 
-- Keep Consult product behavior in `scripts/`, `bin/`, `skills/`, tracked
-  opencode skill entrypoints under `.opencode/skills/`, and docs.
+- Keep Consult product behavior in `scripts/`, `bin/`, and docs. The `consult`
+  CLI is the entire product surface; Consult ships no agent skills, plugins, or
+  Host-side entrypoints.
+- Teach delegation judgment through `consult help` topics in
+  `scripts/lib/companion/help.mts`, not through a second document a Host has to
+  install. Keep the overview one screenful and put depth behind
+  `consult help <topic>`.
 - Treat local agent workspace state as untracked. Do not commit `.cruise/`,
-  `.agents/`, `.claude/`, `.codex/`, `.tmp/`, `skills-lock.json`, or
-  `HANDOFF.md`.
-- Treat tracked symlinks under `.opencode/skills/` as product entrypoints for
-  opencode. Other `.opencode/` files are local tool state unless explicitly
-  documented otherwise.
+  `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.tmp/`, `skills-lock.json`,
+  or `HANDOFF.md`.
 - Keep Cruise policy and session state out of this repo. Consult may implement
   delegation mechanisms, but Cruise owns Cruise operating policy.
 

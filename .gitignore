@@ -1,6 +1,6 @@
 # Local agent workspaces and personal instruction files, not product source.
-# Existing tracked files under `.agents/skills/` remain tracked; this suppresses
-# new repo-local skill installs such as Cruise.
+# Consult ships no skills of its own; these suppress repo-local skill installs
+# such as Cruise.
 .agents/
 .claude/
 .codex/
@@ -8,12 +8,9 @@
 .tmp/
 skills-lock.json
 
-# opencode skill symlinks are product entrypoints; generated config/deps are local.
-.opencode/.gitignore
-.opencode/node_modules/
-.opencode/package.json
-.opencode/package-lock.json
-.opencode/bun.lock
+# The CLI is the whole product surface, so nothing under `.opencode/` is
+# product source; it is local tool state.
+.opencode/
 
 # Firecrawl scrape cache used during design research
 .firecrawl/

@@ -155,29 +155,39 @@ follow-up turn. The [usage reference](docs/USAGE.md) covers all of it.
 
 ### Teach your agent to delegate
 
-The CLI is self-describing (`consult help`), but the npm package also ships
-agent **skills** that give a Host judgment about *when* to delegate, how to
-write a cold prompt, and which authority to grant:
-
-| Skill | Purpose |
-| --- | --- |
-| `consult` | General delegation workflow for any Host. |
-| `ask-claude` | Ask Claude for a review, explanation, or second opinion. |
-| `ask-codex` | Delegate focused work or review to Codex. |
-| `ask-opencode` | Delegate through a configured opencode provider. |
-| `resolve-review` | Run the whole review-and-fix loop outside the main thread. |
+There is no skill to install, no plugin, no MCP server. `consult help` carries
+the judgment itself — *when* delegating is worth it, how to write a prompt that
+survives having no conversation behind it, which authority to grant — and
+discloses it progressively, so an agent reads one screenful and then only the
+topic it needs:
 
 ```sh
-npx skills add aubwang/consult
+consult help              # commands, topics, and where to start
+consult help delegation   # when to hand work off, and how to shape the prompt
+consult help authority    # read-only, write, isolated, fetch, sandbox modes
+consult help profiles     # Claude, Codex, opencode: models, auth, limits
+consult help review       # pinned reviews and resolving findings out of context
+consult help <command>    # the flags for one command
+consult help --all        # every topic at once, for preloading a context
 ```
+
+Point your agent at it once, in whatever instruction file it already reads
+(`AGENTS.md`, `CLAUDE.md`, a system prompt):
+
+> For second opinions, delegated implementation, or cold review, use Consult.
+> Run `consult help` first.
+
+Because the help ships inside the binary, an agent's advice can never drift
+from the CLI it is running.
 
 ### Reviewed, not derailed
 
 Delegating a review is cheap, but cleanup can eat all of your thread's context too.
 
-The `resolve-review` skill  hands the findings to a **resolution manager** that triages every claim,
-lands and verifies the clear-cut fixes, and sends back a report with what was fixed, 
-what was rejected, what needs additional input, and if any of its fixes affect downstream work.
+`consult help review` describes a **resolution manager** loop: hand the findings
+to a separate context that triages every claim, lands and verifies the clear-cut
+fixes, and sends back a report with what was fixed, what was rejected, what needs
+additional input, and whether any fix affects downstream work.
 
 This way, your main model can keep making progress, and minor bugs/edge cases don't slow you down.
 

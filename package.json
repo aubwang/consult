@@ -21,8 +21,7 @@
   "files": [
     "bin/",
     "dist/",
-    "scripts/build-package.mjs",
-    "skills/"
+    "scripts/build-package.mjs"
   ],
   "publishConfig": {
     "access": "public"
