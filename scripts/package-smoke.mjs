@@ -108,11 +108,15 @@ async function assertConsultHelp(binary) {
   };
   const help = await run(binary, ["help"], options);
   assert.match(help.stdout, /^Usage:\n  consult <command> \[options\]/m);
-  assert.doesNotMatch(help.stdout, /Operational contract/u);
+  assert.match(help.stdout, /^Topics:$/mu);
+  assert.doesNotMatch(help.stdout, /^Topic: /mu);
 
-  const reference = await run(binary, ["help", "--reference"], options);
-  assert.match(reference.stdout, /Operational contract/u);
-  assert.match(reference.stdout, /## Exit codes/u);
+  const topic = await run(binary, ["help", "authority"], options);
+  assert.match(topic.stdout, /^Topic: authority\n/u);
+
+  const everything = await run(binary, ["help", "--all"], options);
+  assert.match(everything.stdout, /^Topic: delegation$/mu);
+  assert.match(everything.stdout, /## Exit codes/u);
 }
 
 async function assertInstalledBackgroundJob(binary, temporaryRoot) {

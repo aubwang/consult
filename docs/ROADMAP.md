@@ -7,7 +7,9 @@ live in `docs/adr/`; this is not a second decision log.
 
 Consult is a CLI-first, host-neutral delegation layer for agentic work:
 
-- One `consult` CLI from terminal, Codex, or opencode.
+- One `consult` CLI from terminal, Codex, or opencode. It is the only product
+  surface: delegation judgment ships as progressive `consult help` topics
+  inside the binary rather than as installable agent skills.
 - Built-in `claude`, `codex`, and `opencode` Profiles plus generic custom
   Profile configuration.
 - Foreground and background Jobs with durable status, logs, cancellation,
@@ -31,8 +33,9 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
 - Scoped npm releases ship as `@aubwang/consult`; GitHub-clone installation is
   not a supported distribution path.
 
-Consult no longer ships a Claude Code plugin/Host Adapter. The Claude Profile
-is still supported. Gemini and GitHub Copilot are not supported Profiles.
+Consult no longer ships a Claude Code plugin/Host Adapter, or any agent skills.
+The Claude Profile is still supported. Gemini and GitHub Copilot are not
+supported Profiles.
 
 ## Portable Job Authority Release Evidence
 
