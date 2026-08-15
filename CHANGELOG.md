@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/aubwang/consult/compare/v0.12.0...v1.0.0) (2026-08-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* the package no longer ships agent skills, and `npx skills add aubwang/consult` is no longer an install path. Point a Host at `consult help` from its own instruction file instead.
+
+### Features
+
+* fold agent skills into progressive consult help ([#47](https://github.com/aubwang/consult/issues/47)) ([3ee9ed0](https://github.com/aubwang/consult/commit/3ee9ed0fa4c9d95f4b0012bc06233640e66a1703))
+
 ## [0.12.0](https://github.com/aubwang/consult/compare/v0.11.0...v0.12.0) (2026-08-02)
 
 
