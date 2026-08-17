@@ -34,8 +34,9 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
   not a supported distribution path.
 
 Consult no longer ships a Claude Code plugin/Host Adapter, or any agent skills.
-The Claude Profile is still supported. GitHub Copilot is a supported
-inherit-only Profile (ADR-0038); Gemini is not a supported Profile.
+The Claude Profile is still supported. GitHub Copilot is a built-in
+inherit-only preview Profile (ADR-0038) whose model-turn conformance matrix
+is still auth-deferred; Gemini is not a supported Profile.
 
 ## Portable Job Authority Release Evidence
 

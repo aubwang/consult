@@ -97,9 +97,12 @@ export function profileSessionModeEnv(
  * Host environment or saved state would otherwise auto-approve tools without
  * a `session/request_permission` round-trip. Execute stays denied in every
  * Job mode and fetch requires confinement, which copilot does not have, so
- * `shell` and `web_fetch` are always denied; `write` is denied unless the Job
- * mode grants writes. An unknown mode gets the read-only set: deny more, not
- * less.
+ * `shell` and `url` are always denied; web fetches request the `url`
+ * permission kind, not a `web_fetch` tool name. `write` is denied unless the
+ * Job mode grants writes, and an unknown mode gets the read-only set: deny
+ * more, not less. `--no-auto-update` keeps the verified binary from swapping
+ * itself out mid-Job. These pins govern model-initiated tool calls only;
+ * user-configured Copilot hooks and MCP servers run outside them.
  */
 export function profileModeArgs(
   registryId: string | undefined,
@@ -109,25 +112,71 @@ export function profileModeArgs(
     return [];
   }
   if (mode === "write") {
-    return ["--deny-tool=shell,web_fetch"];
+    return ["--no-auto-update", "--deny-tool=shell,url"];
   }
-  return ["--deny-tool=shell,write,web_fetch"];
+  return ["--no-auto-update", "--deny-tool=shell,write,url"];
 }
 
 /**
- * Environment overlay that neutralizes ambient permission-widening variables
- * a delegated Profile would otherwise inherit. `COPILOT_ALLOW_ALL` makes
- * Copilot CLI auto-approve every tool, path, and URL; an inherited launch
- * passes the Host environment through, so the overlay pins it empty and the
- * Job's permission decisions stay with Consult and the `--deny-tool` pins.
+ * Ambient environment keys that must be absent from a delegated Profile's
+ * launch. `COPILOT_ALLOW_ALL` binds to Copilot's boolean `--allow-all-tools`
+ * option, and a bound boolean treats any defined value — including "" and
+ * "false" — as enabled, auto-approving every tool without a
+ * `session/request_permission` round-trip. Overlaying a value cannot disable
+ * it; the key has to be deleted from the child environment.
  */
-export function profilePermissionGuardEnv(
-  registryId: string | undefined,
-): Record<string, string> {
+export function profileStripEnvKeys(registryId: string | undefined): string[] {
   if (registryId !== "copilot") {
-    return {};
+    return [];
   }
-  return { COPILOT_ALLOW_ALL: "" };
+  return ["COPILOT_ALLOW_ALL"];
+}
+
+/**
+ * Minimum Copilot CLI version for delegated launches. ACP permission flags
+ * landed at 0.0.400, but permission behavior in ACP mode kept consolidating
+ * until 1.0.60 ("--available-tools, --excluded-tools ... apply correctly in
+ * ACP mode", "allow_all config option correctly applies"), so older binaries
+ * can accept the `--deny-tool` pins without honoring the surrounding
+ * permission model. The floor is enforced at setup, preflight, and every
+ * turn (auto-update can change the binary between them), keyed on the
+ * agent-reported `agentInfo` rather than the registry id so aliased or
+ * custom Profiles that launch Copilot are covered too.
+ */
+export const COPILOT_MIN_VERSION = "1.0.60";
+
+export function copilotAgentVersionDiagnostic(capabilities: unknown): string | null {
+  if (typeof capabilities !== "object" || capabilities === null) return null;
+  const agentInfo = (capabilities as { agentInfo?: unknown }).agentInfo;
+  if (typeof agentInfo !== "object" || agentInfo === null) return null;
+  const { name, version } = agentInfo as { name?: unknown; version?: unknown };
+  if (name !== "Copilot") return null;
+  if (typeof version === "string" && versionAtLeast(version, COPILOT_MIN_VERSION)) {
+    return null;
+  }
+  const reported = typeof version === "string" ? version : "unknown";
+  return (
+    `Copilot CLI ${reported} is older than the supported ${COPILOT_MIN_VERSION}; ` +
+    `its ACP permission handling predates the launch pins Consult relies on. ` +
+    `Update with npm install -g @github/copilot@latest and retry`
+  );
+}
+
+export function versionAtLeast(actual: string, minimum: string): boolean {
+  const parsedActual = parseReleaseVersion(actual);
+  const parsedMinimum = parseReleaseVersion(minimum);
+  if (!parsedActual || !parsedMinimum) return false;
+  for (let index = 0; index < parsedActual.length; index += 1) {
+    if (parsedActual[index] !== parsedMinimum[index]) {
+      return parsedActual[index] > parsedMinimum[index];
+    }
+  }
+  return true;
+}
+
+function parseReleaseVersion(version: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
 /**

@@ -187,6 +187,26 @@ test("inherited probe creates a session for copilot and fails on auth errors", a
   assert.deepEqual(authenticated, { ok: true, authority: INHERIT });
 });
 
+test("inherited probe refuses a Copilot agent older than the supported floor", async () => {
+  const result = await probeInheritedProfileLaunch({
+    workspaceRoot: process.cwd(),
+    profile: "copilot",
+    profileRegistryId: "copilot",
+    platform: "linux",
+    authority: INHERIT,
+    profileLaunch: {
+      binary: process.execPath,
+      args: [fakeAgentPath, "sessions", "prompt-copilot-old-version"],
+      env: {},
+    },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.code, "AUTHORITY_PREFLIGHT_FAILED");
+    assert.match(result.diagnostic.message, /older than the supported/u);
+  }
+});
+
 test("inherited probe stays initialize-only for profiles without a session probe", async () => {
   const result = await probeInheritedProfileLaunch({
     workspaceRoot: process.cwd(),

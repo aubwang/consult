@@ -185,12 +185,16 @@ test("buildAgentLaunch pins copilot tool denies and clears ambient allow-all", (
 
   const readOnlyOff = buildAgentLaunch({
     ...base,
-    env: { PATH: process.env.PATH, COPILOT_ALLOW_ALL: "true" },
+    env: { PATH: process.env.PATH, COPILOT_ALLOW_ALL: "" },
     mode: "read-only",
     sandbox: "off",
   });
-  assert.deepEqual(readOnlyOff.args, ["--acp", "--deny-tool=shell,write,web_fetch"]);
-  assert.equal(readOnlyOff.env.COPILOT_ALLOW_ALL, "");
+  assert.deepEqual(readOnlyOff.args, [
+    "--acp",
+    "--no-auto-update",
+    "--deny-tool=shell,write,url",
+  ]);
+  assert.equal("COPILOT_ALLOW_ALL" in readOnlyOff.env, false);
 
   const writeOff = buildAgentLaunch({
     ...base,
@@ -198,8 +202,8 @@ test("buildAgentLaunch pins copilot tool denies and clears ambient allow-all", (
     mode: "write",
     sandbox: "off",
   });
-  assert.deepEqual(writeOff.args, ["--acp", "--deny-tool=shell,web_fetch"]);
-  assert.equal(writeOff.env.COPILOT_ALLOW_ALL, "");
+  assert.deepEqual(writeOff.args, ["--acp", "--no-auto-update", "--deny-tool=shell,url"]);
+  assert.equal("COPILOT_ALLOW_ALL" in writeOff.env, false);
 
   const writeBwrap = buildAgentLaunch({
     ...base,
@@ -207,8 +211,9 @@ test("buildAgentLaunch pins copilot tool denies and clears ambient allow-all", (
     mode: "write",
     sandbox: "bwrap",
   });
-  assert.equal(writeBwrap.args.at(-1), "--deny-tool=shell,web_fetch");
-  assert.equal(writeBwrap.env.COPILOT_ALLOW_ALL, "");
+  assert.equal(writeBwrap.args.at(-1), "--deny-tool=shell,url");
+  assert.equal(writeBwrap.args.at(-2), "--no-auto-update");
+  assert.equal("COPILOT_ALLOW_ALL" in writeBwrap.env, false);
 
   const codexOff = buildAgentLaunch({
     ...base,

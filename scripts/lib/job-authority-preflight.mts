@@ -5,7 +5,10 @@ import {
   type JobAuthorityDiagnostic,
 } from "./job-authority.mts";
 import { newSession, startAgent } from "./acp-client.mts";
-import { profilePreflightsSession } from "./profile-launch-policy.mts";
+import {
+  copilotAgentVersionDiagnostic,
+  profilePreflightsSession,
+} from "./profile-launch-policy.mts";
 
 export interface JobAuthorityPreflightInput {
   authority: JobAuthority;
@@ -172,6 +175,10 @@ export async function probeInheritedProfileLaunch(
       profileRegistryId: input.profileRegistryId,
       codexPath: input.profileLaunch.codexPath,
     });
+    const versionDiagnostic = copilotAgentVersionDiagnostic(agent.capabilities);
+    if (versionDiagnostic !== null) {
+      throw new Error(versionDiagnostic);
+    }
     if (profilePreflightsSession(input.profileRegistryId)) {
       await newSession(agent.connection, { cwd: input.workspaceRoot });
     }
