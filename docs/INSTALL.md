@@ -169,6 +169,25 @@ credential takes precedence over the expired file. Ambient
 `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` variables are not selected as
 confined Profile credentials. Consult never retries with inherited authority.
 
+## Copilot Profile and the GitHub Copilot CLI
+
+`consult setup --install copilot` installs `@github/copilot` from npm (Node 22
+or newer). If a `copilot` binary is already on PATH, setup adopts it instead of
+installing over it. The Copilot CLI serves ACP itself via `copilot --acp`, so
+there is no separate adapter to install.
+
+Authenticate before the first delegated turn: run `copilot` once and use
+`/login`, or set `COPILOT_GITHUB_TOKEN` (a fine-grained personal access token
+with the Copilot Requests permission; `GH_TOKEN` and `GITHUB_TOKEN` are also
+honored, and classic tokens are not supported). Setup's ACP handshake succeeds
+without a login, so an unauthenticated Profile verifies at setup but fails at
+its first model prompt — authenticate and retry rather than reinstalling.
+`COPILOT_HOME` relocates the Copilot CLI's settings directory if needed.
+
+Confined authority is not implemented for the copilot Profile: delegate and
+review need an explicit `--sandbox inherit`, which runs the Job with the
+Host's ambient authority (see Job Authority in `docs/USAGE.md`).
+
 If the shell cannot find `consult` after installation, inspect npm's global
 prefix with `npm prefix --global` and ensure its executable directory is on
 `PATH`. On macOS and Linux this is usually the `bin` directory under that

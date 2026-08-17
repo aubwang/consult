@@ -15,9 +15,9 @@ const overview = `Usage:
   consult --version
 
 Delegate one cold, self-contained prompt turn from the current Host to a
-configured Claude, Codex, or opencode Profile. The Host keeps decomposition,
-judgment, and integration; each Job carries exactly one prompt turn under one
-explicit Job Authority.
+configured Claude, Codex, opencode, or Copilot Profile. The Host keeps
+decomposition, judgment, and integration; each Job carries exactly one prompt
+turn under one explicit Job Authority.
 
 Commands:
   setup      Install or verify Profiles.
@@ -38,7 +38,7 @@ Topics:
   delegation   When to hand work off, and how to write a prompt that survives
                having no conversation behind it.
   authority    Read-only, write, isolated, fetch, and sandbox modes.
-  profiles     Claude, Codex, and opencode specifics: models, auth, limits.
+  profiles     Claude, Codex, opencode, Copilot: models, auth, limits.
   review       Pinned reviews, reviewing a Job's patch, and resolving findings
                without spending the Host's context.
   jobs         Background Jobs, waiting, dependencies, sessions, inspection.
@@ -160,10 +160,10 @@ implicitly, and never retries a failed preflight with weaker confinement.
   cooperative and detective, not OS-preventive, and the Profile receives the
   ambient Host environment without confined credential translation.
 
-Custom and opencode Profiles currently require explicit inheritance and are
-never OS-confined by Consult. Native Windows and macOS x64 processes, including
-Node under Rosetta, are unsupported even for inheritance. Confined Jobs cannot
-execute commands, so confined nesting is unsupported.
+Custom, opencode, and copilot Profiles currently require explicit inheritance
+and are never OS-confined by Consult. Native Windows and macOS x64 processes,
+including Node under Rosetta, are unsupported even for inheritance. Confined
+Jobs cannot execute commands, so confined nesting is unsupported.
 
 Confined Jobs have wall-clock and persisted-log limits but no process-count,
 CPU, memory, disk, or global fan-out quota. The trusted Host must bound its own
@@ -198,8 +198,8 @@ See also: consult help guardrails, consult help review, consult doctor --help
 const profilesTopic = `Topic: profiles
 
 A Profile is a configured ACP agent available to Consult regardless of the
-invoking Host. The built-in registry contains claude, codex, and opencode;
-generic custom Profile configuration remains available.
+invoking Host. The built-in registry contains claude, codex, opencode, and
+copilot; generic custom Profile configuration remains available.
 
   consult setup                              # what is installed and configured
   consult setup --install codex
@@ -256,6 +256,20 @@ substituting another agent.
   read-only is cooperative. State that limitation when it materially affects
   the task.
 - Do not pass --allow-fetch; fetch requires confinement.
+
+## copilot
+
+  consult delegate --agent copilot --read-only --sandbox inherit -- "<prompt>"
+
+- The GitHub Copilot CLI serves ACP natively; there is no separate shim.
+- Authentication uses the Copilot CLI login (run copilot, then /login), or
+  COPILOT_GITHUB_TOKEN with a fine-grained PAT holding the Copilot Requests
+  permission; GH_TOKEN and GITHUB_TOKEN are also honored.
+- Confinement is unavailable, so Jobs run with the Host's ambient authority and
+  read-only is cooperative. State that limitation when it materially affects
+  the task.
+- Do not pass --allow-fetch; fetch requires confinement.
+- Sessions do not advertise resume, so --resume does not reopen them.
 
 CONSULT_OPENAI_API_KEY, CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN
 explicitly override the corresponding Profile credential file; ambient vendor

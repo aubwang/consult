@@ -11,7 +11,7 @@ Options:
                    that Host only; without --host it becomes the global
                    default.
   --host <host>    Host identity a --set default applies to, for example
-                   codex, opencode, claude, or terminal.
+                   codex, opencode, claude, copilot, or terminal.
   --json           Print the Profile list as JSON instead of a table.
   --help           Print this help instead of listing Profiles.
 

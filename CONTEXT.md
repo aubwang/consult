@@ -32,8 +32,8 @@ _Avoid_: plugin, wrapper, frontend
 
 **Profile**
 A configured ACP agent available to Consult regardless of the invoking Host.
-The shipped Profile registry contains `codex`, `claude`, and `opencode`.
-Generic custom Profile configuration remains possible.
+The shipped Profile registry contains `codex`, `claude`, `opencode`, and
+`copilot`. Generic custom Profile configuration remains possible.
 _Avoid_: backend, agent-config
 
 **Profile Capability**
@@ -195,3 +195,5 @@ _Avoid_: marketplace, plugin manifest
 - `codex` launches the separate `codex-acp` shim, not the `codex` executable
   itself. `claude` similarly launches `claude-agent-acp`, which can reuse the
   Claude Code CLI's authentication without making Consult a Claude plugin.
+  `copilot` needs no shim: the GitHub Copilot CLI serves ACP itself via
+  `copilot --acp`.

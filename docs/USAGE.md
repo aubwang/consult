@@ -21,20 +21,22 @@ separately installed document.
 
 ## Profiles
 
-Consult ships three built-in Profile definitions:
+Consult ships four built-in Profile definitions:
 
 | Profile | Agent executable | Authentication | Confined authority |
 | --- | --- | --- | --- |
 | `claude` | `claude-agent-acp` | `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`, otherwise a stageable credentials file. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
 | `codex` | `codex-acp` | `CONSULT_OPENAI_API_KEY`, otherwise the underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
 | `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority. |
+| `copilot` | `copilot --acp` | Copilot CLI login (`/login`), or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` with a fine-grained PAT holding the Copilot Requests permission. | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority. |
 
 Run `consult setup` to inspect available Profile executables or
 `consult setup --install <profile>` to install and verify one. Custom Profiles
 can be configured through Consult's generic Profile configuration.
 
 The Claude Profile is supported, but Consult does not require or ship a Claude
-Code plugin. Gemini and GitHub Copilot are not supported Profiles.
+Code plugin. The `copilot` Profile launches the GitHub Copilot CLI's native ACP
+server — no shim. Gemini is not a supported Profile.
 
 ### Selecting a Profile
 
@@ -162,13 +164,13 @@ without confined credential staging or translation, so vendor variables may
 affect the Profile's native authentication.
 
 Consult-managed confinement is implemented only for the built-in `codex` and
-`claude` Profiles. Custom and opencode Profiles always require
+`claude` Profiles. Custom, opencode, and copilot Profiles always require
 `--sandbox inherit`: a default confined `delegate` or `review` for them fails
 preflight before any Job is created, and Consult never downgrades to
-inheritance automatically. An opencode Job is therefore never OS-sandboxed by
-Consult; treat it as running with the Host's own authority, subject only to the
-cooperative Job policy above and any sandboxing the opencode runtime itself
-provides. Confined nested delegation is unsupported. Native Windows and macOS
+inheritance automatically. An opencode or copilot Job is therefore never
+OS-sandboxed by Consult; treat it as running with the Host's own authority,
+subject only to the cooperative Job policy above and any sandboxing the agent
+runtime itself provides. Confined nested delegation is unsupported. Native Windows and macOS
 x64 processes, including Node under Rosetta, are unsupported even in inherited
 mode.
 
@@ -415,6 +417,11 @@ Claude Code is not auto-detected. A Claude spawning Host should pass
 environment variables; otherwise its Jobs use the shared `terminal/default`
 scope.
 
+GitHub Copilot CLI is not auto-detected either: it exports no stable session
+marker into spawned processes (verified at `@github/copilot` 1.0.80). A Copilot
+spawning Host should pass `--host copilot --host-session <stable-session-id>`
+or set `CONSULT_HOST=copilot` and `CONSULT_HOST_SESSION_ID`.
+
 Host Identity scopes defaults, resume lookup, lineage, and lifecycle metadata.
 The same `consult` CLI remains the product interface from every Host.
 
@@ -474,7 +481,7 @@ From there the agent discloses what it needs progressively:
 | --- | --- |
 | `delegation` | When a handoff pays for itself, cold-prompt structure, model and effort routing. |
 | `authority` | Read-only, write, isolated, fetch, and sandbox modes, and how to phrase authority constraints in a prompt. |
-| `profiles` | Claude, Codex, and opencode specifics: model naming, authentication, per-Profile limits. |
+| `profiles` | Claude, Codex, opencode, and Copilot specifics: model naming, authentication, per-Profile limits. |
 | `review` | Pinned reviews, reviewing a completed Job, and running the fix loop outside the main thread. |
 | `jobs` | Background Jobs, waiting, dependencies, sessions, and bounded inspection. |
 | `chains` | Nested delegation, authority ceilings, and lineage. |

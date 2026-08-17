@@ -10,8 +10,8 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
 - One `consult` CLI from terminal, Codex, or opencode. It is the only product
   surface: delegation judgment ships as progressive `consult help` topics
   inside the binary rather than as installable agent skills.
-- Built-in `claude`, `codex`, and `opencode` Profiles plus generic custom
-  Profile configuration.
+- Built-in `claude`, `codex`, `opencode`, and `copilot` Profiles plus generic
+  custom Profile configuration.
 - Foreground and background Jobs with durable status, logs, cancellation,
   resume, and Delegation Chain lineage.
 - Background Job Dependencies with bounded upstream-result forwarding,
@@ -26,16 +26,16 @@ Consult is a CLI-first, host-neutral delegation layer for agentic work:
 - Built-in Codex and Claude confinement targets native Linux and native arm64
   macOS with direct-network denial, authenticated pinned-address proxying,
   minimal staged credentials, exact Profile preflight, and process-tree cleanup.
-- Custom and opencode Profiles are explicit-inherit only. Native Windows,
-  macOS x64 processes, and confined nesting are unsupported.
+- Custom, opencode, and copilot Profiles are explicit-inherit only. Native
+  Windows, macOS x64 processes, and confined nesting are unsupported.
 - Execute permission remains fail-closed pending execute-specific resource
   containment and cross-Profile conformance.
 - Scoped npm releases ship as `@aubwang/consult`; GitHub-clone installation is
   not a supported distribution path.
 
 Consult no longer ships a Claude Code plugin/Host Adapter, or any agent skills.
-The Claude Profile is still supported. Gemini and GitHub Copilot are not
-supported Profiles.
+The Claude Profile is still supported. GitHub Copilot is a supported
+inherit-only Profile (ADR-0038); Gemini is not a supported Profile.
 
 ## Portable Job Authority Release Evidence
 

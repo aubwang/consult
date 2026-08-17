@@ -39,3 +39,7 @@ This ADR supersedes ADR-0014's requirement for a Claude Host Adapter,
 ADR-0017's Claude Host autodetection, ADR-0018's shipped Host-adapter
 entrypoints, and the Claude lifecycle consequences in ADR-0021. Their
 historical rationale remains useful; this records the current scope.
+
+Amended by ADR-0038: GitHub Copilot returns as a built-in inherit-only
+Profile now that its CLI serves ACP natively. The CLI-only scope and the
+removal of Host-side plugin surfaces stand.

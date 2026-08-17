@@ -29,7 +29,7 @@ basic code and running tests?
 Claude Code session, a Codex session, opencode, or your own terminal — hand a
 self-contained **Job** to another configured agent and get back a
 result, a review, or a patch. It uses the [Agent Client Protocol](https://agentclientprotocol.com)
-to hook into your existing Claude/Codex/opencode install and auth.
+to hook into your existing Claude/Codex/opencode/Copilot install and auth.
 
 
 <div align="center">
@@ -165,7 +165,7 @@ topic it needs:
 consult help              # commands, topics, and where to start
 consult help delegation   # when to hand work off, and how to shape the prompt
 consult help authority    # read-only, write, isolated, fetch, sandbox modes
-consult help profiles     # Claude, Codex, opencode: models, auth, limits
+consult help profiles     # Claude, Codex, opencode, Copilot: models, auth
 consult help review       # pinned reviews and resolving findings out of context
 consult help <command>    # the flags for one command
 consult help --all        # every topic at once, for preloading a context
@@ -196,29 +196,29 @@ This way, your main model can keep making progress, and minor bugs/edge cases do
 ## How it works
 
 The invoking environment is the **Host**. A configured agent is a **Profile**
-(`claude`, `codex`, or `opencode` out of the box). Each delegation creates one
-durable **Job** carrying exactly one prompt turn and one explicit **Job
-Authority**.
+(`claude`, `codex`, `opencode`, or `copilot` out of the box). Each delegation
+creates one durable **Job** carrying exactly one prompt turn and one explicit
+**Job Authority**.
 
 ```text
-┌──────────────────────────────┐
-│ Host context                 │
-│ decisions · decomposition    │
-└──────────────┬───────────────┘
-               │  cold prompt + Job Authority
-        ┌──────┼──────┐
-        ▼      ▼      ▼
-     Claude  Codex  opencode
-        │      │      │
-        └──────┼──────┘
-               │  result · review · patch artifact
-               ▼
-┌──────────────────────────────┐
-│ Host context                 │
-│ integration · decisions      │
-└──────────────────────────────┘
+┌──────────────────────────────────┐
+│ Host context                     │
+│ decisions · decomposition        │
+└────────────────┬─────────────────┘
+                 │  cold prompt + Job Authority
+        ┌────────┼────┬───────┐
+        ▼        ▼    ▼       ▼
+     Claude  Codex  opencode  Copilot
+        │        │    │       │
+        └────────┼────┴───────┘
+                 │  result · review · patch artifact
+                 ▼
+┌──────────────────────────────────┐
+│ Host context                     │
+│ integration · decisions          │
+└──────────────────────────────────┘
 ```
-Please note that Job Authority behavior will vary depending on if you use Claude, Codex, or Opencode, see below.
+Please note that Job Authority behavior will vary depending on if you use Claude, Codex, opencode, or Copilot, see below.
 
 ## Security
 
@@ -236,7 +236,8 @@ defaults stay conservative:
 
 - New Jobs default to **read-only, OS-level confinement** with network fetch
   and command execution disabled (built-in Claude and Codex Profiles on Linux
-  and Apple Silicon macOS).
+  and Apple Silicon macOS). The opencode and Copilot Profiles have no
+  confinement support yet and require an explicit `--sandbox inherit` grant.
 - Every broader grant — writes, public-web research, ambient authority — is an
   **explicit flag on the Job**, and Consult never silently falls back to the
   Host's ambient authority when confinement fails.
