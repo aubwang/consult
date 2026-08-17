@@ -13,7 +13,7 @@ test("loadRegistry returns the shipped v1 registry entries", async () => {
   assert.equal(registry.schemaVersion, 1);
   assert.deepEqual(
     registry.agents.map((agent) => agent.id),
-    ["codex", "claude", "opencode"],
+    ["codex", "claude", "opencode", "copilot"],
   );
   for (const agent of registry.agents) {
     assert.equal(typeof agent.id, "string");
@@ -58,6 +58,15 @@ test("Claude registry entry installs the maintained ACP package", async () => {
     claude.install.cmd,
     "npm install -g @agentclientprotocol/claude-agent-acp",
   );
+});
+
+test("Copilot registry entry installs the official CLI package", async () => {
+  const registry = await loadRegistry();
+  const copilot = findRegistryEntry(registry, "copilot")!;
+
+  assert.equal(copilot.install.type, "npm");
+  assert.equal(copilot.install.cmd, "npm install -g @github/copilot");
+  assert.deepEqual(copilot.args, ["--acp"]);
 });
 
 test("loadRegistry returns non-empty notes for every shipped registry entry", async () => {

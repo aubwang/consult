@@ -16,9 +16,10 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
   skills, plugins, or Host adapters.
 - Shipped Host autodetection covers terminal, Codex, and opencode. Explicit
   `CONSULT_HOST` values support custom Hosts without a Host-specific adapter.
-- The built-in Profile registry contains `claude`, `codex`, and `opencode`.
-- Claude is a delegated Profile, not a shipped Host plugin. Gemini and Copilot
-  are not supported Profiles.
+- The built-in Profile registry contains `claude`, `codex`, `opencode`, and
+  `copilot`.
+- Claude is a delegated Profile, not a shipped Host plugin. GitHub Copilot is a
+  delegated inherit-only Profile (ADR-0038). Gemini is not a supported Profile.
 - Cruise owns Cruise workflow policy and session state; Consult supplies only
   delegation mechanisms.
 
@@ -93,6 +94,11 @@ Claude Code is deliberately not auto-detected after the CLI-only product-scope
 decision. A Claude spawning Host must supply explicit Host and Host Session
 identity (flags or `CONSULT_*` environment) when it needs isolated defaults and
 resume lookup; otherwise it shares `terminal/default`.
+
+GitHub Copilot CLI is not auto-detected either: at `@github/copilot` 1.0.80 it
+exports no stable session marker into spawned child processes (ADR-0038). A
+Copilot Host supplies `CONSULT_HOST=copilot` and `CONSULT_HOST_SESSION_ID`
+explicitly, like any custom Host.
 
 Profile selection order:
 
@@ -366,8 +372,8 @@ launch. The launch path derives and validates the full policy again, so such a
 race can fail a created Job but cannot silently broaden its authority.
 
 The confined adapter targets native Linux and native arm64 macOS for built-in
-`codex` and `claude` Profile identities. Custom and `opencode` Profiles remain
-inherit-only until they pass the same live conformance gates. A trusted Host
+`codex` and `claude` Profile identities. Custom, `opencode`, and `copilot`
+Profiles remain inherit-only until they pass the same live conformance gates. A trusted Host
 may choose `--sandbox inherit`; that adds no Consult OS boundary and disables
 the legacy `CONSULT_AGENT_SANDBOX` launch layer. `consult doctor` reports the
 default confined readiness of the exact selected Profile in the current Host

@@ -28,6 +28,15 @@
       "args": ["acp"],
       "install": { "type": "npm", "cmd": "npm install -g opencode-ai" },
       "supports": { "resume": false, "load": true }
+    },
+    {
+      "id": "copilot",
+      "label": "GitHub Copilot CLI (native ACP: copilot --acp)",
+      "notes": "Needs GitHub Copilot access. Run `copilot` once and use `/login`, or set COPILOT_GITHUB_TOKEN (fine-grained PAT with the Copilot Requests permission; GH_TOKEN/GITHUB_TOKEN also honored). Confined authority is unsupported; delegate with --sandbox inherit.",
+      "binary": "copilot",
+      "args": ["--acp"],
+      "install": { "type": "npm", "cmd": "npm install -g @github/copilot" },
+      "supports": { "resume": false, "load": true }
     }
   ]
 }

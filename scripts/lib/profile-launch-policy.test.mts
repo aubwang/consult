@@ -12,6 +12,7 @@ test("profileLaunchPolicy exposes supported live launch policies only", () => {
   assert.ok(profileLaunchPolicy("claude"));
   assert.ok(profileLaunchPolicy("codex"));
   assert.equal(profileLaunchPolicy("opencode"), null);
+  assert.equal(profileLaunchPolicy("copilot"), null);
 });
 
 test("profileHomeMounts maps claude config into sandbox HOME", () => {

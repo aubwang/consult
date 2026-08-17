@@ -131,13 +131,14 @@ Job Authority boundary. They document ACP permission/backstop behavior and the
 legacy `CONSULT_AGENT_SANDBOX=bwrap` path; statements there about missing hard
 filesystem enforcement, whole config mounts, or a Consult “plugin” are
 historical and do not describe the current Codex/Claude confined launch.
-OpenCode remains inherit-only.
+OpenCode and Copilot remain inherit-only.
 
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |
 | [claude](claude.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, **preventive**) | PASS | PASS (cooperative) | PASS (after iter-17 fix) | 2026-05-19 direct/Consult/bwrap proof PASS. Cancel works but is slower than codex. |
 | [opencode](opencode.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, defense-in-depth) | PASS | — | — | 2026-05-19 direct/Consult/bwrap proof PASS with provider auth configured. |
+| [copilot](copilot.md) | PASS | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | — | — | 2026-08-17 handshake-level pass at `@github/copilot` 1.0.80; inherit-only, confined preflight fails closed. |
 
 Legend:
 - **PASS**: live-verified end-to-end against the real backend.
@@ -185,9 +186,9 @@ record and every launch derives `CODEX_PATH` from that recorded value (ADR-0036)
 an ambient `CODEX_PATH` never crosses the confinement boundary, and the pinned
 binary is read-scoped as a single file rather than by granting the directory
 that holds it. `--sandbox inherit` is an explicit
-ambient-authority escape hatch and is never an automatic retry. The opencode
-and custom Profile paths currently require inheritance; native Windows, Intel
-macOS, and confined nesting are unsupported.
+ambient-authority escape hatch and is never an automatic retry. The opencode,
+copilot, and custom Profile paths currently require inheritance; native
+Windows, Intel macOS, and confined nesting are unsupported.
 
 On macOS, Claude conformance requires a supported token environment variable or
 a stageable `.claude/.credentials.json`. A Keychain-only Claude login is not a
