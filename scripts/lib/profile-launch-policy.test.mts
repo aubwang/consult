@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  COPILOT_MIN_VERSION,
+  copilotAgentVersionDiagnostic,
   profileHomeMounts,
   profileLaunchPolicy,
   profileModeArgs,
-  profilePermissionGuardEnv,
   profileRejectsResume,
   profileRuntimeMounts,
   profileSessionModeEnv,
+  profileStripEnvKeys,
 } from "./profile-launch-policy.mts";
 
 test("profileLaunchPolicy exposes supported live launch policies only", () => {
@@ -72,19 +74,23 @@ test("profileSessionModeEnv stays inert for other profiles and unknown modes", (
 
 test("profileModeArgs pins copilot tool denies to the Job mode", () => {
   assert.deepEqual(profileModeArgs("copilot", "read-only"), [
-    "--deny-tool=shell,write,web_fetch",
+    "--no-auto-update",
+    "--deny-tool=shell,write,url",
   ]);
   assert.deepEqual(profileModeArgs("copilot", "write"), [
-    "--deny-tool=shell,web_fetch",
+    "--no-auto-update",
+    "--deny-tool=shell,url",
   ]);
 });
 
 test("profileModeArgs denies the read-only set for unknown copilot modes", () => {
   assert.deepEqual(profileModeArgs("copilot", undefined), [
-    "--deny-tool=shell,write,web_fetch",
+    "--no-auto-update",
+    "--deny-tool=shell,write,url",
   ]);
   assert.deepEqual(profileModeArgs("copilot", "danger-full-access"), [
-    "--deny-tool=shell,write,web_fetch",
+    "--no-auto-update",
+    "--deny-tool=shell,write,url",
   ]);
 });
 
@@ -95,11 +101,29 @@ test("profileModeArgs stays inert for other profiles", () => {
   assert.deepEqual(profileModeArgs(undefined, "read-only"), []);
 });
 
-test("profilePermissionGuardEnv clears copilot allow-all and stays inert otherwise", () => {
-  assert.deepEqual(profilePermissionGuardEnv("copilot"), { COPILOT_ALLOW_ALL: "" });
-  assert.deepEqual(profilePermissionGuardEnv("codex"), {});
-  assert.deepEqual(profilePermissionGuardEnv("claude"), {});
-  assert.deepEqual(profilePermissionGuardEnv(undefined), {});
+test("profileStripEnvKeys removes copilot allow-all and stays inert otherwise", () => {
+  assert.deepEqual(profileStripEnvKeys("copilot"), ["COPILOT_ALLOW_ALL"]);
+  assert.deepEqual(profileStripEnvKeys("codex"), []);
+  assert.deepEqual(profileStripEnvKeys("claude"), []);
+  assert.deepEqual(profileStripEnvKeys(undefined), []);
+});
+
+test("copilotAgentVersionDiagnostic enforces the floor from agent identity", () => {
+  const copilotInfo = (version: unknown) => ({ agentInfo: { name: "Copilot", version } });
+
+  assert.equal(copilotAgentVersionDiagnostic(copilotInfo(COPILOT_MIN_VERSION)), null);
+  assert.equal(copilotAgentVersionDiagnostic(copilotInfo("1.0.80")), null);
+  assert.match(copilotAgentVersionDiagnostic(copilotInfo("1.0.59"))!, /older than the supported/u);
+  assert.match(copilotAgentVersionDiagnostic(copilotInfo("0.0.421"))!, /older than the supported/u);
+  assert.match(copilotAgentVersionDiagnostic(copilotInfo(undefined))!, /unknown/u);
+  assert.match(copilotAgentVersionDiagnostic(copilotInfo("1.0.79-8"))!, /older than the supported/u);
+
+  assert.equal(copilotAgentVersionDiagnostic(null), null);
+  assert.equal(copilotAgentVersionDiagnostic({}), null);
+  assert.equal(
+    copilotAgentVersionDiagnostic({ agentInfo: { name: "other-agent", version: "0.0.1" } }),
+    null,
+  );
 });
 
 test("profileRejectsResume refuses copilot session reopening only", () => {

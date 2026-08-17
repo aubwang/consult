@@ -143,6 +143,31 @@ test("consult/run fails a Copilot turn whose last agent message is a model error
   }
 });
 
+test("consult/run fails a Copilot turn from a binary older than the supported floor", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-old-version"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-copilot-old-version",
+      prompt: "respond with exactly: alive",
+      profile: "copilot",
+      mode: "read-only",
+    });
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /COPILOT_VERSION_UNSUPPORTED/u);
+    assert.match(finalized.errorMessage, /1\.0\.50/u);
+  } finally {
+    await client.close();
+  }
+});
+
 test("consult/run completes a Copilot turn whose error notice is followed by an answer", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",

@@ -1,8 +1,9 @@
 # GitHub Copilot CLI ACP Conformance
 
-> **Handshake-level report.** This page records the initial inherit-only
-> integration pass. Copilot is inherit-only; nothing here is evidence of
-> ADR-0027 native confinement. See
+> **Handshake-level report — preview support.** This page records the initial
+> inherit-only integration pass; the model-turn matrix below is auth-deferred,
+> so the Profile ships as preview until it completes. Copilot is inherit-only;
+> nothing here is evidence of ADR-0027 native confinement. See
 > [`README.md`](README.md#job-authority-confinement) and ADR-0038.
 
 Date: 2026-08-17
@@ -29,7 +30,8 @@ reachable without auth passed, including the fail-closed confined rejection.
 | Default confined preflight fails closed | **PASS** — `doctor` exit 1 and `delegate --read-only` without `--sandbox inherit` both report `confined authority is unsupported for Profile registry identity 'copilot'` with the codex/claude-or-inherit remediation; no Job was created. |
 | `--resume` rejected | **PASS** — `delegate --resume` with a prior copilot Session on record fails with `RESUME_UNSUPPORTED: … this agent persists tool approvals across sessions, so Consult rejects reopening them until that state is bounded`, before any agent spawn. Copilot advertises `loadSession: true`, and Consult deliberately does not take the `session/load` fallback for this Profile. |
 | Model error cannot masquerade as success | **PASS** — with an unreachable `COPILOT_PROVIDER_*` BYOK endpoint, the turn streamed retry notices, ended in a plain `"Error: Could not connect …"` message chunk, and Copilot still stopped with `end_turn`; Consult finalized the Job as `failed` with `COPILOT_MODEL_ERROR` (before this guard, the same turn persisted as `completed`). |
-| `--deny-tool` pins accepted in ACP mode | **PASS (launch-level)** — `copilot --acp --deny-tool=shell,write,web_fetch` initializes normally, and every Consult launch appends the Job-mode pins and clears ambient `COPILOT_ALLOW_ALL` (unit-tested in `process-sandbox.test.mts`). Copilot documents deny rules as overriding `--allow-all` and saved approvals; observing a live denied shell under a real login is auth-deferred. |
+| `--deny-tool` pins accepted in ACP mode | **PASS (launch-level)** — `copilot --acp --no-auto-update --deny-tool=shell,write,url` initializes normally, and every Consult launch appends the Job-mode pins and deletes `COPILOT_ALLOW_ALL` from the child environment (unit-tested in `process-sandbox.test.mts`; the variable binds to boolean `--allow-all-tools`, where any defined value — even empty — enables it). The denies use permission *kinds*: web fetches request `kind: "url"` (verified in the 1.0.80 bundle), so `url` is denied rather than the `web_fetch` tool name. Copilot documents deny rules as overriding `--allow-all` and saved approvals; observing a live denied shell/fetch under a real login is auth-deferred. |
+| Version floor enforced | **PASS (fixture-level)** — setup, inherited preflight, and every turn refuse an agent whose `agentInfo` reports Copilot older than 1.0.60 (`COPILOT_VERSION_UNSUPPORTED`; ACP permission flags landed at 0.0.400 and ACP-mode permission behavior consolidated through 1.0.60 per the bundled changelog). Launches also pin `--no-auto-update`. |
 
 ## Auth-deferred (need a Copilot login or token)
 
@@ -46,6 +48,10 @@ reachable without auth passed, including the fail-closed confined rejection.
   for copilot the launch-level `--deny-tool` pins are the load-bearing
   control against unprompted shell/fetch tool calls.
 - `--background` + `result` round-trip.
+- Boundary caveat, not testable from Consult: Copilot hooks, custom
+  instructions, and user-configured MCP servers execute with the Host's
+  ambient authority outside the tool-permission pins, including during
+  preflight's throwaway session (see ADR-0038).
 
 These must pass live before any confined-support follow-up (see ADR-0038).
 Session reopening (`--resume`, `session/load`) is rejected by policy — see

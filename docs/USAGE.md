@@ -171,11 +171,18 @@ inheritance automatically. An opencode or copilot Job is therefore never
 OS-sandboxed by Consult; treat it as running with the Host's own authority,
 subject only to the cooperative Job policy above and any sandboxing the agent
 runtime itself provides. For copilot, Consult additionally launches the CLI
-with Job-mode `--deny-tool` pins (`shell` and `web_fetch` always, `write`
-unless the Job grants writes) and clears ambient `COPILOT_ALLOW_ALL`; Copilot
-ranks deny rules above `--allow-all` and saved approvals, so persisted
-allow-all state cannot bypass the Job Authority. Copilot Session reopening
-(`--resume`) is rejected because those approvals persist across sessions. Confined nested delegation is unsupported. Native Windows and macOS
+with Job-mode `--deny-tool` pins (`shell` and `url` always, `write` unless
+the Job grants writes), removes `COPILOT_ALLOW_ALL` from the child
+environment (any defined value, even empty, would enable allow-all-tools),
+pins `--no-auto-update`, and refuses Copilot CLI builds older than 1.0.60;
+Copilot ranks deny rules above `--allow-all` and saved approvals, so
+persisted allow-all state cannot bypass the Job Authority. Those pins govern
+model-initiated tool calls only — Copilot hooks, custom instructions, and
+user-configured MCP servers still run with the Host's ambient authority,
+including during preflight's session probe. Copilot Session reopening
+(`--resume`) is rejected because tool approvals persist across sessions.
+The copilot Profile is preview support: its model-turn conformance matrix is
+still auth-deferred. Confined nested delegation is unsupported. Native Windows and macOS
 x64 processes, including Node under Rosetta, are unsupported even in inherited
 mode.
 

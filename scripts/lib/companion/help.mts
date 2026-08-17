@@ -266,18 +266,24 @@ substituting another agent.
   COPILOT_GITHUB_TOKEN with a fine-grained PAT holding the Copilot Requests
   permission; GH_TOKEN and GITHUB_TOKEN are also honored, and a
   COPILOT_PROVIDER_* BYOK setup needs no GitHub login.
+- Preview support: conformance is handshake-level and model-turn checks are
+  pending, so treat results with extra scrutiny.
 - Confinement is unavailable, so Jobs run with the Host's ambient authority
-  and read-only is cooperative. Consult additionally launches copilot with
-  --deny-tool pins matched to the Job mode (shell and web_fetch always, write
-  unless the Job grants writes) and clears ambient COPILOT_ALLOW_ALL, so
-  saved allow-all approvals cannot bypass the Job Authority.
+  and read-only is cooperative. Consult launches copilot with --deny-tool
+  pins matched to the Job mode (shell and url always, write unless the Job
+  grants writes), removes ambient COPILOT_ALLOW_ALL, pins --no-auto-update,
+  and refuses Copilot CLI builds older than 1.0.60 — so saved allow-all
+  approvals cannot silently bypass the Job Authority.
+- The pins govern model tool calls only: Copilot hooks, custom instructions,
+  and user-configured MCP servers still run with the Host's ambient
+  authority.
 - Do not pass --allow-fetch; fetch requires confinement.
 - --resume and --resume-job are rejected: copilot persists tool approvals
   across sessions, so Consult does not reopen them until that state is
   bounded.
-- A turn whose final agent message is a Copilot "Error: ..." notice fails
-  with COPILOT_MODEL_ERROR instead of completing; check auth or the BYOK
-  endpoint and retry.
+- A turn ending in a Copilot model/provider error notice fails with
+  COPILOT_MODEL_ERROR instead of completing; check the login (copilot login)
+  or the COPILOT_PROVIDER_* endpoint and retry.
 
 CONSULT_OPENAI_API_KEY, CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN
 explicitly override the corresponding Profile credential file; ambient vendor

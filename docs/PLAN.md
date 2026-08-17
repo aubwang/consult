@@ -18,8 +18,9 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
   `CONSULT_HOST` values support custom Hosts without a Host-specific adapter.
 - The built-in Profile registry contains `claude`, `codex`, `opencode`, and
   `copilot`.
-- Claude is a delegated Profile, not a shipped Host plugin. GitHub Copilot is a
-  delegated inherit-only Profile (ADR-0038). Gemini is not a supported Profile.
+- Claude is a delegated Profile, not a shipped Host plugin. GitHub Copilot is
+  a delegated inherit-only preview Profile (ADR-0038); its model-turn
+  conformance is still auth-deferred. Gemini is not a supported Profile.
 - Cruise owns Cruise workflow policy and session state; Consult supplies only
   delegation mechanisms.
 

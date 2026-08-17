@@ -26,16 +26,36 @@ The Profile is **inherit-only**, at the same support level as opencode:
   `CONSULT_AGENT_SANDBOX=bwrap` path mounts no Copilot config; it is
   undocumented and untested for this Profile.
 
+The Profile ships as **preview support**: the handshake-level behavior below
+is live-verified, while the model-turn conformance matrix is auth-deferred
+(`docs/conformance/copilot.md`). ACP mode itself is a GitHub public preview.
+
 Launch and policy decisions, verified against `@github/copilot` 1.0.80:
 
 - The registry entry stays `["--acp"]`, but every launch appends Job-mode
-  `--deny-tool` pins (`profileModeArgs`): `shell` and `web_fetch` are always
-  denied, and `write` is denied unless the Job grants writes. Copilot ranks
-  deny rules above `--allow-all`, `COPILOT_ALLOW_ALL`, and approvals saved in
-  `~/.copilot`, so the pins hold even when persisted or ambient state would
-  auto-approve tools without a `session/request_permission` round-trip — the
-  cooperative permission path cannot be bypassed that way. The launch also
-  clears ambient `COPILOT_ALLOW_ALL` (`profilePermissionGuardEnv`).
+  `--deny-tool` pins (`profileModeArgs`): the `shell` and `url` permission
+  kinds are always denied, and `write` is denied unless the Job grants
+  writes. Web fetches request the `url` permission kind — `web_fetch` is a
+  tool name, not a permission kind, and denying it does not block fetches.
+  Copilot ranks deny rules above `--allow-all`, `COPILOT_ALLOW_ALL`, and
+  approvals saved in `~/.copilot`, so the pins hold even when persisted or
+  ambient state would auto-approve tools without a
+  `session/request_permission` round-trip. The launch also deletes
+  `COPILOT_ALLOW_ALL` from the child environment (`profileStripEnvKeys`) —
+  the variable binds to the boolean `--allow-all-tools` option, and any
+  defined value, including empty, enables it — and pins `--no-auto-update`
+  so the verified binary cannot swap itself out mid-Job.
+- Delegated launches refuse Copilot CLI builds older than 1.0.60
+  (`copilotAgentVersionDiagnostic`, enforced at setup, preflight, and every
+  turn, keyed on the agent-reported `agentInfo`): ACP permission flags landed
+  at 0.0.400, but ACP-mode permission behavior kept consolidating until
+  1.0.60, so an older binary can accept the pins without honoring them.
+- The pins bound model-initiated tool calls only. Copilot's user- and
+  repository-configured hooks, custom instructions, and MCP servers execute
+  with the Host's ambient authority outside the `shell` permission — during
+  Jobs and during preflight's throwaway session alike. That is the accepted
+  inherit-tier boundary (same as opencode plugins); bounding those sources
+  requires the confined-tier isolation this ADR defers.
 - `supports` is `{resume: false, load: false}` and both `--resume` selectors
   are rejected (`profileRejectsResume`) even though the agent advertises
   `loadSession: true`: Copilot persists tool approvals across sessions, and a

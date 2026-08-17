@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { startAgent as defaultStartAgent } from "./acp-client.mts";
+import { copilotAgentVersionDiagnostic } from "./profile-launch-policy.mts";
 import { dataDir as defaultDataDir } from "./broker-endpoint.mts";
 import { probeBinaryOnPath } from "./setup-probe.mts";
 
@@ -90,6 +91,7 @@ export interface SpawnInstallResult {
 }
 
 export interface InstallSmokeAgent {
+  capabilities?: unknown;
   dispose: () => Promise<void>;
 }
 
@@ -184,7 +186,19 @@ export async function installAndVerify({
       initTimeoutMs: 10000,
       ...(codexRuntime ? { codexPath: codexRuntime.codexPath } : {}),
     });
+    // The handshake reports the agent's own identity and version; a Copilot
+    // binary older than the supported floor would accept the launch pins
+    // without honoring them, so it is refused before the Profile is recorded.
+    const versionDiagnostic = copilotAgentVersionDiagnostic(agent.capabilities);
     await agent.dispose();
+    if (versionDiagnostic !== null) {
+      return {
+        ok: false,
+        stage: "smoke",
+        message: versionDiagnostic,
+        captured: {},
+      };
+    }
   } catch (error) {
     const failure = error as Error & { stderr?: string };
     return {

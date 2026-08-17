@@ -285,10 +285,11 @@ function handleMessage(message: FakeAgentMessage): void {
         message.params.sessionId,
         "Info: Response was interrupted due to a server error. Retrying...",
       );
-      writeUpdate(
-        message.params.sessionId,
-        "Error: Failed to get response from the AI model after retrying.",
-      );
+      // Deliberately split mid-word across chunk boundaries: chunking is
+      // transport framing, not message framing.
+      writeUpdate(message.params.sessionId, "Err");
+      writeUpdate(message.params.sessionId, "or: Failed to get response fro");
+      writeUpdate(message.params.sessionId, "m the AI model after retrying.");
       writeMessage({
         jsonrpc: "2.0",
         id: message.id,
@@ -522,7 +523,12 @@ function capabilitiesForScenario(currentScenario: string): AgentCapabilities {
 
 function agentInfoForScenario(currentScenario: string): { agentInfo?: AgentInfo } {
   if (currentScenario.startsWith("prompt-copilot-")) {
-    return { agentInfo: { name: "Copilot", version: "1.0.80" } };
+    return {
+      agentInfo: {
+        name: "Copilot",
+        version: currentScenario === "prompt-copilot-old-version" ? "1.0.50" : "1.0.80",
+      },
+    };
   }
   if (
     currentScenario === "prompt-claude-async-subagent-early-stop" ||

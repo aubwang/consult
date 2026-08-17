@@ -6,9 +6,9 @@ import {
   profileCodexPathEnv,
   profileHomeMounts,
   profileModeArgs,
-  profilePermissionGuardEnv,
   profileRuntimeMounts,
   profileSessionModeEnv,
+  profileStripEnvKeys,
 } from "./profile-launch-policy.mts";
 
 const SYSTEM_READ_ONLY_ROOTS = ["/usr", "/bin", "/lib", "/lib64"];
@@ -77,17 +77,22 @@ export function buildAgentLaunch({
 }: AgentLaunchOptions): AgentLaunch {
   const sandboxMode = normalizeAgentSandbox(sandbox);
   const sessionModeEnv = profileSessionModeEnv(profileRegistryId, mode);
-  const permissionGuardEnv = profilePermissionGuardEnv(profileRegistryId);
   const launchArgs = [...args, ...profileModeArgs(profileRegistryId, mode)];
   // Computed last so the recorded Profile value always wins over an ambient
   // CODEX_PATH inherited from the Host environment.
   const codexPathEnv = profileCodexPathEnv(profileRegistryId, codexPath);
+  const stripEnv = (launchEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+    for (const key of profileStripEnvKeys(profileRegistryId)) {
+      delete launchEnv[key];
+    }
+    return launchEnv;
+  };
   if (sandboxMode === "off") {
     return {
       binary,
       args: launchArgs,
       cwd,
-      env: { ...env, ...sessionModeEnv, ...permissionGuardEnv, ...codexPathEnv },
+      env: stripEnv({ ...env, ...sessionModeEnv, ...codexPathEnv }),
     };
   }
   if (sandboxMode !== "bwrap") {
@@ -159,14 +164,13 @@ export function buildAgentLaunch({
     binary: "bwrap",
     args: bwrapArgs,
     cwd,
-    env: {
+    env: stripEnv({
       ...env,
       ...sessionModeEnv,
-      ...permissionGuardEnv,
       ...codexPathEnv,
       HOME: SANDBOX_HOME,
       TMPDIR: SANDBOX_HOME,
-    },
+    }),
   };
 }
 

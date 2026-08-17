@@ -14,6 +14,7 @@ import type { JobAuthority, JobAuthorityDiagnostic } from "./job-authority.mts";
 import { decidePermission } from "./permissions.mts";
 import type { PermissionMode } from "./permissions.mts";
 import { normalizeAgentSandbox } from "./process-sandbox.mts";
+import { copilotAgentVersionDiagnostic, versionAtLeast } from "./profile-launch-policy.mts";
 import { acquireConfinedSandboxRuntimeLaunch } from "./sandbox-runtime-launch.mts";
 import { readWorkspaceJobRecord } from "./job-records.mts";
 import { validateJobAuthorityRuntimeBoundary } from "./job-authority-preflight.mts";
@@ -214,6 +215,10 @@ export async function runAgentJobTurn(
   if (job.status !== "running") {
     return;
   }
+  const versionDiagnostic = copilotAgentVersionDiagnostic(agent.capabilities);
+  if (versionDiagnostic !== null) {
+    throw copilotVersionError(versionDiagnostic);
+  }
   let sessionId: string | undefined;
   let sessionState: AgentSessionState | null = null;
   if (job.resumeSessionId) {
@@ -258,8 +263,8 @@ export async function runAgentJobTurn(
   }
 
   let vulnerableClaudeAsyncSubagentStarted = false;
-  const copilotErrorMasquerade = reportsModelErrorsAsMessages(params.profile, agent.capabilities);
-  let copilotTrailingErrorText: string | null = null;
+  const copilotErrorMasquerade = reportsModelErrorsAsMessages(agent.capabilities);
+  let copilotTurnTextTail = "";
 
   for await (const event of promptTurn(agent.connection, {
     sessionId,
@@ -275,7 +280,7 @@ export async function runAgentJobTurn(
     if (event.type === "update" && copilotErrorMasquerade) {
       const chunkText = agentMessageChunkText(event.update);
       if (chunkText !== null) {
-        copilotTrailingErrorText = trackTrailingErrorText(copilotTrailingErrorText, chunkText);
+        copilotTurnTextTail = (copilotTurnTextTail + chunkText).slice(-COPILOT_TURN_TAIL_CHARS);
       }
     }
     if (event.type === "stop") {
@@ -288,8 +293,11 @@ export async function runAgentJobTurn(
       if (vulnerableClaudeAsyncSubagentStarted) {
         throw claudeAsyncFinalizationError(agent.capabilities);
       }
-      if (event.stopReason === "end_turn" && copilotTrailingErrorText !== null) {
-        throw copilotModelErrorTurnError(copilotTrailingErrorText);
+      if (event.stopReason === "end_turn") {
+        const modelError = trailingCopilotModelError(copilotTurnTextTail);
+        if (modelError !== null) {
+          throw copilotModelErrorTurnError(modelError);
+        }
       }
       // Busy clears in handleRunMessage only after this turn fully settles.
       await ctx.finalizeJob(job, {
@@ -330,21 +338,10 @@ function usesVulnerableClaudeAsyncFinalization(
     !versionAtLeast(agentInfo.version, CLAUDE_ASYNC_FINALIZATION_MIN_VERSION);
 }
 
-function versionAtLeast(actual: string, minimum: string): boolean {
-  const parsedActual = parseReleaseVersion(actual);
-  const parsedMinimum = parseReleaseVersion(minimum);
-  if (!parsedActual || !parsedMinimum) return false;
-  for (let index = 0; index < parsedActual.length; index += 1) {
-    if (parsedActual[index] !== parsedMinimum[index]) {
-      return parsedActual[index] > parsedMinimum[index];
-    }
-  }
-  return true;
-}
-
-function parseReleaseVersion(version: string): [number, number, number] | null {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+function copilotVersionError(diagnostic: string): CodedAgentError {
+  const error = new Error(diagnostic) as CodedAgentError;
+  error.code = "COPILOT_VERSION_UNSUPPORTED";
+  return error;
 }
 
 function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
@@ -362,11 +359,22 @@ function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
 
 // Copilot CLI maps model/provider failures to plain agent_message_chunk text
 // ("Error: ...") and still resolves session/prompt with end_turn, so a dead
-// endpoint or revoked login would otherwise persist as a successful Job. The
-// turn fails instead when such a notice is the last agent message of an
-// end_turn stop; a notice followed by real agent text is not terminal.
-function reportsModelErrorsAsMessages(profile: string, capabilities: unknown): boolean {
-  if (profile !== "copilot" || !isRecord(capabilities)) return false;
+// endpoint or revoked login would otherwise persist as a successful Job.
+// Keyed on the agent-reported identity, not the Profile name, so aliased or
+// custom Profiles that launch Copilot are covered too. Chunk boundaries are
+// arbitrary, so the turn's agent text is assembled (bounded to a tail) and
+// matched against known provider-error signatures near the end of the turn;
+// ordinary answers that merely mention "Error:" do not match. The signature
+// list is a stopgap until Copilot reports structured errors over ACP.
+// No line anchor: Copilot's chunks concatenate without separators, so the
+// notice can directly follow earlier text ("...Retrying...Error: ...").
+const COPILOT_TURN_TAIL_CHARS = 2000;
+const COPILOT_MODEL_ERROR_TAIL_WINDOW = 600;
+const COPILOT_MODEL_ERROR_SIGNATURE =
+  /Error: (?:Failed to get response from the AI model|Could not connect to [^\n]{0,120}provider)[^\n]*/u;
+
+function reportsModelErrorsAsMessages(capabilities: unknown): boolean {
+  if (!isRecord(capabilities)) return false;
   const agentInfo = isRecord(capabilities.agentInfo) ? capabilities.agentInfo : null;
   return agentInfo?.name === "Copilot";
 }
@@ -377,24 +385,18 @@ function agentMessageChunkText(update: unknown): string | null {
   return content?.type === "text" && typeof content.text === "string" ? content.text : null;
 }
 
-function trackTrailingErrorText(previous: string | null, chunkText: string): string | null {
-  if (chunkText.trimStart().startsWith("Error: ")) {
-    return chunkText;
-  }
-  // A chunk that opens with whitespace continues the current message rather
-  // than starting a new one, so an in-flight error notice stays terminal.
-  if (previous !== null && chunkText !== "" && /^\s/u.test(chunkText)) {
-    return previous + chunkText;
-  }
-  return null;
+function trailingCopilotModelError(turnTextTail: string): string | null {
+  const tail = turnTextTail.slice(-COPILOT_MODEL_ERROR_TAIL_WINDOW);
+  const match = COPILOT_MODEL_ERROR_SIGNATURE.exec(tail);
+  return match ? match[0].trim() : null;
 }
 
 function copilotModelErrorTurnError(errorText: string): CodedAgentError {
   const preview = errorText.trim().replace(/\s+/gu, " ").slice(0, 300);
   const error = new Error(
     `Copilot reported a model error instead of completing the turn: ${preview} ` +
-      `— verify the Copilot login (copilot /login or COPILOT_GITHUB_TOKEN) or the ` +
-      `COPILOT_PROVIDER_* endpoint, then retry`,
+      `— verify the Copilot login (run copilot login, or set COPILOT_GITHUB_TOKEN) ` +
+      `or the COPILOT_PROVIDER_* endpoint, then retry`,
   ) as CodedAgentError;
   error.code = "COPILOT_MODEL_ERROR";
   return error;
