@@ -170,6 +170,14 @@ function handleMessage(message: FakeAgentMessage): void {
   }
 
   if (message.method === "session/new") {
+    if (scenario === "new-session-auth-error") {
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        error: { code: -32000, message: "Authentication required" },
+      });
+      return;
+    }
     writeMessage({
       jsonrpc: "2.0",
       id: message.id,
@@ -265,6 +273,32 @@ function handleMessage(message: FakeAgentMessage): void {
         },
       });
       writeUpdate(message.params.sessionId, "WAITING_FOR_SUBAGENT");
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
+      return;
+    }
+    if (scenario === "prompt-copilot-model-error") {
+      writeUpdate(
+        message.params.sessionId,
+        "Info: Response was interrupted due to a server error. Retrying...",
+      );
+      writeUpdate(
+        message.params.sessionId,
+        "Error: Failed to get response from the AI model after retrying.",
+      );
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
+      return;
+    }
+    if (scenario === "prompt-copilot-error-then-answer") {
+      writeUpdate(message.params.sessionId, "Error: transient provider hiccup.");
+      writeUpdate(message.params.sessionId, "recovered-final-answer");
       writeMessage({
         jsonrpc: "2.0",
         id: message.id,
@@ -487,6 +521,9 @@ function capabilitiesForScenario(currentScenario: string): AgentCapabilities {
 }
 
 function agentInfoForScenario(currentScenario: string): { agentInfo?: AgentInfo } {
+  if (currentScenario.startsWith("prompt-copilot-")) {
+    return { agentInfo: { name: "Copilot", version: "1.0.80" } };
+  }
   if (
     currentScenario === "prompt-claude-async-subagent-early-stop" ||
     currentScenario === "prompt-claude-async-subagent-fixed"

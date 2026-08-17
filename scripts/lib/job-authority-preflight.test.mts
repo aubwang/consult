@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   preflightJobAuthority,
+  probeInheritedProfileLaunch,
   validateJobAuthorityRuntimeBoundary,
 } from "./job-authority-preflight.mts";
 import type { JobAuthority } from "./job-authority.mts";
+
+const fakeAgentPath = fileURLToPath(
+  new URL("./__fixtures__/fake-acp-agent.mts", import.meta.url),
+);
 
 const CONFINED: JobAuthority = {
   schemaVersion: 1,
@@ -145,4 +151,54 @@ test("preflight returns probe results and converts probe exceptions", async () =
     assert.equal(failed.diagnostic.code, "AUTHORITY_PREFLIGHT_FAILED");
     assert.match(failed.diagnostic.message, /nested bwrap denied/);
   }
+});
+
+test("inherited probe creates a session for copilot and fails on auth errors", async () => {
+  const authFailure = await probeInheritedProfileLaunch({
+    workspaceRoot: process.cwd(),
+    profile: "copilot",
+    profileRegistryId: "copilot",
+    platform: "linux",
+    authority: INHERIT,
+    profileLaunch: {
+      binary: process.execPath,
+      args: [fakeAgentPath, "sessions", "new-session-auth-error"],
+      env: {},
+    },
+  });
+  assert.equal(authFailure.ok, false);
+  if (!authFailure.ok) {
+    assert.equal(authFailure.diagnostic.code, "AUTHORITY_PREFLIGHT_FAILED");
+    assert.match(authFailure.diagnostic.message, /Authentication required/u);
+  }
+
+  const authenticated = await probeInheritedProfileLaunch({
+    workspaceRoot: process.cwd(),
+    profile: "copilot",
+    profileRegistryId: "copilot",
+    platform: "linux",
+    authority: INHERIT,
+    profileLaunch: {
+      binary: process.execPath,
+      args: [fakeAgentPath, "sessions", "default"],
+      env: {},
+    },
+  });
+  assert.deepEqual(authenticated, { ok: true, authority: INHERIT });
+});
+
+test("inherited probe stays initialize-only for profiles without a session probe", async () => {
+  const result = await probeInheritedProfileLaunch({
+    workspaceRoot: process.cwd(),
+    profile: "codex",
+    profileRegistryId: "codex",
+    platform: "linux",
+    authority: INHERIT,
+    profileLaunch: {
+      binary: process.execPath,
+      args: [fakeAgentPath, "sessions", "new-session-auth-error"],
+      env: {},
+    },
+  });
+  assert.deepEqual(result, { ok: true, authority: INHERIT });
 });

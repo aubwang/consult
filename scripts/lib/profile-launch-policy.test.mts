@@ -4,6 +4,9 @@ import { test } from "node:test";
 import {
   profileHomeMounts,
   profileLaunchPolicy,
+  profileModeArgs,
+  profilePermissionGuardEnv,
+  profileRejectsResume,
   profileRuntimeMounts,
   profileSessionModeEnv,
 } from "./profile-launch-policy.mts";
@@ -61,7 +64,48 @@ test("profileSessionModeEnv pins the codex session preset to the Job mode", () =
 test("profileSessionModeEnv stays inert for other profiles and unknown modes", () => {
   assert.deepEqual(profileSessionModeEnv("claude", "read-only"), {});
   assert.deepEqual(profileSessionModeEnv("opencode", "read-only"), {});
+  assert.deepEqual(profileSessionModeEnv("copilot", "read-only"), {});
   assert.deepEqual(profileSessionModeEnv(undefined, "read-only"), {});
   assert.deepEqual(profileSessionModeEnv("codex", undefined), {});
   assert.deepEqual(profileSessionModeEnv("codex", "danger-full-access"), {});
+});
+
+test("profileModeArgs pins copilot tool denies to the Job mode", () => {
+  assert.deepEqual(profileModeArgs("copilot", "read-only"), [
+    "--deny-tool=shell,write,web_fetch",
+  ]);
+  assert.deepEqual(profileModeArgs("copilot", "write"), [
+    "--deny-tool=shell,web_fetch",
+  ]);
+});
+
+test("profileModeArgs denies the read-only set for unknown copilot modes", () => {
+  assert.deepEqual(profileModeArgs("copilot", undefined), [
+    "--deny-tool=shell,write,web_fetch",
+  ]);
+  assert.deepEqual(profileModeArgs("copilot", "danger-full-access"), [
+    "--deny-tool=shell,write,web_fetch",
+  ]);
+});
+
+test("profileModeArgs stays inert for other profiles", () => {
+  assert.deepEqual(profileModeArgs("codex", "read-only"), []);
+  assert.deepEqual(profileModeArgs("claude", "write"), []);
+  assert.deepEqual(profileModeArgs("opencode", "read-only"), []);
+  assert.deepEqual(profileModeArgs(undefined, "read-only"), []);
+});
+
+test("profilePermissionGuardEnv clears copilot allow-all and stays inert otherwise", () => {
+  assert.deepEqual(profilePermissionGuardEnv("copilot"), { COPILOT_ALLOW_ALL: "" });
+  assert.deepEqual(profilePermissionGuardEnv("codex"), {});
+  assert.deepEqual(profilePermissionGuardEnv("claude"), {});
+  assert.deepEqual(profilePermissionGuardEnv(undefined), {});
+});
+
+test("profileRejectsResume refuses copilot session reopening only", () => {
+  assert.equal(profileRejectsResume("copilot"), true);
+  assert.equal(profileRejectsResume("codex"), false);
+  assert.equal(profileRejectsResume("claude"), false);
+  assert.equal(profileRejectsResume("opencode"), false);
+  assert.equal(profileRejectsResume(undefined), false);
 });

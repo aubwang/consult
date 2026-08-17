@@ -28,7 +28,7 @@ Consult ships four built-in Profile definitions:
 | `claude` | `claude-agent-acp` | `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`, otherwise a stageable credentials file. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
 | `codex` | `codex-acp` | `CONSULT_OPENAI_API_KEY`, otherwise the underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
 | `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority. |
-| `copilot` | `copilot --acp` | Copilot CLI login (`/login`), or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` with a fine-grained PAT holding the Copilot Requests permission. | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority. |
+| `copilot` | `copilot --acp` | Copilot CLI login (`/login`), `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` with a fine-grained PAT holding the Copilot Requests permission, or a `COPILOT_PROVIDER_*` BYOK provider (no GitHub login). | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority hardened by Job-mode `--deny-tool` pins. |
 
 Run `consult setup` to inspect available Profile executables or
 `consult setup --install <profile>` to install and verify one. Custom Profiles
@@ -170,7 +170,12 @@ preflight before any Job is created, and Consult never downgrades to
 inheritance automatically. An opencode or copilot Job is therefore never
 OS-sandboxed by Consult; treat it as running with the Host's own authority,
 subject only to the cooperative Job policy above and any sandboxing the agent
-runtime itself provides. Confined nested delegation is unsupported. Native Windows and macOS
+runtime itself provides. For copilot, Consult additionally launches the CLI
+with Job-mode `--deny-tool` pins (`shell` and `web_fetch` always, `write`
+unless the Job grants writes) and clears ambient `COPILOT_ALLOW_ALL`; Copilot
+ranks deny rules above `--allow-all` and saved approvals, so persisted
+allow-all state cannot bypass the Job Authority. Copilot Session reopening
+(`--resume`) is rejected because those approvals persist across sessions. Confined nested delegation is unsupported. Native Windows and macOS
 x64 processes, including Node under Rosetta, are unsupported even in inherited
 mode.
 

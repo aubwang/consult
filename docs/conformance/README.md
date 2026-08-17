@@ -138,7 +138,7 @@ OpenCode and Copilot remain inherit-only.
 | [codex](codex.md) | PASS | PASS | PASS (backstop) | PASS | PASS (backstop, defense-in-depth) | PASS | PASS (154ms) | PASS | 2026-05-19 direct/Consult/bwrap proof PASS with selected `~/.codex` auth/config file mounts. |
 | [claude](claude.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, **preventive**) | PASS | PASS (cooperative) | PASS (after iter-17 fix) | 2026-05-19 direct/Consult/bwrap proof PASS. Cancel works but is slower than codex. |
 | [opencode](opencode.md) | PASS | PASS | PASS (cooperative) | PASS | PASS (backstop, defense-in-depth) | PASS | — | — | 2026-05-19 direct/Consult/bwrap proof PASS with provider auth configured. |
-| [copilot](copilot.md) | PASS | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | — | — | 2026-08-17 handshake-level pass at `@github/copilot` 1.0.80; inherit-only, confined preflight fails closed. |
+| [copilot](copilot.md) | PASS | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | AUTH-DEFERRED | — | rejected by policy | 2026-08-17 handshake-level pass at `@github/copilot` 1.0.80; inherit-only with `--deny-tool` authority pins, unauthenticated preflight and model-error turns fail closed, confined preflight fails closed. |
 
 Legend:
 - **PASS**: live-verified end-to-end against the real backend.

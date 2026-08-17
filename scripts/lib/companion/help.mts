@@ -264,12 +264,20 @@ substituting another agent.
 - The GitHub Copilot CLI serves ACP natively; there is no separate shim.
 - Authentication uses the Copilot CLI login (run copilot, then /login), or
   COPILOT_GITHUB_TOKEN with a fine-grained PAT holding the Copilot Requests
-  permission; GH_TOKEN and GITHUB_TOKEN are also honored.
-- Confinement is unavailable, so Jobs run with the Host's ambient authority and
-  read-only is cooperative. State that limitation when it materially affects
-  the task.
+  permission; GH_TOKEN and GITHUB_TOKEN are also honored, and a
+  COPILOT_PROVIDER_* BYOK setup needs no GitHub login.
+- Confinement is unavailable, so Jobs run with the Host's ambient authority
+  and read-only is cooperative. Consult additionally launches copilot with
+  --deny-tool pins matched to the Job mode (shell and web_fetch always, write
+  unless the Job grants writes) and clears ambient COPILOT_ALLOW_ALL, so
+  saved allow-all approvals cannot bypass the Job Authority.
 - Do not pass --allow-fetch; fetch requires confinement.
-- Sessions do not advertise resume, so --resume does not reopen them.
+- --resume and --resume-job are rejected: copilot persists tool approvals
+  across sessions, so Consult does not reopen them until that state is
+  bounded.
+- A turn whose final agent message is a Copilot "Error: ..." notice fails
+  with COPILOT_MODEL_ERROR instead of completing; check auth or the BYOK
+  endpoint and retry.
 
 CONSULT_OPENAI_API_KEY, CONSULT_CLAUDE_API_KEY, and CONSULT_CLAUDE_OAUTH_TOKEN
 explicitly override the corresponding Profile credential file; ambient vendor
