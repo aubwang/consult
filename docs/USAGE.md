@@ -417,11 +417,6 @@ Claude Code is not auto-detected. A Claude spawning Host should pass
 environment variables; otherwise its Jobs use the shared `terminal/default`
 scope.
 
-GitHub Copilot CLI is not auto-detected either: it exports no stable session
-marker into spawned processes (verified at `@github/copilot` 1.0.80). A Copilot
-spawning Host should pass `--host copilot --host-session <stable-session-id>`
-or set `CONSULT_HOST=copilot` and `CONSULT_HOST_SESSION_ID`.
-
 Host Identity scopes defaults, resume lookup, lineage, and lifecycle metadata.
 The same `consult` CLI remains the product interface from every Host.
 

@@ -95,11 +95,6 @@ decision. A Claude spawning Host must supply explicit Host and Host Session
 identity (flags or `CONSULT_*` environment) when it needs isolated defaults and
 resume lookup; otherwise it shares `terminal/default`.
 
-GitHub Copilot CLI is not auto-detected either: at `@github/copilot` 1.0.80 it
-exports no stable session marker into spawned child processes (ADR-0038). A
-Copilot Host supplies `CONSULT_HOST=copilot` and `CONSULT_HOST_SESSION_ID`
-explicitly, like any custom Host.
-
 Profile selection order:
 
 1. Explicit `--agent` / `--profile`.

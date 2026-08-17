@@ -45,16 +45,6 @@ reachable without auth passed, including the fail-closed confined rejection.
 
 These must pass live before any confined-support follow-up (see ADR-0038).
 
-## Host-detection note
-
-Copilot CLI is not an autodetected Host. Static inspection of the 1.0.80
-bundle shows `COPILOT_AGENT_SESSION_ID` is read as an input, and per-session
-identifiers (`COPILOT_DETACHED_PARENT_SESSION_ID`) are exported only to
-Copilot's own internal detached child sessions — ordinary spawned processes
-receive no stable session marker. Invoking Consult from inside a Copilot
-session therefore uses `CONSULT_HOST=copilot` and `CONSULT_HOST_SESSION_ID`
-explicitly, like any custom Host.
-
 ## Open follow-ups
 
 - Rerun the auth-deferred rows in an environment with Copilot access and
