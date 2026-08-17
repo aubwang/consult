@@ -39,13 +39,11 @@ Registry decisions, verified against `@github/copilot` 1.0.80:
   `authMethods` instead of blocking on a TTY when logged out; an
   unauthenticated turn fails fast with `-32000: Authentication required`.
 
-Copilot CLI is a Profile, not an autodetected Host. Static inspection of
-1.0.80 shows it reads `COPILOT_AGENT_SESSION_ID` as an input and exports
-per-session identifiers only to its own internal detached child sessions, so
-spawned processes see no stable session marker to detect. A Copilot spawning
-Host passes `--host copilot --host-session <id>` or the `CONSULT_HOST` /
-`CONSULT_HOST_SESSION_ID` environment values, like any custom Host. If a
-future Copilot CLI exports a stable marker, autodetection can follow the
+Copilot CLI is a Profile only. Host autodetection was investigated and not
+added: static inspection of 1.0.80 shows it exports no stable session marker
+into spawned processes (`COPILOT_AGENT_SESSION_ID` is read as an input, and
+per-session identifiers reach only its own internal detached child sessions).
+If a future Copilot CLI exports a stable marker, autodetection can follow the
 existing environment-based pattern (ADR-0017).
 
 ## Consequences
