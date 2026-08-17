@@ -90,6 +90,71 @@ export function profileSessionModeEnv(
 }
 
 /**
+ * Extra launch arguments that pin a delegated Profile's own permission layer
+ * to the Job mode. Copilot CLI honors `--deny-tool` above every other
+ * permission source — `--allow-all`, `COPILOT_ALLOW_ALL`, and approvals
+ * persisted in `~/.copilot` — so these denies hold even when the inherited
+ * Host environment or saved state would otherwise auto-approve tools without
+ * a `session/request_permission` round-trip. Execute stays denied in every
+ * Job mode and fetch requires confinement, which copilot does not have, so
+ * `shell` and `web_fetch` are always denied; `write` is denied unless the Job
+ * mode grants writes. An unknown mode gets the read-only set: deny more, not
+ * less.
+ */
+export function profileModeArgs(
+  registryId: string | undefined,
+  mode: string | undefined,
+): string[] {
+  if (registryId !== "copilot") {
+    return [];
+  }
+  if (mode === "write") {
+    return ["--deny-tool=shell,web_fetch"];
+  }
+  return ["--deny-tool=shell,write,web_fetch"];
+}
+
+/**
+ * Environment overlay that neutralizes ambient permission-widening variables
+ * a delegated Profile would otherwise inherit. `COPILOT_ALLOW_ALL` makes
+ * Copilot CLI auto-approve every tool, path, and URL; an inherited launch
+ * passes the Host environment through, so the overlay pins it empty and the
+ * Job's permission decisions stay with Consult and the `--deny-tool` pins.
+ */
+export function profilePermissionGuardEnv(
+  registryId: string | undefined,
+): Record<string, string> {
+  if (registryId !== "copilot") {
+    return {};
+  }
+  return { COPILOT_ALLOW_ALL: "" };
+}
+
+/**
+ * Whether an inherited-authority preflight must also create a session before
+ * reporting ready. Copilot CLI's ACP `initialize` succeeds while logged out
+ * and only `session/new` raises `Authentication required`, so an
+ * initialize-only probe would report an unauthenticated Profile as ready and
+ * defer the failure to the first delegated prompt. The probe sends no model
+ * prompt.
+ */
+export function profilePreflightsSession(registryId: string | undefined): boolean {
+  return registryId === "copilot";
+}
+
+/**
+ * Whether Consult refuses to reopen this Profile's Sessions even when the
+ * agent advertises `session/load`. Copilot persists tool approvals across
+ * sessions (`/allow-all`, `~/.copilot/permissions-config.json`), and a loaded
+ * Session restores that state — so reopening could resume with wider
+ * permissions than the new Job's authority. Rejected until that persisted
+ * state is bounded.
+ */
+export function profileRejectsResume(registryId: string | undefined): boolean {
+  return registryId === "copilot";
+}
+
+/**
  * Environment that points codex-acp at the Codex CLI Consult pinned during
  * setup. codex-acp spawns `$CODEX_PATH app-server` when the variable is set and
  * otherwise resolves `@openai/codex/bin/codex.js` through the npm tree around

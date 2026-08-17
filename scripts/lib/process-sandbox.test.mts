@@ -173,6 +173,54 @@ test("buildAgentLaunch pins the codex session preset to the Job mode on every pa
   assert.equal(claudeOff.env.INITIAL_AGENT_MODE, undefined);
 });
 
+test("buildAgentLaunch pins copilot tool denies and clears ambient allow-all", () => {
+  const workspaceRoot = makeRoot();
+  const base = {
+    binary: process.execPath,
+    args: ["--acp"],
+    cwd: workspaceRoot,
+    workspaceRoot,
+    profileRegistryId: "copilot",
+  };
+
+  const readOnlyOff = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH, COPILOT_ALLOW_ALL: "true" },
+    mode: "read-only",
+    sandbox: "off",
+  });
+  assert.deepEqual(readOnlyOff.args, ["--acp", "--deny-tool=shell,write,web_fetch"]);
+  assert.equal(readOnlyOff.env.COPILOT_ALLOW_ALL, "");
+
+  const writeOff = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH, COPILOT_ALLOW_ALL: "true" },
+    mode: "write",
+    sandbox: "off",
+  });
+  assert.deepEqual(writeOff.args, ["--acp", "--deny-tool=shell,web_fetch"]);
+  assert.equal(writeOff.env.COPILOT_ALLOW_ALL, "");
+
+  const writeBwrap = buildAgentLaunch({
+    ...base,
+    env: { PATH: process.env.PATH, COPILOT_ALLOW_ALL: "true" },
+    mode: "write",
+    sandbox: "bwrap",
+  });
+  assert.equal(writeBwrap.args.at(-1), "--deny-tool=shell,web_fetch");
+  assert.equal(writeBwrap.env.COPILOT_ALLOW_ALL, "");
+
+  const codexOff = buildAgentLaunch({
+    ...base,
+    profileRegistryId: "codex",
+    env: { PATH: process.env.PATH, COPILOT_ALLOW_ALL: "true" },
+    mode: "read-only",
+    sandbox: "off",
+  });
+  assert.deepEqual(codexOff.args, ["--acp"]);
+  assert.equal(codexOff.env.COPILOT_ALLOW_ALL, "true");
+});
+
 test("buildAgentLaunch carries the recorded Codex pin into CODEX_PATH on every path", () => {
   const workspaceRoot = makeRoot();
   const localBin = path.join(makeRoot(), "bin");

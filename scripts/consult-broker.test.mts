@@ -115,6 +115,57 @@ test("consult/run does not accept an early terminal response from vulnerable Cla
   }
 });
 
+test("consult/run fails a Copilot turn whose last agent message is a model error", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-model-error"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    assert.deepEqual(
+      await client.request("consult/run", {
+        jobId: "job-copilot-model-error",
+        prompt: "respond with exactly: alive",
+        profile: "copilot",
+        mode: "read-only",
+      }),
+      { accepted: true, jobId: "job-copilot-model-error" },
+    );
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /COPILOT_MODEL_ERROR/u);
+    assert.match(finalized.errorMessage, /Failed to get response from the AI model/u);
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/run completes a Copilot turn whose error notice is followed by an answer", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-error-then-answer"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-copilot-error-then-answer",
+      prompt: "respond with exactly: recovered-final-answer",
+      profile: "copilot",
+      mode: "read-only",
+    });
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "end_turn");
+  } finally {
+    await client.close();
+  }
+});
+
 test("consult/run leaves fixed Claude ACP async-subagent finalization under Profile ownership", async (t) => {
   const harness = await startBroker(t, {
     profile: "claude",

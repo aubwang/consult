@@ -179,10 +179,14 @@ there is no separate adapter to install.
 Authenticate before the first delegated turn: run `copilot` once and use
 `/login`, or set `COPILOT_GITHUB_TOKEN` (a fine-grained personal access token
 with the Copilot Requests permission; `GH_TOKEN` and `GITHUB_TOKEN` are also
-honored, and classic tokens are not supported). Setup's ACP handshake succeeds
-without a login, so an unauthenticated Profile verifies at setup but fails at
-its first model prompt — authenticate and retry rather than reinstalling.
-`COPILOT_HOME` relocates the Copilot CLI's settings directory if needed.
+honored, and classic tokens are not supported). A bring-your-own-key provider
+configured through the `COPILOT_PROVIDER_*` environment variables works
+without any GitHub login. Setup's ACP handshake succeeds without
+authentication, but `consult doctor` and delegation preflight also create a
+throwaway session — an unauthenticated Profile fails there with
+`Authentication required` before any Job is created; authenticate and retry
+rather than reinstalling. `COPILOT_HOME` relocates the Copilot CLI's settings
+directory if needed.
 
 Confined authority is not implemented for the copilot Profile: delegate and
 review need an explicit `--sandbox inherit`, which runs the Job with the

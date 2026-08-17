@@ -4,7 +4,8 @@ import {
   type JobAuthority,
   type JobAuthorityDiagnostic,
 } from "./job-authority.mts";
-import { startAgent } from "./acp-client.mts";
+import { newSession, startAgent } from "./acp-client.mts";
+import { profilePreflightsSession } from "./profile-launch-policy.mts";
 
 export interface JobAuthorityPreflightInput {
   authority: JobAuthority;
@@ -171,6 +172,9 @@ export async function probeInheritedProfileLaunch(
       profileRegistryId: input.profileRegistryId,
       codexPath: input.profileLaunch.codexPath,
     });
+    if (profilePreflightsSession(input.profileRegistryId)) {
+      await newSession(agent.connection, { cwd: input.workspaceRoot });
+    }
   } catch (error) {
     launchFailure = error;
   } finally {

@@ -31,6 +31,7 @@ import {
   writeJobRecord,
 } from "./job-records.mts";
 import type { BrokerJobSnapshot, FinalizedJobOutcome, JobRecord } from "./job-records.mts";
+import { profileRejectsResume } from "./profile-launch-policy.mts";
 import { normalizeAgentSandbox } from "./process-sandbox.mts";
 import { supportsLoad, supportsResume } from "./session-controls.mts";
 import type {
@@ -153,6 +154,13 @@ export function createInlineClient({
       canonicalParams = canonicalizeRunParams(params);
       assertMatchingJobAuthority(canonicalParams.authority, expectedAuthority);
       pendingJobId = canonicalParams.jobId;
+      if (canonicalParams.resume && profileRejectsResume(entry.registryId ?? profile)) {
+        const error = new Error(
+          `profile '${canonicalParams.profile}' does not support delegate --resume: this agent persists tool approvals across sessions, so Consult rejects reopening them until that state is bounded`,
+        ) as CodedAgentError;
+        error.code = "RESUME_UNSUPPORTED";
+        throw error;
+      }
       if (canonicalParams.resume) {
         const resumeAgent = await ensureAgent(
           canonicalParams.authority,

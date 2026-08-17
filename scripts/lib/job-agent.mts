@@ -258,6 +258,8 @@ export async function runAgentJobTurn(
   }
 
   let vulnerableClaudeAsyncSubagentStarted = false;
+  const copilotErrorMasquerade = reportsModelErrorsAsMessages(params.profile, agent.capabilities);
+  let copilotTrailingErrorText: string | null = null;
 
   for await (const event of promptTurn(agent.connection, {
     sessionId,
@@ -270,6 +272,12 @@ export async function runAgentJobTurn(
     ) {
       vulnerableClaudeAsyncSubagentStarted = true;
     }
+    if (event.type === "update" && copilotErrorMasquerade) {
+      const chunkText = agentMessageChunkText(event.update);
+      if (chunkText !== null) {
+        copilotTrailingErrorText = trackTrailingErrorText(copilotTrailingErrorText, chunkText);
+      }
+    }
     if (event.type === "stop") {
       if (job.status !== "running") {
         // A job finalized early (policy violation) settles here; clear its
@@ -279,6 +287,9 @@ export async function runAgentJobTurn(
       }
       if (vulnerableClaudeAsyncSubagentStarted) {
         throw claudeAsyncFinalizationError(agent.capabilities);
+      }
+      if (event.stopReason === "end_turn" && copilotTrailingErrorText !== null) {
+        throw copilotModelErrorTurnError(copilotTrailingErrorText);
       }
       // Busy clears in handleRunMessage only after this turn fully settles.
       await ctx.finalizeJob(job, {
@@ -346,6 +357,46 @@ function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
       `update with npm install -g ${CLAUDE_AGENT_ACP_PACKAGE}@^${CLAUDE_ASYNC_FINALIZATION_MIN_VERSION} and retry`,
   ) as CodedAgentError;
   error.code = "CLAUDE_ASYNC_FINALIZATION_UNSUPPORTED";
+  return error;
+}
+
+// Copilot CLI maps model/provider failures to plain agent_message_chunk text
+// ("Error: ...") and still resolves session/prompt with end_turn, so a dead
+// endpoint or revoked login would otherwise persist as a successful Job. The
+// turn fails instead when such a notice is the last agent message of an
+// end_turn stop; a notice followed by real agent text is not terminal.
+function reportsModelErrorsAsMessages(profile: string, capabilities: unknown): boolean {
+  if (profile !== "copilot" || !isRecord(capabilities)) return false;
+  const agentInfo = isRecord(capabilities.agentInfo) ? capabilities.agentInfo : null;
+  return agentInfo?.name === "Copilot";
+}
+
+function agentMessageChunkText(update: unknown): string | null {
+  if (!isRecord(update) || update.sessionUpdate !== "agent_message_chunk") return null;
+  const content = isRecord(update.content) ? update.content : null;
+  return content?.type === "text" && typeof content.text === "string" ? content.text : null;
+}
+
+function trackTrailingErrorText(previous: string | null, chunkText: string): string | null {
+  if (chunkText.trimStart().startsWith("Error: ")) {
+    return chunkText;
+  }
+  // A chunk that opens with whitespace continues the current message rather
+  // than starting a new one, so an in-flight error notice stays terminal.
+  if (previous !== null && chunkText !== "" && /^\s/u.test(chunkText)) {
+    return previous + chunkText;
+  }
+  return null;
+}
+
+function copilotModelErrorTurnError(errorText: string): CodedAgentError {
+  const preview = errorText.trim().replace(/\s+/gu, " ").slice(0, 300);
+  const error = new Error(
+    `Copilot reported a model error instead of completing the turn: ${preview} ` +
+      `— verify the Copilot login (copilot /login or COPILOT_GITHUB_TOKEN) or the ` +
+      `COPILOT_PROVIDER_* endpoint, then retry`,
+  ) as CodedAgentError;
+  error.code = "COPILOT_MODEL_ERROR";
   return error;
 }
 

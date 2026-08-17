@@ -5,6 +5,8 @@ import {
   SANDBOX_HOME,
   profileCodexPathEnv,
   profileHomeMounts,
+  profileModeArgs,
+  profilePermissionGuardEnv,
   profileRuntimeMounts,
   profileSessionModeEnv,
 } from "./profile-launch-policy.mts";
@@ -75,11 +77,18 @@ export function buildAgentLaunch({
 }: AgentLaunchOptions): AgentLaunch {
   const sandboxMode = normalizeAgentSandbox(sandbox);
   const sessionModeEnv = profileSessionModeEnv(profileRegistryId, mode);
+  const permissionGuardEnv = profilePermissionGuardEnv(profileRegistryId);
+  const launchArgs = [...args, ...profileModeArgs(profileRegistryId, mode)];
   // Computed last so the recorded Profile value always wins over an ambient
   // CODEX_PATH inherited from the Host environment.
   const codexPathEnv = profileCodexPathEnv(profileRegistryId, codexPath);
   if (sandboxMode === "off") {
-    return { binary, args, cwd, env: { ...env, ...sessionModeEnv, ...codexPathEnv } };
+    return {
+      binary,
+      args: launchArgs,
+      cwd,
+      env: { ...env, ...sessionModeEnv, ...permissionGuardEnv, ...codexPathEnv },
+    };
   }
   if (sandboxMode !== "bwrap") {
     throw new Error(`unsupported agent sandbox: ${sandboxMode}`);
@@ -144,7 +153,7 @@ export function buildAgentLaunch({
       destination,
     );
   }
-  bwrapArgs.push("--chdir", cwd, resolvedBinary, ...args);
+  bwrapArgs.push("--chdir", cwd, resolvedBinary, ...launchArgs);
 
   return {
     binary: "bwrap",
@@ -153,6 +162,7 @@ export function buildAgentLaunch({
     env: {
       ...env,
       ...sessionModeEnv,
+      ...permissionGuardEnv,
       ...codexPathEnv,
       HOME: SANDBOX_HOME,
       TMPDIR: SANDBOX_HOME,

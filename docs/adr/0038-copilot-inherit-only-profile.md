@@ -26,18 +26,33 @@ The Profile is **inherit-only**, at the same support level as opencode:
   `CONSULT_AGENT_SANDBOX=bwrap` path mounts no Copilot config; it is
   undocumented and untested for this Profile.
 
-Registry decisions, verified against `@github/copilot` 1.0.80:
+Launch and policy decisions, verified against `@github/copilot` 1.0.80:
 
-- `args` stay minimal (`["--acp"]`); no `--available-tools`/`--excluded-tools`
-  pre-constraint. Consult's cooperative read-only policy already denies
-  edit/execute permission requests, and Copilot's permission options use
-  spec-standard `allow_*`/`reject_*` kinds that Consult's option picker
-  understands.
-- `supports.load: true` mirrors the advertised `loadSession` capability;
-  `supports.resume: false` because no resume session capability is advertised.
+- The registry entry stays `["--acp"]`, but every launch appends Job-mode
+  `--deny-tool` pins (`profileModeArgs`): `shell` and `web_fetch` are always
+  denied, and `write` is denied unless the Job grants writes. Copilot ranks
+  deny rules above `--allow-all`, `COPILOT_ALLOW_ALL`, and approvals saved in
+  `~/.copilot`, so the pins hold even when persisted or ambient state would
+  auto-approve tools without a `session/request_permission` round-trip — the
+  cooperative permission path cannot be bypassed that way. The launch also
+  clears ambient `COPILOT_ALLOW_ALL` (`profilePermissionGuardEnv`).
+- `supports` is `{resume: false, load: false}` and both `--resume` selectors
+  are rejected (`profileRejectsResume`) even though the agent advertises
+  `loadSession: true`: Copilot persists tool approvals across sessions, and a
+  loaded Session would restore permission state wider than the new Job's
+  authority. Reopening stays rejected until that state is bounded.
+- Inherited preflight creates a throwaway session (`profilePreflightsSession`)
+  because Copilot's `initialize` succeeds while logged out and only
+  `session/new` raises `Authentication required`; doctor and delegation now
+  fail an unauthenticated Profile before Job creation, without a model prompt.
+- Copilot maps model/provider failures to plain `"Error: ..."` message chunks
+  and still stops with `end_turn`; Consult fails such turns with
+  `COPILOT_MODEL_ERROR` instead of persisting the outage as a successful
+  Job Result.
 - ACP `initialize` answers in well under Consult's timeout and advertises
-  `authMethods` instead of blocking on a TTY when logged out; an
-  unauthenticated turn fails fast with `-32000: Authentication required`.
+  `authMethods` instead of blocking on a TTY when logged out. Copilot's
+  permission options use spec-standard `allow_*`/`reject_*` kinds that
+  Consult's option picker understands.
 
 Copilot CLI is a Profile only. Host autodetection was investigated and not
 added: static inspection of 1.0.80 shows it exports no stable session marker
@@ -52,10 +67,12 @@ existing environment-based pattern (ADR-0017).
   `copilot` as built-ins; `consult setup --install copilot` installs or adopts
   the CLI and smoke-verifies its ACP handshake.
 - Delegation requires an explicit `--sandbox inherit`; Jobs run with the
-  Host's ambient authority and cooperative Job policy only.
-- Setup verifies without a Copilot login, so first delegation failures are
-  auth remediation (`copilot` + `/login`, or `COPILOT_GITHUB_TOKEN`), not
-  install failures.
+  Host's ambient authority and cooperative Job policy, hardened by the
+  `--deny-tool` pins and the `COPILOT_ALLOW_ALL` guard above.
+- Setup verifies without a Copilot login; doctor and delegation preflight
+  create a session and fail an unauthenticated Profile with auth remediation
+  (`copilot` + `/login`, `COPILOT_GITHUB_TOKEN`, or a `COPILOT_PROVIDER_*`
+  BYOK configuration), not install failures.
 - Live conformance evidence at handshake level is recorded in
   `docs/conformance/copilot.md`; model-turn checks are auth-deferred and must
   pass before any confined-support follow-up.

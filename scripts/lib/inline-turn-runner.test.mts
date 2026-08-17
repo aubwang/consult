@@ -154,6 +154,37 @@ test("inline preflight preserves the original error when agent disposal rejects"
   );
 });
 
+test("inline resume rejects copilot before any agent spawn", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = createInlineClient({
+    workspaceRoot,
+    host: "terminal",
+    hostSessionId: "default",
+    profile: "copilot",
+    authority: authority(),
+    profileEntry: { ...profileEntryFixture("exit"), registryId: "copilot" },
+    startAgent: async () => {
+      throw new Error("agent must not start for a rejected copilot resume");
+    },
+  });
+
+  await assert.rejects(
+    client.request("consult/run", {
+      jobId: "job-inline-copilot-resume",
+      prompt: "resume",
+      profile: "copilot",
+      authority: authority(),
+      resume: "session-1",
+    }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "RESUME_UNSUPPORTED");
+      assert.match((error as Error).message, /persists tool approvals/u);
+      return true;
+    },
+  );
+});
+
 test("inline async failure contains a rejecting agent disposal", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

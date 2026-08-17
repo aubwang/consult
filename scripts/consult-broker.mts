@@ -24,6 +24,7 @@ import {
 import type { JobAuthority } from "./lib/job-authority.mts";
 import { readJsonlMessages } from "./lib/jsonl-framing.mts";
 import { pidMatchesStartTime, processStartTime } from "./lib/process-identity.mts";
+import { profileRejectsResume } from "./lib/profile-launch-policy.mts";
 import { normalizeAgentSandbox } from "./lib/process-sandbox.mts";
 import { pidIsAlive } from "./lib/process.mts";
 import { supportsLoad, supportsResume } from "./lib/session-controls.mts";
@@ -652,6 +653,14 @@ async function handleRunMessage(
 
   broker.setBusy(true);
   try {
+    if (params.resume && profileRejectsResume(broker.config.profileRegistryId)) {
+      writeError(socket, message.id, {
+        code: "RESUME_UNSUPPORTED",
+        message: `profile '${params.profile}' does not support delegate --resume: this agent persists tool approvals across sessions, so Consult rejects reopening them until that state is bounded`,
+      });
+      broker.setBusy(false);
+      return;
+    }
     if (params.resume) {
       const agent = await broker.ensureAgent(
         params.authority,
