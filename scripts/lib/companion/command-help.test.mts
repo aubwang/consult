@@ -44,6 +44,8 @@ test("every user-facing command has command-specific usage", () => {
     "wait",
     "logs",
     "result",
+    "report",
+    "events",
     "chain",
     "cancel",
     "brokers",
