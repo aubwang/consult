@@ -46,6 +46,7 @@ test("every user-facing command has command-specific usage", () => {
     "result",
     "report",
     "events",
+    "steer",
     "chain",
     "cancel",
     "brokers",

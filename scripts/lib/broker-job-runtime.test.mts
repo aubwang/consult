@@ -340,6 +340,181 @@ test("cancelJob finalizes a Job cancelled before a session exists", async (t: Te
   assert.equal((await readWorkspaceJobRecord(workspaceRoot, job.jobId)).status, "cancelled");
 });
 
+test("steerJob records the guidance, cancels the live turn, and stays uncancelled", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  const cancelledSessions: string[] = [];
+  const modes: Array<string | undefined> = [];
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async (authority) => {
+      modes.push(authority.mode);
+      return {
+        connection: {
+          cancel: async ({ sessionId }: { sessionId: string }) => {
+            cancelledSessions.push(sessionId);
+          },
+        },
+      } as unknown as BrokerAgentHandle;
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) {
+      notifications.push({ method, params });
+    },
+  });
+  const job = runtime.createJob(
+    { jobId: "job-steer", profile: "codex", mode: "write", prompt: "fix" },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-1", job);
+  const bytesBeforeSteer = job.persistedLogBytes;
+
+  const outcome = await runtime.steerJob(job, "skip the migration");
+
+  assert.equal(outcome.ok, true);
+  // Cancel on the live agent for this Job's own mode, exactly like cancelJob.
+  assert.deepEqual(modes, ["write"]);
+  assert.deepEqual(cancelledSessions, ["session-1"]);
+  assert.deepEqual(notifications, [
+    {
+      method: "consult/steer",
+      params: {
+        jobId: "job-steer",
+        at: (outcome as { at: string }).at,
+        guidance: "skip the migration",
+      },
+    },
+  ]);
+  // The steer line is metered against the same persisted-log budget as updates.
+  assert.equal(
+    job.persistedLogBytes - bytesBeforeSteer,
+    jobLogLineBytes("consult/steer", notifications[0].params),
+  );
+  // A steer is not a cancel: nothing here may make the record look cancelled.
+  assert.equal(job.cancelRequested, false);
+  assert.equal(job.status, "running");
+
+  // A second steer is refused until the first one is delivered.
+  const second = await runtime.steerJob(job, "and stop early");
+  assert.deepEqual(second, {
+    ok: false,
+    code: "STEER_PENDING",
+    message: "a previous steer is still being delivered to this job",
+  });
+
+  assert.equal(runtime.consumePendingSteer(job), "skip the migration");
+  assert.equal(runtime.consumePendingSteer(job), null);
+
+  await runtime.finalizeJob(job, { stopReason: "end_turn", sessionId: "session-1" });
+  assert.equal((await readWorkspaceJobRecord(workspaceRoot, job.jobId)).status, "completed");
+});
+
+test("steerJob refuses a Job that is not running a prompt turn", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () =>
+      ({ connection: { cancel: async () => {} } }) as unknown as BrokerAgentHandle,
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+  });
+  const job = runtime.createJob(
+    { jobId: "job-steer-early", profile: "codex", mode: "write", prompt: "fix" },
+    fakeSocket("originator"),
+  );
+
+  const noSession = await runtime.steerJob(job, "go left");
+  runtime.trackSession("session-1", job);
+  await runtime.cancelJob(job);
+  const cancelling = await runtime.steerJob(job, "go left");
+
+  assert.deepEqual(noSession, {
+    ok: false,
+    code: "JOB_NOT_RUNNING",
+    message: "job has no live session yet",
+  });
+  assert.deepEqual(cancelling, {
+    ok: false,
+    code: "JOB_NOT_RUNNING",
+    message: "job is not running a prompt turn",
+  });
+});
+
+// Cancellation is terminal: a cancel that raced an accepted steer wins, and the
+// turn runner is told there is nothing to re-prompt with.
+test("consumePendingSteer drops guidance once the Job is cancelled", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () =>
+      ({ connection: { cancel: async () => {} } }) as unknown as BrokerAgentHandle,
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+  });
+  const job = runtime.createJob(
+    { jobId: "job-steer-cancelled", profile: "codex", mode: "write", prompt: "fix" },
+    fakeSocket("originator"),
+  );
+  runtime.trackSession("session-1", job);
+
+  assert.equal((await runtime.steerJob(job, "keep going")).ok, true);
+  await runtime.cancelJob(job);
+
+  assert.equal(runtime.consumePendingSteer(job), null);
+  assert.equal(job.pendingSteer, null);
+});
+
+test("steerJob refuses guidance that would overrun the persisted log budget", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 2000,
+    },
+    ensureAgent: async () => {
+      throw new Error("agent must not be needed");
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification() {},
+    maxPersistedLogBytes: 400,
+  });
+  const job = runtime.createJob(
+    { jobId: "job-steer-budget", profile: "codex", mode: "write", prompt: "fix" },
+    fakeSocket("originator"),
+  );
+  runtime.trackSession("session-1", job);
+
+  const outcome = await runtime.steerJob(job, "g".repeat(500));
+
+  assert.equal(outcome.ok, false);
+  assert.equal((outcome as { code: string }).code, "JOB_LOG_LIMIT");
+  assert.match((outcome as { message: string }).message, new RegExp(JOB_LOG_LIMIT_EXCEEDED, "u"));
+  assert.equal(job.pendingSteer, null);
+  assert.equal(job.status, "running");
+});
+
 test("attach during terminal preparation waits for the complete finalized outcome", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

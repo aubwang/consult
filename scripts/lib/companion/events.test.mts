@@ -174,6 +174,132 @@ test("events voids report lines that landed after finalization", async (t) => {
   );
 });
 
+// Reports and steers are one ordered stream of interim events, so they share a
+// sequence space: --since after a report must not skip a steer behind it.
+test("events interleaves steer events with reports in one sequence space", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-steer",
+    status: "completed",
+    submittedAt: "2026-08-18T00:00:00.000Z",
+    startedAt: "2026-08-18T00:00:01.000Z",
+    completedAt: "2026-08-18T00:00:09.000Z",
+  });
+  await writeLog(workspaceRoot, "job-steer", [
+    report("job-steer", "decision_needed", "which schema?", "2026-08-18T00:00:02.000Z"),
+    agentText("job-steer", "waiting"),
+    steer("job-steer", "the schema is frozen;\nskip the migration", "2026-08-18T00:00:03.000Z"),
+  ]);
+
+  const result = await runEvents({
+    args: { positional: ["job-steer"], flags: { json: true } },
+    env: {},
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const filtered = await runEvents({
+    args: { positional: ["job-steer"], flags: { type: "steer" } },
+    env: {},
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(JSON.parse(result.stdout).events, [
+    { kind: "lifecycle", type: "queued", at: "2026-08-18T00:00:00.000Z" },
+    { kind: "lifecycle", type: "running", at: "2026-08-18T00:00:01.000Z" },
+    {
+      kind: "report",
+      type: "decision_needed",
+      at: "2026-08-18T00:00:02.000Z",
+      seq: 1,
+      message: "which schema?",
+    },
+    {
+      kind: "steer",
+      type: "steer",
+      at: "2026-08-18T00:00:03.000Z",
+      seq: 2,
+      message: "the schema is frozen; skip the migration",
+    },
+    {
+      kind: "lifecycle",
+      type: "terminal",
+      at: "2026-08-18T00:00:09.000Z",
+      status: "completed",
+    },
+  ]);
+  assert.equal(filtered.exitCode, 0);
+  assert.equal(
+    filtered.stdout,
+    "[2026-08-18T00:00:03.000Z] #2 steer: the schema is frozen; skip the migration\n",
+  );
+});
+
+test("events previews long guidance while logs keeps the raw transcript line", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-preview", status: "running" });
+  const guidance = "g".repeat(500);
+  await writeLog(workspaceRoot, "job-preview", [
+    steer("job-preview", guidance, "2026-08-18T00:00:03.000Z"),
+  ]);
+
+  const events = await runEvents({
+    args: { positional: ["job-preview"], flags: { json: true } },
+    env: {},
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const logs = await runLogs({
+    args: { positional: ["job-preview"], flags: { json: true } },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  const message = JSON.parse(events.stdout).events[0].message;
+  assert.equal(message.length, 200);
+  assert.equal(message, `${"g".repeat(197)}...`);
+  // The full guidance is still one line up, in the raw log.
+  assert.equal(JSON.parse(logs.stdout)[0].params.guidance, guidance);
+});
+
+// Steer lines obey the same read-time void rule as reports: `logs` is the raw
+// transcript, `events` is the contract and stops at finalization.
+test("events voids steer lines that landed after finalization", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-steer-void",
+    status: "completed",
+    completedAt: "2026-08-18T00:00:09.000Z",
+  });
+  await writeLog(workspaceRoot, "job-steer-void", [
+    steer("job-steer-void", "admitted", "2026-08-18T00:00:01.000Z"),
+    { method: "consult/finalized", params: { jobId: "job-steer-void", stopReason: "end_turn" } },
+    steer("job-steer-void", "raced", "2026-08-18T00:00:10.000Z"),
+  ]);
+
+  const events = await runEvents({
+    args: { positional: ["job-steer-void"], flags: { json: true } },
+    env: {},
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const logs = await runLogs({
+    args: { positional: ["job-steer-void"], flags: {} },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.deepEqual(
+    JSON.parse(events.stdout).events.map((event: { type: string; seq?: number }) => [
+      event.type,
+      event.seq,
+    ]),
+    [
+      ["steer", 1],
+      ["terminal", undefined],
+    ],
+  );
+  assert.equal(logs.stdout, "[steer: admitted]\n[steer: raced]\n");
+});
+
 test("events --since skips read reports while keeping lifecycle transitions", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -550,6 +676,10 @@ function report(
   at: string,
 ): Record<string, unknown> {
   return { method: "consult/report", params: { jobId, at, type, message } };
+}
+
+function steer(jobId: string, guidance: string, at: string): Record<string, unknown> {
+  return { method: "consult/steer", params: { jobId, at, guidance } };
 }
 
 function agentText(jobId: string, text: string): Record<string, unknown> {
