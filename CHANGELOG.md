@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/aubwang/consult/compare/v1.2.0...v1.3.0) (2026-08-18)
+
+
+### Features
+
+* permit a delegated Job to run consult report on itself ([4868ccf](https://github.com/aubwang/consult/commit/4868ccff447537368d06bceffed030e30c3f4ed1))
+* report the report-execute carve-out through capabilities ([2dd1d7f](https://github.com/aubwang/consult/commit/2dd1d7ff950492d738a18d46b499add80060b302))
+
+
+### Bug Fixes
+
+* let a validated report exec carry a Profile's escalation flag ([8ad1ec3](https://github.com/aubwang/consult/commit/8ad1ec3e440f86794e6b67fec0c7d2d4bb3239cb))
+* verify the bash wrapper's identity before unwrapping it ([7eb6e5c](https://github.com/aubwang/consult/commit/7eb6e5c1fc68112f5ea3e943cffde8941d96f0af))
+
 ## [1.2.0](https://github.com/aubwang/consult/compare/v1.1.0...v1.2.0) (2026-08-18)
 
 
