@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0](https://github.com/aubwang/consult/compare/v1.1.0...v1.2.0) (2026-08-18)
+
+
+### Features
+
+* add consult capabilities as the Host feature-probe surface ([51f1b92](https://github.com/aubwang/consult/commit/51f1b9229cde6ac4ad73c18cf5075c99acb73da6))
+* add consult report and consult events ([e8d0d0a](https://github.com/aubwang/consult/commit/e8d0d0a6bda0309a3a481ae25c84c0cc693e400f))
+* add consult steer for mid-Job guidance ([4703501](https://github.com/aubwang/consult/commit/470350112ac70f62577a10d2aeedf2ae4057381a))
+* add the interim Job report log record ([c7f1c9c](https://github.com/aubwang/consult/commit/c7f1c9cef06cc2387cff1b2462c76ba01335fd64))
+
+
+### Bug Fixes
+
+* confine interim reports to a Job's running window ([163afa5](https://github.com/aubwang/consult/commit/163afa52b3f4c9155cbdc773d1b837095fce2605))
+* refuse to steer an isolated Job by its own record field ([a91fbb3](https://github.com/aubwang/consult/commit/a91fbb3e9ef9504528b4b3434c193fe6c7730c84))
+* reject positional arguments to capabilities ([3c7c430](https://github.com/aubwang/consult/commit/3c7c430c227f4970c8cb071d6ef591bb4c8d124c))
+* withdraw a steer whose session/cancel was never delivered ([3db7f67](https://github.com/aubwang/consult/commit/3db7f67628e4f3d1178f395bde094a9054f3642a))
+
 ## [1.1.0](https://github.com/aubwang/consult/compare/v1.0.0...v1.1.0) (2026-08-18)
 
 
