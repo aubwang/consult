@@ -79,7 +79,7 @@ An execute request is approved only when **all** of the following hold.
      would mean vouching for more binaries — and every other shell name still
      denies outright when it leads a command.
    - An environment-prefixed command (`FOO=1 consult report …`) is denied, as is
-     a `rawInput.env` or escalation field. `CONSULT_PARENT_JOB` is what decides
+     a `rawInput.env` or `sudo` field. `CONSULT_PARENT_JOB` is what decides
      which Job a report belongs to, so anything able to set it is anything able
      to forge attribution.
 3. **The binary is this installation.** The invoked file is resolved — against
@@ -100,6 +100,35 @@ An execute request is approved only when **all** of the following hold.
    does, and deny.
 5. **Everything else about execute is unchanged**, including cwd confinement,
    which still applies first and still denies with the same message.
+
+## Escalation is permitted, last
+
+Codex's `with_escalated_permissions` is not denied. A live drill found why it
+cannot be: Codex runs its own filesystem sandbox, read-only agent mode blocked
+the report's log append, Codex retried the same command with escalation, and a
+blanket escalation denial refused it. The Job ended with "the required
+`consult report` command could not write its log because the filesystem is
+read-only, and elevated execution was denied" — an approval that could not be
+used is not an approval.
+
+Escalation is safe *here* because of where it sits in the order. It changes
+**where** an approved command runs — outside the Profile's own sandbox — not
+**what** runs, and by the time it matters the command has already been pinned to
+the real consult binary's `report` subcommand, whose entire effect is a bounded
+append to the Job's own log. Escalating that is escalating a write Consult would
+have performed itself if there were a channel to ask over.
+
+This is a property of the ordering, not of the flag. Every other check runs
+first and none of them are relaxed: an escalated request with a forged `env`, a
+different subcommand, `--job`, a wrapper imposter, a binary imposter, or a
+chained command is still denied. Escalation rides on a validated request; it
+never substitutes for validation. `sudo` stays denied outright — that is host
+privilege elevation, which a bounded log append never needs — and the `env`
+denial survives escalation precisely because attribution is the thing escalation
+must not be able to buy.
+
+Field names are normalized before matching, so `with_escalated_permissions`,
+`withEscalatedPermissions`, and `escalated-permissions` are one key.
 
 `--job` is excluded from (4) deliberately. A Job may only report as itself; that
 is what `CONSULT_PARENT_JOB` already says, and accepting `--job` would let one
