@@ -299,6 +299,19 @@ function handleMessage(message: FakeAgentMessage): void {
       });
       return;
     }
+    if (scenario === "prompt-copilot-model-error-split") {
+      // One logical notice split across notifications: JSON-RPC delivers each
+      // notification whole, but nothing promises one notice per notification.
+      writeUpdate(message.params.sessionId, "Err");
+      writeUpdate(message.params.sessionId, "or: Failed to get response fro");
+      writeUpdate(message.params.sessionId, "m the AI model after retrying.");
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
+      return;
+    }
     if (scenario === "prompt-copilot-error-then-glued-answer") {
       writeUpdate(
         message.params.sessionId,
