@@ -143,6 +143,31 @@ test("consult/run fails a Copilot turn whose last agent message is a model error
   }
 });
 
+test("consult/run fails a Copilot turn whose model error is split across notifications", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-model-error-split"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-copilot-model-error-split",
+      prompt: "respond with exactly: alive",
+      profile: "copilot",
+      mode: "read-only",
+    });
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /COPILOT_MODEL_ERROR/u);
+    assert.match(finalized.errorMessage, /Failed to get response from the AI model/u);
+  } finally {
+    await client.close();
+  }
+});
+
 test("consult/run fails a Copilot turn from a binary older than the supported floor", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",

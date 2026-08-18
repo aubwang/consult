@@ -267,7 +267,7 @@ export async function runAgentJobTurn(
 
   let vulnerableClaudeAsyncSubagentStarted = false;
   const copilotErrorMasquerade = reportsModelErrorsAsMessages(agent.capabilities);
-  let copilotPendingErrorChunk: string | null = null;
+  const copilotErrorTracker = copilotErrorMasquerade ? createCopilotErrorTracker() : null;
 
   for await (const event of promptTurn(agent.connection, {
     sessionId,
@@ -280,12 +280,10 @@ export async function runAgentJobTurn(
     ) {
       vulnerableClaudeAsyncSubagentStarted = true;
     }
-    if (event.type === "update" && copilotErrorMasquerade) {
+    if (event.type === "update" && copilotErrorTracker) {
       const chunkText = agentMessageChunkText(event.update);
-      if (chunkText !== null && chunkText.trim() !== "") {
-        copilotPendingErrorChunk = COPILOT_MODEL_ERROR_SIGNATURE.test(chunkText)
-          ? chunkText.slice(0, COPILOT_ERROR_CAPTURE_CHARS)
-          : null;
+      if (chunkText !== null) {
+        copilotErrorTracker.observe(chunkText);
       }
     }
     if (event.type === "stop") {
@@ -298,8 +296,8 @@ export async function runAgentJobTurn(
       if (vulnerableClaudeAsyncSubagentStarted) {
         throw claudeAsyncFinalizationError(agent.capabilities);
       }
-      if (event.stopReason === "end_turn" && copilotPendingErrorChunk !== null) {
-        throw copilotModelErrorTurnError(copilotPendingErrorChunk);
+      if (event.stopReason === "end_turn" && copilotErrorTracker?.pending() != null) {
+        throw copilotModelErrorTurnError(copilotErrorTracker.pending()!);
       }
       // Busy clears in handleRunMessage only after this turn fully settles.
       await ctx.finalizeJob(job, {
@@ -368,18 +366,53 @@ function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
 // matched against known provider-error signatures near the end of the turn;
 // ordinary answers that merely mention "Error:" do not match. The signature
 // list is a stopgap until Copilot reports structured errors over ACP.
-// Classification is per chunk, not over assembled text: the CLI injects each
-// notice as one complete session/update notification (a JSON-RPC string
-// arrives whole; observed live — every "Info:"/"Error:" notice is its own
-// chunk), while model answers stream as separate chunks. A chunk that OPENS
-// with a recognized signature marks a pending terminal error, whatever its
-// length or internal layout; any later non-whitespace chunk — a recovered
-// answer, wherever its text would visually land — clears it. Assembled-text
-// heuristics cannot make this distinction, because concatenation erases the
-// notice/answer boundary.
+// Classification is match-completion over chunks: a rolling window of recent
+// agent text spans chunk boundaries, and a pending terminal error is marked
+// when a chunk COMPLETES a recognized signature — whether the notice arrived
+// whole (observed live: the CLI injects each notice as one session/update
+// notification) or split across notifications ("Err" + "or: Failed ...").
+// A substantive chunk that completes no signature is answer text and clears
+// the pending error, so a recovered answer — glued, indented, or on its own
+// line — finalizes as end_turn; whitespace-only chunks are inert. Known
+// residual until Copilot reports structured errors: a notice whose
+// CONTINUATION (not its head) streams in later substantive chunks would
+// clear the pending error; that upstream behavior has not been observed.
 const COPILOT_ERROR_CAPTURE_CHARS = 2000;
+const COPILOT_ERROR_RECENT_CHARS = 512;
 const COPILOT_MODEL_ERROR_SIGNATURE =
-  /^\s*Error: (?:Failed to get response from the AI model|Could not connect to [^\n]{0,120}provider)/u;
+  /Error: (?:Failed to get response from the AI model|Could not connect to [^\n]{0,120}provider)/gu;
+
+function createCopilotErrorTracker(): {
+  observe(chunkText: string): void;
+  pending(): string | null;
+} {
+  let recentText = "";
+  let pendingError: string | null = null;
+  return {
+    observe(chunkText) {
+      const appendedStart = recentText.length;
+      const candidate = recentText + chunkText;
+      if (chunkText.trim() !== "") {
+        let completed: string | null = null;
+        COPILOT_MODEL_ERROR_SIGNATURE.lastIndex = 0;
+        for (
+          let match = COPILOT_MODEL_ERROR_SIGNATURE.exec(candidate);
+          match !== null;
+          match = COPILOT_MODEL_ERROR_SIGNATURE.exec(candidate)
+        ) {
+          if (match.index + match[0].length > appendedStart) {
+            completed = candidate.slice(match.index, match.index + COPILOT_ERROR_CAPTURE_CHARS);
+          }
+        }
+        pendingError = completed;
+      }
+      recentText = candidate.slice(-COPILOT_ERROR_RECENT_CHARS);
+    },
+    pending() {
+      return pendingError;
+    },
+  };
+}
 
 function reportsModelErrorsAsMessages(capabilities: unknown): boolean {
   if (!isRecord(capabilities)) return false;
