@@ -146,6 +146,16 @@ test("capabilities rejects unknown flags and a non-boolean --json", async () => 
   assert.equal(badBoolean.stderr, "--json must be true or false\n");
 });
 
+test("capabilities rejects positional arguments", async () => {
+  const result = await runCapabilities({
+    args: { positional: ["unexpected"], flags: {} },
+    deps: { loadRegistry: async () => registry() },
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, "unexpected argument: unexpected\n");
+});
+
 test("capabilities surfaces a malformed registry as a usage error", async () => {
   const malformed = Object.assign(new Error("Registry file is malformed"), {
     code: "REGISTRY_MALFORMED",
