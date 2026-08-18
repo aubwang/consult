@@ -11,9 +11,14 @@ import { test, type TestContext } from "node:test";
 import { connectBroker } from "./lib/broker-client.mts";
 import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mts";
 import { DEFAULT_MAX_JSONL_MESSAGE_BYTES } from "./lib/jsonl-framing.mts";
+import { MAX_STEER_GUIDANCE_BYTES } from "./lib/job-steer.mts";
 import type { JobAuthority } from "./lib/job-authority.mts";
 import { listenWithFallback } from "./lib/__fixtures__/socket-transport.mts";
 import { runDelegate } from "./lib/companion/delegate.mts";
+import { runEvents } from "./lib/companion/events.mts";
+import { runLogs } from "./lib/companion/logs.mts";
+import { runSteer } from "./lib/companion/steer.mts";
+import { runTaskWorker } from "./lib/companion/task-worker.mts";
 import { type BrokerHandle, serveBroker } from "./consult-broker.mts";
 
 const fakeAgentPath = fileURLToPath(
@@ -1956,6 +1961,329 @@ test("consult/cancel on a finalized parent cascades to an active child", async (
   }
 });
 
+test("consult/steer stops the in-flight turn and re-prompts the same session with the guidance", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-steer"],
+    capturePrompts: true,
+    captureCancels: true,
+  });
+  const runClient = await connectBroker(harness.endpoint);
+  const steerClient = await connectBroker(harness.endpoint);
+  const updates = collectNotifications(runClient, "consult/update");
+  const steers = collectNotifications(runClient, "consult/steer");
+  const finalizedNotifications = collectNotifications(runClient, "consult/finalized");
+
+  try {
+    await runClient.request("consult/run", {
+      jobId: "job-1",
+      prompt: "original task",
+      profile: "codex",
+      mode: "write",
+    });
+    await waitFor(() => updates.length === 1);
+
+    const steered = (await steerClient.request("consult/steer", {
+      jobId: "job-1",
+      guidance: "skip the migration",
+    })) as Record<string, unknown>;
+    assert.equal(steered.ok, true);
+    assert.equal(steered.jobId, "job-1");
+    assert.match(steered.at as string, /^\d{4}-\d{2}-\d{2}T/u);
+
+    // Two prompt turns, each with its own post-prompt update drain, settle
+    // well after the default wait window.
+    await waitFor(() => finalizedNotifications.length === 1, 5000);
+    // The steered turn finalizes normally: nothing about this Job is cancelled.
+    assert.deepEqual(finalizedNotifications, [
+      { jobId: "job-1", stopReason: "end_turn", sessionId: "sess-1" },
+    ]);
+    const record = await waitForJobRecord(harness, "job-1", (value) => {
+      return value.status === "completed";
+    });
+    assert.equal(record.stopReason, "end_turn");
+
+    // The steer line is delivered to the Job's subscribers so the worker that
+    // owns the log persists it in order between the updates it interrupted.
+    assert.equal(steers.length, 1);
+    assert.equal(steers[0].jobId, "job-1");
+    assert.equal(steers[0].guidance, "skip the migration");
+    assert.deepEqual(
+      updates.map((notification) => notification.update.content.text),
+      ["working", "steered"],
+    );
+
+    assert.equal(await cancelCount(harness.cancelLog), 1);
+    const prompts = (await fsp.readFile(harness.promptLog, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(prompts.length, 2);
+    assert.equal(prompts[0].sessionId, "sess-1");
+    // Same live Session, second prompt turn.
+    assert.equal(prompts[1].sessionId, "sess-1");
+    assert.equal(prompts[0].prompt[0].text, "original task");
+    assert.match(
+      prompts[1].prompt[0].text,
+      /^--- BEGIN CONSULT SUPERVISOR GUIDANCE ---\nskip the migration\n--- END CONSULT SUPERVISOR GUIDANCE ---\n/u,
+    );
+    assert.match(prompts[1].prompt[0].text, /Continue the original task/u);
+  } finally {
+    await runClient.close();
+    await steerClient.close();
+  }
+});
+
+test("consult steer drives a background Job through a second turn on one log and record", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-steer"],
+    captureCancels: true,
+  });
+  await fsp.mkdir(harness.jobsDir, { recursive: true });
+  await fsp.writeFile(
+    path.join(harness.jobsDir, "job-steer-e2e.json"),
+    JSON.stringify({
+      jobId: "job-steer-e2e",
+      kind: "delegate",
+      status: "queued",
+      submittedAt: "2026-08-18T10:00:00.000Z",
+      mode: "write",
+      host: "claude-code",
+      hostSessionId: "claude-1",
+      profile: "codex",
+      prompt: "original task",
+    }),
+  );
+  const workerClients: TestBrokerClient[] = [];
+
+  const workerPromise = runTaskWorker({
+    args: { positional: [], flags: { "job-id": "job-steer-e2e" } },
+    deps: {
+      resolveWorkspaceRoot: async () => harness.workspace,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => {
+        const client = await connectBroker(harness.endpoint);
+        workerClients.push(client);
+        return { client };
+      },
+      stdoutWrite: () => {},
+      stderrWrite: () => {},
+    },
+  });
+
+  const renderedLogs = async (json: boolean) =>
+    await runLogs({
+      args: { positional: ["job-steer-e2e"], flags: { all: true, ...(json ? { json } : {}) } },
+      deps: { resolveWorkspaceRoot: async () => harness.workspace },
+    });
+  const logEntries = async (): Promise<any[]> => JSON.parse((await renderedLogs(true)).stdout);
+
+  // Steer once the first turn is demonstrably in flight: the worker marks the
+  // record running on the same chain that persists the first update line.
+  await waitForAsync(async () => {
+    const entries = await logEntries();
+    return (
+      entries.some((entry) => entry.method === "consult/update") &&
+      (await readJobRecord(harness, "job-steer-e2e"))?.status === "running"
+    );
+  });
+
+  const steerResult = await runSteer({
+    args: { positional: ["job-steer-e2e", "skip", "the", "migration"], flags: {} },
+    env: {},
+    deps: {
+      resolveWorkspaceRoot: async () => harness.workspace,
+      connectBrokerSession: async () => ({ client: await connectBroker(harness.endpoint) }),
+    },
+  });
+  assert.equal(steerResult.exitCode, 0);
+  assert.equal(steerResult.stdout, "steered job-steer-e2e\n");
+
+  const workerResult = await workerPromise;
+  for (const client of workerClients) {
+    await client.close();
+  }
+  assert.equal(workerResult.exitCode, 0);
+
+  // One Job, one record, one terminal outcome — and never cancelled.
+  const record = await readJobRecord(harness, "job-steer-e2e");
+  assert.equal(record?.status, "completed");
+  assert.equal(record?.stopReason, "end_turn");
+  assert.equal(record?.sessionId, "sess-1");
+
+  // The steer line lands in file order, between the updates it interrupted.
+  const entries = await logEntries();
+  assert.deepEqual(
+    entries.map((entry) => entry.method),
+    ["consult/update", "consult/steer", "consult/update", "consult/finalized"],
+  );
+  assert.equal(entries[1].params.jobId, "job-steer-e2e");
+  assert.equal(entries[1].params.guidance, "skip the migration");
+  assert.match(entries[1].params.at, /^\d{4}-\d{2}-\d{2}T/u);
+
+  assert.match((await renderedLogs(false)).stdout, /\[steer: skip the migration\]/u);
+
+  const events = await runEvents({
+    args: { positional: ["job-steer-e2e"], flags: { json: true } },
+    env: {},
+    deps: { resolveWorkspaceRoot: async () => harness.workspace },
+  });
+  const payload = JSON.parse(events.stdout);
+  assert.equal(payload.schemaVersion, 1);
+  assert.deepEqual(
+    payload.events.map((event: any) => [event.kind, event.type, event.seq]),
+    [
+      ["lifecycle", "queued", undefined],
+      ["lifecycle", "running", undefined],
+      ["steer", "steer", 1],
+      ["lifecycle", "terminal", undefined],
+    ],
+  );
+  assert.equal(payload.events[2].message, "skip the migration");
+  assert.equal(payload.events[3].status, "completed");
+});
+
+test("consult/steer to an unknown jobId rejects with UNKNOWN_JOB", async (t) => {
+  const harness = await startBroker(t);
+  const client = await connectBroker(harness.endpoint);
+
+  try {
+    await assert.rejects(
+      client.request("consult/steer", { jobId: "missing", guidance: "go left" }),
+      (error: any) => {
+        assert.equal(error.code, "UNKNOWN_JOB");
+        return true;
+      },
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/steer on a finalized job rejects with JOB_NOT_RUNNING", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-pre-resolve-update"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-1",
+      prompt: "hello",
+      profile: "codex",
+      mode: "write",
+    });
+    assert.equal((await finalizedPromise).jobId, "job-1");
+
+    await assert.rejects(
+      client.request("consult/steer", { jobId: "job-1", guidance: "too late" }),
+      (error: any) => {
+        assert.equal(error.code, "JOB_NOT_RUNNING");
+        return true;
+      },
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/steer rejects a second steer while the first is still being delivered", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-steer"],
+    captureCancels: true,
+  });
+  const runClient = await connectBroker(harness.endpoint);
+  const steerClient = await connectBroker(harness.endpoint);
+  const updates = collectNotifications(runClient, "consult/update");
+
+  try {
+    await runClient.request("consult/run", {
+      jobId: "job-1",
+      prompt: "original task",
+      profile: "codex",
+      mode: "write",
+    });
+    await waitFor(() => updates.length === 1);
+    await steerClient.request("consult/steer", { jobId: "job-1", guidance: "first" });
+
+    await assert.rejects(
+      steerClient.request("consult/steer", { jobId: "job-1", guidance: "second" }),
+      (error: any) => {
+        assert.equal(error.code, "STEER_PENDING");
+        return true;
+      },
+    );
+  } finally {
+    await runClient.close();
+    await steerClient.close();
+  }
+});
+
+test("consult/steer rejects guidance larger than the guidance limit", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-cancel-ack"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const updates = collectNotifications(client, "consult/update");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-1",
+      prompt: "slow",
+      profile: "codex",
+      mode: "write",
+    });
+    await waitFor(() => updates.length === 1);
+
+    await assert.rejects(
+      client.request("consult/steer", {
+        jobId: "job-1",
+        guidance: "x".repeat(MAX_STEER_GUIDANCE_BYTES + 1),
+      }),
+      (error: any) => {
+        assert.equal(error.code, "STEER_GUIDANCE_TOO_LARGE");
+        return true;
+      },
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("a cancel that races a pending steer wins and the guidance is dropped", async (t) => {
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-steer"],
+    capturePrompts: true,
+  });
+  const runClient = await connectBroker(harness.endpoint);
+  const controlClient = await connectBroker(harness.endpoint);
+  const updates = collectNotifications(runClient, "consult/update");
+  const finalizedPromise = nextNotification(runClient, "consult/finalized");
+
+  try {
+    await runClient.request("consult/run", {
+      jobId: "job-1",
+      prompt: "original task",
+      profile: "codex",
+      mode: "write",
+    });
+    await waitFor(() => updates.length === 1);
+    await controlClient.request("consult/steer", { jobId: "job-1", guidance: "keep going" });
+    await controlClient.request("consult/cancel", { jobId: "job-1" });
+
+    assert.equal((await finalizedPromise).stopReason, "cancelled");
+    const record = await waitForJobRecord(harness, "job-1", (value) => {
+      return value.status === "cancelled";
+    });
+    assert.equal(record.stopReason, "cancelled");
+    // The dropped guidance never became a second prompt turn.
+    assert.equal(await promptCount(harness.promptLog), 1);
+  } finally {
+    await runClient.close();
+    await controlClient.close();
+  }
+});
+
 test("originator disconnect mid-prompt cancels the job when the agent acknowledges", async (t) => {
   const harness = await startBroker(t, {
     agentArgs: ["sessions", "prompt-cancel-ack"],
@@ -2374,8 +2702,22 @@ async function waitForJobRecord(
   return record;
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 500;
+async function waitForAsync(
+  predicate: () => Promise<boolean>,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(await predicate(), true);
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) {
       return;
