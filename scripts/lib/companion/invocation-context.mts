@@ -68,17 +68,21 @@ export interface ResolveInvocationContextOptions {
   deps?: ResolveInvocationContextDeps;
 }
 
+// A Job's environment carries CONSULT_WORKSPACE so a nested invocation resolves
+// the original Workspace rather than its own execution root, which for an
+// isolated Job is a detached worktree with its own .git.
+export function workspaceRootResolver(env: NodeJS.ProcessEnv): () => Promise<string> {
+  return env.CONSULT_WORKSPACE
+    ? () => fs.realpath(env.CONSULT_WORKSPACE as string)
+    : defaultResolveWorkspaceRoot;
+}
+
 export async function resolveInvocationContext({
   args,
   env = process.env,
   deps = {},
 }: ResolveInvocationContextOptions): Promise<InvocationContext> {
-  const workspaceRoot = await (
-    deps.resolveWorkspaceRoot ??
-    (env.CONSULT_WORKSPACE
-      ? () => fs.realpath(env.CONSULT_WORKSPACE as string)
-      : defaultResolveWorkspaceRoot)
-  )();
+  const workspaceRoot = await (deps.resolveWorkspaceRoot ?? workspaceRootResolver(env))();
   const hostIdentity = resolveHostIdentity({ args, env });
   const profiles = await (deps.loadProfiles ?? defaultLoadProfiles)(profilesPath());
   const override = await (deps.loadOverride ?? loadWorkspaceOverride)(workspaceRoot);
