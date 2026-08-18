@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import type { StartedAgent } from "./lib/acp-client.mts";
 import { brokerFilePath, jobsDir } from "./lib/broker-endpoint.mts";
 import { createBrokerJobRuntime } from "./lib/broker-job-runtime.mts";
+import type { SteerJobOutcome } from "./lib/broker-job-runtime.mts";
 import {
   agentErrorMessage,
   canonicalizeRunParams,
@@ -24,7 +25,8 @@ import {
 import type { JobAuthority } from "./lib/job-authority.mts";
 import { readJsonlMessages } from "./lib/jsonl-framing.mts";
 import { pidMatchesStartTime, processStartTime } from "./lib/process-identity.mts";
-import { profileRejectsResume } from "./lib/profile-launch-policy.mts";
+import { MAX_STEER_GUIDANCE_BYTES } from "./lib/job-steer.mts";
+import { profileRejectsResume, profileSupportsSteer } from "./lib/profile-launch-policy.mts";
 import { normalizeAgentSandbox } from "./lib/process-sandbox.mts";
 import { pidIsAlive } from "./lib/process.mts";
 import { supportsLoad, supportsResume } from "./lib/session-controls.mts";
@@ -137,6 +139,8 @@ interface SocketBrokerContext {
   finalizeJob: (job: BrokerJob, finalized: { stopReason: string; sessionId: string }) => Promise<void>;
   failJob: (job: BrokerJob, errorMessage: string) => Promise<void>;
   cancelJobCascade: (job: BrokerJob) => string[];
+  steerJob: (job: BrokerJob, guidance: string) => Promise<SteerJobOutcome>;
+  consumePendingSteer: (job: BrokerJob) => string | null;
   noteTurnSettled: (job: BrokerJob) => void;
   isTainted: () => boolean;
   ensureAgent: (
@@ -242,6 +246,8 @@ export async function serveBroker(
       finalizeJob: (job, finalized) => runtime.finalizeJob(job, finalized),
       failJob: (job, errorMessage) => runtime.failJob(job, errorMessage),
       cancelJobCascade: (job) => runtime.cancelJobCascade(job),
+      steerJob: (job, guidance) => runtime.steerJob(job, guidance),
+      consumePendingSteer: (job) => runtime.consumePendingSteer(job),
       noteTurnSettled: (job) => runtime.noteTurnSettled(job),
       isTainted: () => runtime.isTainted(),
       ensureAgent,
@@ -551,6 +557,62 @@ function handleMessage(socket: net.Socket, message: JsonRpcMessage, broker: Sock
       ok: true,
       ...(cascadedJobIds.length > 0 ? { cascadedJobIds } : {}),
     });
+    return;
+  }
+
+  if (message.method === "consult/steer") {
+    const params = messageParams(message);
+    const guidance = params?.guidance;
+    if (!params || typeof guidance !== "string" || guidance.length === 0) {
+      writeInvalidParams(socket, message.id);
+      return;
+    }
+    // Guidance is rejected rather than trimmed: a clipped instruction changes
+    // what the Job is being told to do.
+    if (Buffer.byteLength(guidance) > MAX_STEER_GUIDANCE_BYTES) {
+      writeError(socket, message.id, {
+        code: "STEER_GUIDANCE_TOO_LARGE",
+        message: `guidance is larger than the ${MAX_STEER_GUIDANCE_BYTES}-byte limit`,
+      });
+      return;
+    }
+    if (broker.isTainted()) {
+      writeError(socket, message.id, {
+        code: "BROKER_TAINTED",
+        message: "broker is tainted after an unacknowledged cancel",
+      });
+      return;
+    }
+    if (!profileSupportsSteer(broker.config.profileRegistryId)) {
+      writeError(socket, message.id, {
+        code: "STEER_UNSUPPORTED",
+        message: `profile '${broker.profile}' does not support consult steer: cancel the Job and re-delegate with the guidance in the prompt`,
+      });
+      return;
+    }
+    const job = broker.getJob(params.jobId as string);
+    if (!job) {
+      writeError(socket, message.id, {
+        code: "UNKNOWN_JOB",
+        message: "unknown jobId",
+      });
+      return;
+    }
+    broker
+      .steerJob(job, guidance)
+      .then((outcome) => {
+        if (outcome.ok) {
+          writeResult(socket, message.id, { ok: true, jobId: job.jobId, at: outcome.at });
+          return;
+        }
+        writeError(socket, message.id, { code: outcome.code, message: outcome.message });
+      })
+      .catch((error) => {
+        writeError(socket, message.id, {
+          code: error.code ?? "BROKER_ERROR",
+          message: error.message,
+        });
+      });
     return;
   }
 

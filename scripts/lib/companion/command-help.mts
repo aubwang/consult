@@ -321,6 +321,44 @@ Examples:
 See also: consult help reporting, consult report --help
 `;
 
+const steerUsage = `Usage:
+  consult steer <job-id> -- <guidance>
+  consult steer <job-id> --message <text>
+
+Send guidance into a Job that is already running. Consult stops the in-flight
+prompt turn and immediately re-prompts the same Session with the guidance, so
+the Job keeps its id, its Session, its log, and its wall-clock budget.
+
+Options:
+  --message <text> The guidance; everything after -- works too.
+  --help           Print this help instead of steering.
+
+Bounds:
+  Guidance over 16384 UTF-8 bytes is rejected, never trimmed. Only one steer
+  can be in flight at a time, and a Job accepts guidance only while it is
+  running.
+
+Availability:
+  Only background Jobs steer: a foreground delegate and an --isolated Job both
+  run their turn in-process, with no Broker socket to reach. For those, cancel
+  the Job and re-delegate with the guidance in the prompt.
+
+Exit codes:
+  0 delivered, 1 this Job or Profile cannot be steered, or the Broker is
+  unreachable, 2 usage error, unknown Job, or oversized guidance, 3 a previous
+  steer is still being delivered or the Broker is busy or tainted, 5 the Job is
+  not running: still queued or already finalized.
+
+Examples:
+  consult steer <job-id> -- "skip the migration; the schema is frozen"
+  consult steer <job-id> --message "prefer the existing helper in src/db.ts"
+
+Guidance is recorded on the Job's log and shows up as a steer event in
+consult events and as a [steer: ...] line in consult logs.
+
+See also: consult help steering, consult events --help, consult cancel --help
+`;
+
 const resultUsage = `Usage:
   consult result <job-id> [--json]
 
@@ -403,6 +441,7 @@ const commandUsages: Record<string, string> = {
   review: reviewUsage,
   setup: setupUsage,
   status: statusUsage,
+  steer: steerUsage,
   wait: waitUsage,
 };
 

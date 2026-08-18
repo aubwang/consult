@@ -17,6 +17,7 @@ import { normalizeAgentSandbox } from "./process-sandbox.mts";
 import { copilotAgentVersionDiagnostic, versionAtLeast } from "./profile-launch-policy.mts";
 import { acquireConfinedSandboxRuntimeLaunch } from "./sandbox-runtime-launch.mts";
 import { readWorkspaceJobRecord } from "./job-records.mts";
+import { steerGuidancePrompt } from "./job-steer.mts";
 import { validateJobAuthorityRuntimeBoundary } from "./job-authority-preflight.mts";
 import {
   applySessionControls,
@@ -195,6 +196,12 @@ export interface AgentTurnContext {
   setSession(sessionId: string, sessionState?: AgentSessionState | null): void;
   trackSession(sessionId: string, job: BrokerJob): void;
   finalizeJob(job: BrokerJob, finalized: { stopReason: string; sessionId: string }): Promise<void>;
+  /**
+   * Guidance to re-prompt this Session with instead of finalizing the settled
+   * turn (ADR-0040). Absent on runners that cannot be steered, which is the
+   * inline runner: it owns no socket a `consult/steer` could reach.
+   */
+  consumePendingSteer?(job: BrokerJob): string | null;
   noteTurnSettled(job: BrokerJob): void;
 }
 
@@ -265,46 +272,66 @@ export async function runAgentJobTurn(
     return;
   }
 
-  let vulnerableClaudeAsyncSubagentStarted = false;
   const copilotErrorMasquerade = reportsModelErrorsAsMessages(agent.capabilities);
-  const copilotErrorTracker = copilotErrorMasquerade ? createCopilotErrorTracker() : null;
+  // One Job can run more than one prompt turn: a steer stops the in-flight turn
+  // and re-prompts the same Session with the supervisor's guidance instead of
+  // finalizing it (ADR-0040). The Job id, log, wall-clock timer, and log budget
+  // all carry across; only the prompt changes.
+  let turnPrompt = params.prompt;
+  for (;;) {
+    let vulnerableClaudeAsyncSubagentStarted = false;
+    const copilotErrorTracker = copilotErrorMasquerade ? createCopilotErrorTracker() : null;
+    let steerGuidance: string | null = null;
 
-  for await (const event of promptTurn(agent.connection, {
-    sessionId,
-    prompt: params.prompt,
-  })) {
-    if (
-      event.type === "update" &&
-      isAsyncClaudeSubagentLaunch(event.update) &&
-      usesVulnerableClaudeAsyncFinalization(params.profile, agent.capabilities)
-    ) {
-      vulnerableClaudeAsyncSubagentStarted = true;
-    }
-    if (event.type === "update" && copilotErrorTracker) {
-      const chunkText = agentMessageChunkText(event.update);
-      if (chunkText !== null) {
-        copilotErrorTracker.observe(chunkText);
+    for await (const event of promptTurn(agent.connection, {
+      sessionId,
+      prompt: turnPrompt,
+    })) {
+      if (
+        event.type === "update" &&
+        isAsyncClaudeSubagentLaunch(event.update) &&
+        usesVulnerableClaudeAsyncFinalization(params.profile, agent.capabilities)
+      ) {
+        vulnerableClaudeAsyncSubagentStarted = true;
+      }
+      if (event.type === "update" && copilotErrorTracker) {
+        const chunkText = agentMessageChunkText(event.update);
+        if (chunkText !== null) {
+          copilotErrorTracker.observe(chunkText);
+        }
+      }
+      if (event.type === "stop") {
+        if (job.status !== "running") {
+          // A job finalized early (policy violation) settles here; clear its
+          // pending cancel-ack timer so the broker is not tainted retroactively.
+          ctx.noteTurnSettled(job);
+          continue;
+        }
+        if (vulnerableClaudeAsyncSubagentStarted) {
+          throw claudeAsyncFinalizationError(agent.capabilities);
+        }
+        if (event.stopReason === "end_turn" && copilotErrorTracker?.pending() != null) {
+          throw copilotModelErrorTurnError(copilotErrorTracker.pending()!);
+        }
+        // Guidance accepted while this turn ran is honored whatever stopped the
+        // turn: an agent that finished before the steer's session/cancel landed
+        // still owes the supervisor a turn on it.
+        steerGuidance = ctx.consumePendingSteer?.(job) ?? null;
+        if (steerGuidance !== null) {
+          continue;
+        }
+        // Busy clears in handleRunMessage only after this turn fully settles.
+        await ctx.finalizeJob(job, {
+          stopReason: event.stopReason,
+          sessionId,
+        });
       }
     }
-    if (event.type === "stop") {
-      if (job.status !== "running") {
-        // A job finalized early (policy violation) settles here; clear its
-        // pending cancel-ack timer so the broker is not tainted retroactively.
-        ctx.noteTurnSettled(job);
-        continue;
-      }
-      if (vulnerableClaudeAsyncSubagentStarted) {
-        throw claudeAsyncFinalizationError(agent.capabilities);
-      }
-      if (event.stopReason === "end_turn" && copilotErrorTracker?.pending() != null) {
-        throw copilotModelErrorTurnError(copilotErrorTracker.pending()!);
-      }
-      // Busy clears in handleRunMessage only after this turn fully settles.
-      await ctx.finalizeJob(job, {
-        stopReason: event.stopReason,
-        sessionId,
-      });
+
+    if (steerGuidance === null) {
+      return;
     }
+    turnPrompt = steerGuidancePrompt(steerGuidance);
   }
 }
 

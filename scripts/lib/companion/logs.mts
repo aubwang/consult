@@ -3,6 +3,7 @@ import type { JobRecord } from "../job-records.mts";
 import { readJobLogEntries } from "../job-log-entries.mts";
 import type { ParsedJobLog } from "../job-log-entries.mts";
 import { REPORT_LOG_METHOD, renderReportLogEntry } from "../job-reports.mts";
+import { STEER_LOG_METHOD, renderSteerLogEntry } from "../job-steer.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { renderSessionUpdate } from "../session-update-renderer.mts";
 import { createOutput } from "./output.mts";
@@ -194,6 +195,11 @@ function renderLogEntry(entry: unknown): string {
   // update renderer (which would silently drop them).
   if (method === REPORT_LOG_METHOD) {
     return renderReportLogEntry(entry);
+  }
+  // Steer lines are supervisor guidance delivered into the turn, not ACP
+  // session output, so they render as their own transcript line.
+  if (method === STEER_LOG_METHOD) {
+    return renderSteerLogEntry(entry);
   }
   return renderSessionUpdate(entry as never);
 }
