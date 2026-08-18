@@ -9,7 +9,7 @@ import type { ParsedArgs } from "../args.mts";
 import { readJobLogEntries } from "../job-log-entries.mts";
 import { isFinalStatus, readWorkspaceJobRecord } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
-import { REPORT_TYPES, reportParamsFromLogEntry } from "../job-reports.mts";
+import { REPORT_TYPES, liveReportParams } from "../job-reports.mts";
 import { workspaceRootResolver } from "./invocation-context.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { pollUntilFinalRecord } from "./job-poll.mts";
@@ -200,9 +200,10 @@ async function readEvents(
   return filterEvents(jobEvents(record, entries), filter);
 }
 
-// Reports are written while the Job runs, so file order places them between the
-// running and terminal transitions. Deriving seq here rather than storing it
-// keeps each append a single independent line.
+// A Job only accepts reports while it is running, so file order places every
+// admitted report between the running and terminal transitions. Deriving seq
+// here rather than storing it keeps each append a single independent line, and
+// liveReportParams drops any line that raced past finalization.
 export function jobEvents(record: JobRecord, entries: readonly unknown[]): JobEvent[] {
   const events: JobEvent[] = [];
   if (typeof record.submittedAt === "string") {
@@ -212,11 +213,7 @@ export function jobEvents(record: JobRecord, entries: readonly unknown[]): JobEv
     events.push({ kind: "lifecycle", type: "running", at: record.startedAt });
   }
   let seq = 0;
-  for (const entry of entries) {
-    const params = reportParamsFromLogEntry(entry);
-    if (!params) {
-      continue;
-    }
+  for (const params of liveReportParams(entries)) {
     seq += 1;
     events.push({
       kind: "report",

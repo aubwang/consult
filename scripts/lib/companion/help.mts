@@ -477,10 +477,13 @@ passes no id; a Host reporting on someone else's Job passes --job <job-id>.
 Only Jobs launched with --sandbox inherit can run consult at all, so confined
 Jobs cannot report. Say so in a prompt that asks for reports.
 
+A Job accepts reports only while it is running. Reporting before its Profile
+turn starts or after it finalizes fails with exit code 5, as does a report that
+loses a race with finalization - the line is voided rather than kept.
+
 Reports are bounded at the write: messages over 4096 UTF-8 bytes are truncated
 with a marker, --data over 16384 serialized bytes is rejected rather than
-trimmed, and a Job accepts at most 256 reports. Reporting on a Job that has
-already finalized fails with exit code 5.
+trimmed, and a Job accepts at most 256 reports.
 
 ## Reading the stream
 
@@ -496,7 +499,9 @@ carry no sequence and are always shown. --json emits a versioned envelope, and
 finalizes.
 
 Reports also appear in consult logs as [report <type>: <message>] lines, in
-place among the Job's ordinary updates.
+place among the Job's ordinary updates. logs is the raw transcript, so it shows
+every line that was written; events is the contract, and it stops admitting
+reports at the Job's finalization line.
 
 ## Asking for them
 
@@ -596,7 +601,7 @@ terminal/default.
   2    usage or configuration error, unknown Job, diff error, no Git Workspace
   3    Broker busy, tainted, or Job payload conflict
   4    status or log follow timeout
-  5    Job lifecycle ordering: result before finalization, report after it
+  5    Job lifecycle ordering: result before final, report outside running
   6    delegated turn finalized as failed
   8    Codex native review command was not advertised by the installed shim
   130  wait interrupted by SIGINT

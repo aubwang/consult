@@ -145,6 +145,54 @@ test("report exits 5 once the Job has finalized", async (t) => {
   assert.equal((await readLog(workspaceRoot, "job-final")).length, 0);
 });
 
+// A report written before the Profile turn starts would render after the
+// running transition it actually preceded, so the running window is closed at
+// both ends.
+test("report exits 5 before the Job starts running", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-queued", status: "queued" });
+
+  const result = await runReport({
+    args: { positional: ["too early"], flags: { type: "progress", job: "job-queued" } },
+    env: {},
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.equal(result.exitCode, 5);
+  assert.equal(result.stderr, "job not running yet; cannot report (status=queued)\n");
+  assert.equal((await readLog(workspaceRoot, "job-queued")).length, 0);
+});
+
+// The Broker can finalize between the pre-check and the append. Readers void
+// the line either way; the re-read is what stops the caller believing the
+// report landed.
+test("report exits 5 when the Job finalizes during the append", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-race", status: "running" });
+  let reads = 0;
+
+  const result = await runReport({
+    args: { positional: ["racing"], flags: { type: "progress", job: "job-race" } },
+    env: {},
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      readJobRecord: async (_workspaceRoot, jobId) => {
+        reads += 1;
+        return { jobId, status: reads === 1 ? "running" : "completed" };
+      },
+    },
+  });
+
+  assert.equal(reads, 2);
+  assert.equal(result.exitCode, 5);
+  assert.equal(
+    result.stderr,
+    "job finalized during report; report discarded (status=completed)\n",
+  );
+});
+
 test("report validates the type, the message, and unknown flags", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
@@ -233,6 +281,37 @@ test("report rejects malformed and oversized --data without writing", async (t) 
   assert.equal(oversized.exitCode, 2);
   assert.match(oversized.stderr, /the limit is 16384\n$/u);
   assert.equal((await readLog(workspaceRoot, "job-payload")).length, 0);
+});
+
+// A voided line is in the file but not in the stream, so it must not consume
+// the Job's report budget either.
+test("report does not count report lines voided by finalization", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, { jobId: "job-void", status: "running" });
+  await writeLog(workspaceRoot, "job-void", [
+    reportLine("job-void", "progress", "counted"),
+    { method: "consult/finalized", params: { jobId: "job-void", stopReason: "end_turn" } },
+    reportLine("job-void", "progress", "voided"),
+  ]);
+  let counted = 0;
+
+  const result = await runReport({
+    args: { positional: ["another"], flags: { type: "progress", job: "job-void" } },
+    env: {},
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      readJobRecord: async (_workspaceRoot, jobId) => ({ jobId, status: "running" }),
+      readLogFile: async (path) => {
+        counted += 1;
+        return await fs.readFile(path, "utf8");
+      },
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(counted, 1);
+  assert.equal((await readLog(workspaceRoot, "job-void")).length, 4);
 });
 
 test("report refuses to grow a Job's log past the report cap", async (t) => {
@@ -360,6 +439,13 @@ async function readLog(workspaceRoot: string, jobId: string): Promise<unknown[]>
     .split("\n")
     .filter((line) => line !== "")
     .map((line) => JSON.parse(line) as unknown);
+}
+
+function reportLine(jobId: string, type: string, message: string): Record<string, unknown> {
+  return {
+    method: "consult/report",
+    params: { jobId, at: "2026-08-18T00:00:00.000Z", type, message },
+  };
 }
 
 function agentText(jobId: string, text: string): Record<string, unknown> {

@@ -7,6 +7,7 @@ import {
 import type { ParsedArgs } from "../args.mts";
 import { readJobLogEntries } from "../job-log-entries.mts";
 import {
+  JOB_STATUS,
   appendJobLogLine,
   isFinalStatus,
   readWorkspaceJobRecord,
@@ -18,7 +19,7 @@ import {
   REPORT_TYPES,
   boundReportMessage,
   jobReportLogEntry,
-  reportParamsFromLogEntry,
+  liveReportParams,
 } from "../job-reports.mts";
 import { workspaceRootResolver } from "./invocation-context.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
@@ -78,20 +79,20 @@ export async function runReport({
   }
 
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? workspaceRootResolver(env))();
+  const readRecord = () =>
+    (deps.readJobRecord ?? readWorkspaceJobRecord)(workspaceRoot, jobId as string);
   let record: JobRecord;
   try {
-    record = await (deps.readJobRecord ?? readWorkspaceJobRecord)(workspaceRoot, jobId);
+    record = await readRecord();
   } catch (error) {
     return jobLookupErrorResult(error, jobId);
   }
-  // The mirror of `result` before finalization: a report after finalization is
-  // the same lifecycle-ordering violation, so it shares exit code 5.
-  if (isFinalStatus(record.status)) {
-    return {
-      exitCode: 5,
-      stdout: "",
-      stderr: `job already finalized; cannot report (status=${record.status})\n`,
-    };
+  // Reports belong to the running window. Outside it the event stream would
+  // place them on the wrong side of a lifecycle transition, which is the same
+  // ordering violation as asking for a result before finalization: exit 5.
+  const notRunning = notRunningResult(record);
+  if (notRunning) {
+    return notRunning;
   }
 
   let existingReports: number;
@@ -122,7 +123,30 @@ export async function runReport({
     }),
   );
 
+  // The Broker can finalize between the check above and this append. Readers
+  // void a report line that landed after consult/finalized, so the durable
+  // stream is already correct; this re-read only tells the caller that its
+  // report was discarded instead of reporting a success that nobody will see.
+  const settled = await readRecord().catch(() => null);
+  if (settled && isFinalStatus(settled.status)) {
+    return {
+      exitCode: 5,
+      stdout: "",
+      stderr: `job finalized during report; report discarded (status=${settled.status})\n`,
+    };
+  }
+
   return { exitCode: 0, stdout: `reported ${type} for ${jobId}\n`, stderr: "" };
+}
+
+function notRunningResult(record: JobRecord): CommandResult | null {
+  if (record.status === JOB_STATUS.RUNNING) {
+    return null;
+  }
+  const reason = isFinalStatus(record.status)
+    ? "job already finalized; cannot report"
+    : "job not running yet; cannot report";
+  return { exitCode: 5, stdout: "", stderr: `${reason} (status=${record.status})\n` };
 }
 
 function validateFlags(args: ParsedArgs): string | null {
@@ -165,7 +189,9 @@ async function countReports(
   const { entries } = await readJobLogEntries(workspaceRoot, jobId, {
     readLogFile: deps.readLogFile,
   });
-  return entries.filter((entry) => reportParamsFromLogEntry(entry) !== null).length;
+  // Counts what a reader would admit, so a voided post-final line from an
+  // earlier Job run of the same log cannot consume the budget.
+  return liveReportParams(entries).length;
 }
 
 function usageError(message: string): CommandResult {

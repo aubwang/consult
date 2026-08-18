@@ -131,6 +131,49 @@ test("events renders reports with their sequence, message, and data", async (t) 
   );
 });
 
+// The log is multi-writer, so a reporter can lose the race with finalization.
+// The reader is what makes the resulting stream deterministic.
+test("events voids report lines that landed after finalization", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeJob(workspaceRoot, {
+    jobId: "job-void",
+    status: "completed",
+    completedAt: "2026-08-18T00:00:09.000Z",
+  });
+  await writeLog(workspaceRoot, "job-void", [
+    report("job-void", "progress", "admitted", "2026-08-18T00:00:01.000Z"),
+    { method: "consult/finalized", params: { jobId: "job-void", stopReason: "end_turn" } },
+    report("job-void", "blocked", "raced", "2026-08-18T00:00:10.000Z"),
+  ]);
+
+  const events = await runEvents({
+    args: { positional: ["job-void"], flags: { json: true } },
+    env: {},
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+  const logs = await runLogs({
+    args: { positional: ["job-void"], flags: {} },
+    deps: { resolveWorkspaceRoot: async () => workspaceRoot },
+  });
+
+  assert.deepEqual(
+    JSON.parse(events.stdout).events.map((event: { type: string; seq?: number }) => [
+      event.type,
+      event.seq,
+    ]),
+    [
+      ["progress", 1],
+      ["terminal", undefined],
+    ],
+  );
+  // logs stays the raw transcript: it still shows the line events voided.
+  assert.equal(
+    logs.stdout,
+    "[report progress: admitted]\n[report blocked: raced]\n",
+  );
+});
+
 test("events --since skips read reports while keeping lifecycle transitions", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
