@@ -251,6 +251,75 @@ Examples:
   consult logs <job-id> --follow
 `;
 
+const reportUsage = `Usage:
+  consult report --type <type> [options] -- <message>
+  consult report --type <type> [options] --message <text>
+
+Record one interim event on a running Job. Delegated work runs this from inside
+its own Job to say it is blocked, needs a decision, found something, or made
+progress, without ending its turn. Read the stream back with consult events.
+
+Options:
+  --type <type>    blocked, decision_needed, discovery, or progress.
+  --message <text> The event message; everything after -- works too.
+  --data <json>    Optional structured payload, serialized to at most 16384
+                   bytes. Invalid or oversized JSON is rejected, never trimmed.
+  --job <job-id>   Job to report on. Defaults to CONSULT_PARENT_JOB, which is
+                   the Job's own id inside a running Job.
+  --help           Print this help instead of reporting.
+
+Bounds:
+  Messages longer than 4096 UTF-8 bytes are truncated with a marker, and a Job
+  accepts at most 256 reports.
+
+Exit codes:
+  0 recorded, 2 usage error, unknown type, unknown Job, bad or oversized --data,
+  or the report limit is reached, 5 the Job has already finalized.
+
+Examples:
+  consult report --type blocked -- "need the staging database URL"
+  consult report --type discovery --data '{"file":"src/queue.ts"}' \\
+    -- "the retry path drops the jitter"
+  consult report --job <job-id> --type progress -- "migration applied"
+
+Only Jobs launched with --sandbox inherit can run consult, so reporting is
+available to inherited Jobs and to the Host, not to confined Jobs.
+
+See also: consult help reporting, consult events --help
+`;
+
+const eventsUsage = `Usage:
+  consult events <job-id> [--since <seq>] [--type <type>] [--json]
+  consult events <job-id> --follow [--since <seq>] [--type <type>] [--json]
+
+Print or follow one Job's typed event stream: the interim reports the Job wrote
+with consult report, plus its queued, running, and terminal transitions.
+
+Options:
+  --since <seq>  Skip reports with a sequence number at or below <seq>.
+                 Lifecycle events carry no sequence and are always shown.
+  --type <type>  Show only one event type: blocked, decision_needed, discovery,
+                 progress, queued, running, or terminal.
+  --follow       Stream events until the Job finalizes.
+  --json         Emit {"schemaVersion":1,"jobId":...,"events":[...]}. With
+                 --follow it emits NDJSON instead: one
+                 {"schemaVersion":1,"jobId":...,"event":{...}} per line.
+  --help         Print this help instead of printing events.
+
+Sequence numbers are derived from the order of a Job's reports and start at 1.
+
+Exit codes:
+  0 success, 2 usage error or unknown Job, 4 --follow timed out.
+
+Examples:
+  consult events <job-id>
+  consult events <job-id> --type blocked
+  consult events <job-id> --follow --json
+  consult events <job-id> --since 12 --json
+
+See also: consult help reporting, consult report --help
+`;
+
 const resultUsage = `Usage:
   consult result <job-id> [--json]
 
@@ -326,7 +395,9 @@ const commandUsages: Record<string, string> = {
   chain: chainUsage,
   delegate: delegateUsage,
   doctor: doctorUsage,
+  events: eventsUsage,
   logs: logsUsage,
+  report: reportUsage,
   result: resultUsage,
   review: reviewUsage,
   setup: setupUsage,
