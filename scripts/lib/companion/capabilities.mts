@@ -71,6 +71,14 @@ export async function runCapabilities({
   if (invalidBoolean) {
     return { exitCode: 2, stdout: "", stderr: `${invalidBoolean}\n` };
   }
+  const positional = args.positional ?? [];
+  if (positional.length > 0) {
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `unexpected argument: ${positional[0]}\n`,
+    };
+  }
   let registry: Registry;
   try {
     registry = await (deps.loadRegistry ?? defaultLoadRegistry)();
