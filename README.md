@@ -150,8 +150,9 @@ transcript ever lands in the main thread:
 
 Background Jobs compose: `--after <job-id>` chains a dependent prompt onto an
 upstream result, `consult logs --follow` tails a running Job, `consult events`
-reads the interim events a Job wrote with `consult report`, `--json` makes
-every result machine-readable, and `--resume` reopens a Profile session for a
+reads the interim events a Job wrote with `consult report`, `consult steer`
+sends guidance back into a Job that is still running, `--json` makes every
+result machine-readable, and `--resume` reopens a Profile session for a
 follow-up turn. The [usage reference](docs/USAGE.md) covers all of it.
 
 ### Teach your agent to delegate

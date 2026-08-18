@@ -42,9 +42,10 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 - Cross-Profile native conversation transfer.
 - A permanent agent app server or a dependency on Codex app-server APIs.
 - Host-specific prompt injection or wake-up APIs. Portable waiting remains a
-  normal blocking CLI operation, and interim Job events are recorded portably
-  (`consult report` / `consult events`, ADR-0039) without Consult delivering,
-  pushing, or waking anything Host-side.
+  normal blocking CLI operation, interim Job events are recorded portably
+  (`consult report` / `consult events`, ADR-0039), and mid-Job guidance is
+  delivered portably through the Job's own Broker (`consult steer`, ADR-0040) —
+  none of it delivering, pushing, or waking anything Host-side.
 - Forwarding one Host's private MCP configuration to a Profile.
 - Interactive permission prompting during a Job.
 - Native Windows or macOS x64 process support, or an ambient-authority fallback
@@ -197,11 +198,12 @@ JSON state updates use same-directory temp files, file and directory fsync,
 and atomic rename. There is no shared `jobs.json` index: listing scans
 individual records to avoid a multi-writer index race.
 
-`logs/<job-id>.log` is strict append-only NDJSON with three methods:
-`consult/update` and `consult/finalized` from the Job runtime, and
-`consult/report` from `consult report` (ADR-0039). Report lines are single
-`O_APPEND` writes by an external process; readers drop a partially flushed
-trailing line and re-read, and must ignore methods they do not recognize.
+`logs/<job-id>.log` is strict append-only NDJSON with four methods:
+`consult/update`, `consult/finalized`, and `consult/steer` from the Job runtime
+(ADR-0040), and `consult/report` from `consult report` (ADR-0039). Report lines
+are single `O_APPEND` writes by an external process; readers drop a partially
+flushed trailing line and re-read, and must ignore methods they do not
+recognize.
 
 ## Interim Job Events
 
@@ -211,17 +213,43 @@ JSON payload. The Job comes from `--job` or the injected `CONSULT_PARENT_JOB`,
 and the Workspace from `CONSULT_WORKSPACE` or Git-root detection.
 
 `consult events <job-id>` reads that stream back, deriving a 1-based sequence
-number from the order of report lines and synthesizing `queued`, `running`, and
-`terminal` transitions from the Job record. `--since <seq>` resumes after a
-report already read, `--type` selects one event type, `--json` emits a small
-`{"schemaVersion":1,"jobId":...,"events":[...]}` envelope, and `--follow`
-streams on the same 200 ms record poll as `logs --follow` (NDJSON when combined
-with `--json`, exit 4 on the 30-minute deadline).
+number from the order of report and steer lines and synthesizing `queued`,
+`running`, and `terminal` transitions from the Job record. `--since <seq>`
+resumes after an event already read, `--type` selects one event type, `--json`
+emits a small `{"schemaVersion":1,"jobId":...,"events":[...]}` envelope, and
+`--follow` streams on the same 200 ms record poll as `logs --follow` (NDJSON
+when combined with `--json`, exit 4 on the 30-minute deadline).
 
 Bounds are enforced at the write — 4096-byte messages, 16 KiB serialized data,
 256 reports per Job — because these lines bypass the Broker's persisted-log
 accounting. Reporting requires `--sandbox inherit`, since confined Jobs cannot
 execute `consult` at all.
+
+## Mid-Job Steering
+
+`consult steer <job-id> -- <guidance>` sends guidance into a Job that is already
+running (ADR-0040). The CLI dials the Job's Broker socket the way `consult
+cancel` does; the Broker records one `consult/steer` line on the Job's log,
+marks a pending steer, and cancels the in-flight prompt turn. When that turn
+settles, the runner re-prompts the **same live Session** with the guidance
+inside `BEGIN`/`END CONSULT SUPERVISOR GUIDANCE` delimiters instead of
+finalizing, and the continued turn finalizes normally.
+
+One Job therefore may run several prompt turns while keeping one id, one
+Session, one log, one record, one wall-clock deadline, and one persisted-log
+budget. The steer's cancel deliberately does not set the Job's cancel flag, so
+the cancellation-wins record merge cannot make a steered Job look `cancelled`;
+a real `consult cancel` that races a pending steer still wins and drops the
+guidance.
+
+Only `running` background non-isolated Jobs are steerable: foreground and
+`--isolated` Jobs run their turn inline in the companion, with no socket another
+process can reach, and refuse with exit 1. Guidance is bounded at 16 KiB and
+rejected rather than truncated, one steer is in flight at a time (exit 3
+otherwise), and a Job outside its running window refuses with exit 5. Steer
+lines are metered against the same persisted-log limit as updates because they
+are written by the Broker. `profileSupportsSteer` in `profile-launch-policy.mts`
+is the per-Profile seam and is true for every registry Profile in v1.
 
 ## Foreground and Background Execution
 
