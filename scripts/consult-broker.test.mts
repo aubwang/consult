@@ -44,6 +44,14 @@ const READ_ONLY_AUTHORITY = {
   allowExecute: false,
 };
 
+const INHERIT_READ_ONLY_AUTHORITY = {
+  schemaVersion: 1 as const,
+  mode: "read-only" as const,
+  confinement: "inherit" as const,
+  allowFetch: false,
+  allowExecute: false,
+};
+
 test("consult/ping returns broker health before the ACP agent is connected", async (t) => {
   const harness = await startBroker(t, { agentArgs: ["exit"] });
   const client = await connectBroker(harness.endpoint);
@@ -1003,6 +1011,96 @@ test(
     }
   },
 );
+
+// The end-to-end shape live testing found missing: a real Profile asks before it
+// runs a shell command, and until ADR-0042 the answer was always no, so a
+// delegated Job could never report. The Profile here asks, is approved, and
+// actually runs the command it was approved for.
+test("an inherit Job is approved to run consult report on itself", async (t) => {
+  const consultBin = fileURLToPath(new URL("../bin/consult", import.meta.url));
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-permission-exec-command"],
+    captureClientCalls: true,
+    fakeTargetRelative: ".",
+    jobId: "job-report-exec",
+    authority: INHERIT_READ_ONLY_AUTHORITY,
+    execCommand: [consultBin, "report", "--type", "progress", "--", "fixture progress"],
+  });
+  // The record the reporting Job writes against: this test drives the Broker
+  // directly, so nothing else has created one.
+  await fsp.mkdir(harness.jobsDir, { recursive: true });
+  await fsp.writeFile(
+    path.join(harness.jobsDir, "job-report-exec.json"),
+    JSON.stringify({
+      jobId: "job-report-exec",
+      status: "running",
+      submittedAt: "2026-08-18T00:00:00.000Z",
+      startedAt: "2026-08-18T00:00:01.000Z",
+    }),
+  );
+  const client = await connectBroker(harness.endpoint);
+  const updates = collectNotifications(client, "consult/update");
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-report-exec",
+      prompt: "report progress",
+      profile: "codex",
+      authority: INHERIT_READ_ONLY_AUTHORITY,
+      mode: "read-only",
+    });
+
+    assert.equal((await finalizedPromise).stopReason, "end_turn");
+    const observations = await readClientObservations(harness.clientLog);
+    assert.equal(observations[0].message.result.outcome.optionId, "allow");
+    // exit=0 is the proof the approval was usable, not merely granted.
+    assert.match(JSON.stringify(updates), /exec allowed exit=0/u);
+    const events = await runEvents({
+      args: { positional: ["job-report-exec"], flags: { json: true, type: "progress" } },
+      env: {},
+      deps: { resolveWorkspaceRoot: async () => harness.workspace },
+    });
+    assert.deepEqual(
+      JSON.parse(events.stdout).events.map((event: { message?: string }) => event.message),
+      ["fixture progress"],
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("an inherit Job is refused any execute other than its own report", async (t) => {
+  const consultBin = fileURLToPath(new URL("../bin/consult", import.meta.url));
+  const harness = await startBroker(t, {
+    agentArgs: ["sessions", "prompt-permission-exec-command"],
+    captureClientCalls: true,
+    fakeTargetRelative: ".",
+    jobId: "job-report-exec-denied",
+    authority: INHERIT_READ_ONLY_AUTHORITY,
+    // Same binary, one flag the carve-out does not allow.
+    execCommand: [consultBin, "report", "--job", "job-elsewhere", "--type", "progress"],
+  });
+  const client = await connectBroker(harness.endpoint);
+
+  try {
+    const finalizedPromise = nextNotification(client, "consult/finalized");
+    await client.request("consult/run", {
+      jobId: "job-report-exec-denied",
+      prompt: "report progress",
+      profile: "codex",
+      authority: INHERIT_READ_ONLY_AUTHORITY,
+      mode: "read-only",
+    });
+
+    await finalizedPromise;
+    const observations = await readClientObservations(harness.clientLog);
+    assert.equal(observations[0].message.result.outcome.optionId, "reject");
+    assert.match(observations[0].message.result._meta.reason, /execute denied in read-only mode/u);
+  } finally {
+    await client.close();
+  }
+});
 
 test("consult/run allows fs/read_text_file inside the workspace", async (t) => {
   const harness = await startBroker(t, {
@@ -2434,6 +2532,7 @@ interface StartBrokerOptions {
   sandbox?: string;
   authority?: JobAuthority;
   profile?: string;
+  execCommand?: string[];
 }
 
 async function startBroker(
@@ -2454,6 +2553,7 @@ async function startBroker(
     sandbox,
     authority,
     profile = "codex",
+    execCommand,
   }: StartBrokerOptions = {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "consult-broker-"));
@@ -2502,6 +2602,7 @@ async function startBroker(
                 fakeTargetPath ?? path.join(workspace, fakeTargetRelative as string),
             }
           : {}),
+        ...(execCommand ? { CONSULT_FAKE_AGENT_EXEC_COMMAND: JSON.stringify(execCommand) } : {}),
       },
       pidFile,
       jobId,

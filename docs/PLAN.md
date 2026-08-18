@@ -225,6 +225,21 @@ Bounds are enforced at the write — 4096-byte messages, 16 KiB serialized data,
 accounting. Reporting requires `--sandbox inherit`, since confined Jobs cannot
 execute `consult` at all.
 
+A delegated Job reaches `consult report` through the one execute carve-out in
+`permissions.mts` (ADR-0042). Real Profiles request permission before running a
+shell command, and blanket execute denial meant they asked, were refused, and
+gave up. The permission layer now approves an execute request when the Job's
+confinement is `inherit`, the command parses as one simple invocation (argv
+array, or a command string tokenized under shell rules and denied on any
+metacharacter, with a single `bash -lc` unwrap), the binary realpaths to the
+running installation's own `bin/consult`, and the argv is `report` plus only
+`--type`, `--message`, `--data`, and the message after `--`. `--job` is excluded
+so a Job cannot report as another Job. Confined Jobs keep unconditional denial,
+every parse uncertainty denies, and all other execute requests keep their
+existing diagnostics. The predicate lives in `report-exec-policy.mts` as a pure
+function over `rawInput` plus injected resolvers; `job-agent.mts` resolves the
+real binary once per Job, beside the `CONSULT_*` environment.
+
 ## Mid-Job Steering
 
 `consult steer <job-id> -- <guidance>` sends guidance into a Job that is already
