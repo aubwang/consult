@@ -153,7 +153,9 @@ upstream result, `consult logs --follow` tails a running Job, `consult events`
 reads the interim events a Job wrote with `consult report`, `consult steer`
 sends guidance back into a Job that is still running, `--json` makes every
 result machine-readable, and `--resume` reopens a Profile session for a
-follow-up turn. The [usage reference](docs/USAGE.md) covers all of it.
+follow-up turn. A Host that needs to know which of these the installed build has
+asks `consult capabilities --json` instead of guessing. The
+[usage reference](docs/USAGE.md) covers all of it.
 
 ### Teach your agent to delegate
 

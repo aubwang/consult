@@ -50,6 +50,7 @@ test("every user-facing command has command-specific usage", () => {
     "chain",
     "cancel",
     "brokers",
+    "capabilities",
   ];
 
   for (const command of documented) {

@@ -20,22 +20,23 @@ decomposition, judgment, and integration; each Job carries exactly one prompt
 turn under one explicit Job Authority.
 
 Commands:
-  setup      Install or verify Profiles.
-  agents     List Profiles or set the default Profile.
-  delegate   Send one self-contained prompt turn to a Profile.
-  review     Run a pinned, read-only Git review.
-  doctor     Check Profile and Job Authority readiness.
-  status     List Jobs or inspect one Job.
-  wait       Wait once for one or more Jobs and return their Results.
-  logs       Print or follow Job updates.
-  result     Print a finished Job result.
-  report     Record an interim event on a running Job.
-  events     Print or follow a Job's typed event stream.
-  steer      Send guidance into a running Job.
-  chain      Show a Job's delegation lineage.
-  cancel     Cancel an active Job and descendants.
-  brokers    Inspect or clean Broker state.
-  help       Show this help, one command's flags, or one topic.
+  setup         Install or verify Profiles.
+  agents        List Profiles or set the default Profile.
+  delegate      Send one self-contained prompt turn to a Profile.
+  review        Run a pinned, read-only Git review.
+  doctor        Check Profile and Job Authority readiness.
+  status        List Jobs or inspect one Job.
+  wait          Wait once for one or more Jobs and return their Results.
+  logs          Print or follow Job updates.
+  result        Print a finished Job result.
+  report        Record an interim event on a running Job.
+  events        Print or follow a Job's typed event stream.
+  steer         Send guidance into a running Job.
+  chain         Show a Job's delegation lineage.
+  cancel        Cancel an active Job and descendants.
+  brokers       Inspect or clean Broker state.
+  capabilities  Report what this build supports, for feature detection.
+  help          Show this help, one command's flags, or one topic.
 
 Topics:
   delegation   When to hand work off, and how to write a prompt that survives
@@ -479,6 +480,11 @@ passes no id; a Host reporting on someone else's Job passes --job <job-id>.
 Only Jobs launched with --sandbox inherit can run consult at all, so confined
 Jobs cannot report. Say so in a prompt that asks for reports.
 
+A Host that needs to know whether the build in front of it has report and
+events at all should read consult capabilities --json rather than run a command
+to see whether it exists: an exit code cannot tell a missing command apart from
+a bad argument. Builds before 1.2.0 have no capabilities command and exit 2.
+
 A Job accepts reports only while it is running. Reporting before its Profile
 turn starts or after it finalizes fails with exit code 5, as does a report that
 loses a race with finalization - the line is voided rather than kept.
@@ -638,6 +644,25 @@ add seq and message, reports add optional data, and the terminal event adds
 status and errorMessage. Reports and steers share one sequence space in file
 order. A steer event's message is a bounded preview of the guidance, not the
 whole of it. Branch on schemaVersion and ignore unknown fields.
+
+## Capabilities JSON
+
+consult capabilities --json is how a Host learns what a build supports, instead
+of running a command to see whether it exists:
+
+    {"schemaVersion":1,"version":"1.2.0",
+     "contracts":{"jobResult":1,"events":1,"profiles":1},
+     "features":{"report":true,"events":true,"steer":true,
+                 "nativeReviewProfiles":["codex"]},
+     "bounds":{"reportMessageBytes":4096,"reportDataBytes":16384,
+               "reportsPerJob":256,"steerGuidanceBytes":16384}}
+
+contracts holds the schema version of each machine-readable envelope, features
+names optional commands, and bounds carries the limits those commands enforce,
+so a Host can size a payload before sending it. The report is static: it reads
+no Workspace, Job, or Profile state and works outside a Git repository. Builds
+before 1.2.0 have no capabilities command and exit 2, which is the documented
+signal that report, events, and steer are unavailable.
 
 ## Host Identity
 

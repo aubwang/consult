@@ -24,6 +24,7 @@ import {
 import type { ParsedArgs } from "../args.mts";
 import type { CliResult, CodedError } from "./job-record-errors.mts";
 import { profileErrorResult } from "./profile-errors.mts";
+import { registryErrorResult } from "./registry-errors.mts";
 
 export interface SetupDeps extends InstallDeps, ProbeDeps {
   loadRegistry?: () => Promise<Registry>;
@@ -219,22 +220,4 @@ function renderInstallFailure(result: Extract<InstallResult, { ok: false }>): st
     lines.push(result.captured.stderr);
   }
   return `${lines.join("\n")}\n`;
-}
-
-function registryErrorResult(error: CodedError): CliResult | null {
-  if (error.code === "REGISTRY_MALFORMED") {
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `registry malformed: ${error.path}\n`,
-    };
-  }
-  if (error.code === "REGISTRY_SCHEMA_MISMATCH") {
-    return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `registry schema mismatch: ${error.path}\n`,
-    };
-  }
-  return null;
 }

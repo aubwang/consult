@@ -251,6 +251,21 @@ lines are metered against the same persisted-log limit as updates because they
 are written by the Broker. `profileSupportsSteer` in `profile-launch-policy.mts`
 is the per-Profile seam and is true for every registry Profile in v1.
 
+## Capabilities
+
+`consult capabilities [--json]` is the versioned surface a Host probes to learn
+what a build supports (ADR-0041): the CLI version, the schema version of each
+machine-readable contract (`jobResult`, `events`, `profiles`), which optional
+commands exist (`report`, `events`, `steer`, plus the Profiles the registry
+advertises native review for), and the bounds those commands enforce. Every
+value is read from the constant the behavior is bounded by rather than restated.
+
+Like `help` and `version` it is a static self-description: it resolves no
+Workspace and reads no Job or Profile state, so it answers identically outside a
+Git repository. It replaces exit-code probing, which cannot separate a missing
+subcommand from a bad argument; a build older than 1.2.0 has no `capabilities`
+command and exits 2, which is the documented fallback signal.
+
 ## Foreground and Background Execution
 
 Foreground `delegate` runs the ACP agent inline in the companion process. The
