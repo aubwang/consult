@@ -31,6 +31,17 @@ function request(
   };
 }
 
+const REAL_CONSULT_BIN = "/opt/consult/bin/consult";
+
+function reportExecDeps() {
+  return {
+    consultBinPath: async () => REAL_CONSULT_BIN,
+    realpath: async (target: string) => target,
+    isExecutableFile: async () => false,
+    pathEnv: "",
+  };
+}
+
 after(() => {
   for (const root of roots) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -289,6 +300,119 @@ test("write-mode treats an omitted execute cwd as the confined workspace root", 
       allowed: false,
       reason: "execute denied: proxy-confined network enforcement is unavailable",
     },
+  );
+});
+
+// ADR-0042. The carve-out has to work for the ordinary delegated Job, which is
+// read-only and holds no execute grant; without that it would never fire.
+test("read-only inherit allows the Job to report on itself without an execute grant", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("execute", {
+        cwd: workspaceRoot,
+        command: [REAL_CONSULT_BIN, "report", "--type", "blocked", "--", "need a token"],
+      }),
+      mode: "read-only",
+      workspaceRoot,
+      confinement: "inherit",
+      reportExec: reportExecDeps(),
+    }),
+    { allowed: true },
+  );
+});
+
+test("a confined Job keeps unconditional execute denial even for a clean report", async () => {
+  const workspaceRoot = makeRoot();
+  const reportRequest = request("execute", {
+    cwd: workspaceRoot,
+    command: [REAL_CONSULT_BIN, "report", "--type", "blocked", "--", "need a token"],
+  });
+
+  assert.deepEqual(
+    await decidePermission({
+      request: reportRequest,
+      mode: "read-only",
+      workspaceRoot,
+      confinement: "confined",
+      reportExec: reportExecDeps(),
+    }),
+    { allowed: false, reason: "execute denied in read-only mode" },
+  );
+  // Omitting confinement must be the safe default, not the permissive one.
+  assert.deepEqual(
+    await decidePermission({
+      request: reportRequest,
+      mode: "read-only",
+      workspaceRoot,
+      reportExec: reportExecDeps(),
+    }),
+    { allowed: false, reason: "execute denied in read-only mode" },
+  );
+});
+
+test("a caller that does not opt into the carve-out keeps today's denials", async () => {
+  const workspaceRoot = makeRoot();
+
+  assert.deepEqual(
+    await decidePermission({
+      request: request("execute", {
+        cwd: workspaceRoot,
+        command: [REAL_CONSULT_BIN, "report", "--type", "blocked", "--", "need a token"],
+      }),
+      mode: "read-only",
+      workspaceRoot,
+      confinement: "inherit",
+    }),
+    { allowed: false, reason: "execute denied in read-only mode" },
+  );
+});
+
+test("an inherit Job's non-report execute falls through to the unchanged denials", async () => {
+  const workspaceRoot = makeRoot();
+  const cases: Array<[PermissionMode, Record<string, unknown>, string]> = [
+    ["read-only", { command: ["rm", "-rf", "/"] }, "execute denied in read-only mode"],
+    [
+      "write",
+      { command: [REAL_CONSULT_BIN, "delegate", "--", "do it"] },
+      "execute denied in write mode (explicit opt-in required)",
+    ],
+    [
+      "read-only",
+      { command: `${REAL_CONSULT_BIN} report --type progress -- ok && rm -rf /` },
+      "execute denied in read-only mode",
+    ],
+  ];
+
+  for (const [mode, rawInput, reason] of cases) {
+    assert.deepEqual(
+      await decidePermission({
+        request: request("execute", { cwd: workspaceRoot, ...rawInput }),
+        mode,
+        workspaceRoot,
+        confinement: "inherit",
+        reportExec: reportExecDeps(),
+      }),
+      { allowed: false, reason },
+      JSON.stringify(rawInput),
+    );
+  }
+});
+
+test("a report execute outside the workspace is still denied on cwd", async () => {
+  assert.deepEqual(
+    await decidePermission({
+      request: request("execute", {
+        cwd: "/tmp",
+        command: [REAL_CONSULT_BIN, "report", "--type", "progress", "--", "ok"],
+      }),
+      mode: "read-only",
+      workspaceRoot: makeRoot(),
+      confinement: "inherit",
+      reportExec: reportExecDeps(),
+    }),
+    { allowed: false, reason: "cwd outside workspace: /tmp" },
   );
 });
 

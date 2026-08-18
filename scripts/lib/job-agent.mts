@@ -14,6 +14,7 @@ import type { JobAuthority, JobAuthorityDiagnostic } from "./job-authority.mts";
 import { decidePermission } from "./permissions.mts";
 import type { PermissionMode } from "./permissions.mts";
 import { normalizeAgentSandbox } from "./process-sandbox.mts";
+import { resolveConsultBinPath } from "./report-exec-policy.mts";
 import { copilotAgentVersionDiagnostic, versionAtLeast } from "./profile-launch-policy.mts";
 import { acquireConfinedSandboxRuntimeLaunch } from "./sandbox-runtime-launch.mts";
 import { readWorkspaceJobRecord } from "./job-records.mts";
@@ -108,6 +109,10 @@ export async function startJobAgent(
     canonicalAuthority.confinement === "inherit"
       ? "off"
       : normalizeAgentSandbox(sandbox);
+  // Resolved once per Job, next to the CONSULT_* environment that tells the Job
+  // which Job it is: the interim-report carve-out approves an execute only when
+  // it invokes this same installation (ADR-0042).
+  const consultBin = resolveConsultBinPath();
   const acquireLaunch: AcquireAgentLaunch | undefined =
     canonicalAuthority.confinement === "confined"
       ? async (launchOptions) =>
@@ -155,6 +160,8 @@ export async function startJobAgent(
           allowFetch: sessionAuthority.allowFetch,
           allowExecute: sessionAuthority.allowExecute,
           sandbox: sandboxMode,
+          confinement: sessionAuthority.confinement,
+          reportExec: { consultBinPath: () => consultBin },
         });
         runtime.notePermissionDecision({ sessionId, decision, request });
         return permissionResponse(decision, request.options);
