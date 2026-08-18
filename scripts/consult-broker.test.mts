@@ -168,6 +168,53 @@ test("consult/run fails a Copilot turn whose model error is split across notific
   }
 });
 
+test("consult/run fails a Copilot model error with a separately streamed continuation", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-model-error-continuation"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-copilot-model-error-continuation",
+      prompt: "respond with exactly: alive",
+      profile: "copilot",
+      mode: "read-only",
+    });
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /COPILOT_MODEL_ERROR/u);
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/run completes when one Copilot chunk quotes a provider error after prose", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-quotes-model-error"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-copilot-quotes-model-error",
+      prompt: "explain this provider error",
+      profile: "copilot",
+      mode: "read-only",
+    });
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "end_turn");
+  } finally {
+    await client.close();
+  }
+});
+
 test("consult/run fails a Copilot turn from a binary older than the supported floor", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",
@@ -217,47 +264,49 @@ test("consult/run fails a Copilot turn whose terminal error carries an oversized
   }
 });
 
-test("consult/run completes a Copilot turn recovered by an answer glued to the notice", async (t) => {
+test("consult/run keeps a Copilot terminal error latched across later glued text", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",
-    agentArgs: ["sessions", "prompt-copilot-error-then-glued-answer"],
+    agentArgs: ["sessions", "prompt-copilot-error-then-glued-text"],
   });
   const client = await connectBroker(harness.endpoint);
   const finalizedPromise = nextNotification(client, "consult/finalized");
 
   try {
     await client.request("consult/run", {
-      jobId: "job-copilot-error-then-glued-answer",
+      jobId: "job-copilot-error-then-glued-text",
       prompt: "respond with exactly: recovered-final-answer",
       profile: "copilot",
       mode: "read-only",
     });
 
     const finalized = await finalizedPromise;
-    assert.equal(finalized.stopReason, "end_turn");
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /COPILOT_MODEL_ERROR/u);
   } finally {
     await client.close();
   }
 });
 
-test("consult/run completes a Copilot turn recovered by an indented answer", async (t) => {
+test("consult/run keeps a Copilot terminal error latched across later indented text", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",
-    agentArgs: ["sessions", "prompt-copilot-error-then-indented-answer"],
+    agentArgs: ["sessions", "prompt-copilot-error-then-indented-text"],
   });
   const client = await connectBroker(harness.endpoint);
   const finalizedPromise = nextNotification(client, "consult/finalized");
 
   try {
     await client.request("consult/run", {
-      jobId: "job-copilot-error-then-indented-answer",
+      jobId: "job-copilot-error-then-indented-text",
       prompt: "respond with an indented list",
       profile: "copilot",
       mode: "read-only",
     });
 
     const finalized = await finalizedPromise;
-    assert.equal(finalized.stopReason, "end_turn");
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /COPILOT_MODEL_ERROR/u);
   } finally {
     await client.close();
   }
