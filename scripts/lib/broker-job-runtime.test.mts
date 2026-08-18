@@ -483,6 +483,117 @@ test("consumePendingSteer drops guidance once the Job is cancelled", async (t: T
   assert.equal(job.pendingSteer, null);
 });
 
+// A cancel that never left the process means the turn is still running its
+// original prompt, so the steer withdraws whole: the supervisor was told it
+// failed, and nothing may act as if it had been delivered.
+test("steerJob withdraws the steer when session/cancel is never delivered", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  let cancelFails = true;
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      // Short enough that an armed timer would fire inside this test.
+      cancelAckTimeoutMs: 25,
+    },
+    ensureAgent: async () =>
+      ({
+        connection: {
+          cancel: async () => {
+            if (cancelFails) {
+              const error = new Error("agent transport closed") as Error & { code: string };
+              error.code = "AGENT_DISCONNECTED";
+              throw error;
+            }
+          },
+        },
+      }) as unknown as BrokerAgentHandle,
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) {
+      notifications.push({ method, params });
+    },
+  });
+  const job = runtime.createJob(
+    { jobId: "job-steer-undelivered", profile: "codex", mode: "write", prompt: "fix" },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-1", job);
+  const bytesBeforeSteer = job.persistedLogBytes;
+
+  const failed = await runtime.steerJob(job, "skip the migration");
+
+  assert.deepEqual(failed, {
+    ok: false,
+    code: "AGENT_DISCONNECTED",
+    message: "agent transport closed",
+  });
+  // Nothing observable happened: no steer line, no budget charge, no pending
+  // guidance a settling turn could pick up.
+  assert.equal(notifications.length, 0);
+  assert.equal(job.pendingSteer, null);
+  assert.equal(job.persistedLogBytes, bytesBeforeSteer);
+  assert.equal(runtime.consumePendingSteer(job), null);
+
+  // No cancel-ack timer was armed, so the Job is not failed as an
+  // unacknowledged cancel that was never sent.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(job.status, "running");
+  assert.equal(runtime.isTainted(), false);
+
+  // The next steer is accepted rather than refused STEER_PENDING.
+  cancelFails = false;
+  const retried = await runtime.steerJob(job, "and stop early");
+  assert.equal(retried.ok, true);
+  assert.equal(notifications.at(-1)?.method, "consult/steer");
+  assert.equal(runtime.consumePendingSteer(job), "and stop early");
+});
+
+test("steerJob withdraws the steer when the agent cannot be reached at all", async (t: TestContext) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const notifications: Array<{ method: string; params: any }> = [];
+  const runtime = createBrokerJobRuntime({
+    config: {
+      cwd: workspaceRoot,
+      host: "terminal",
+      hostSessionId: "default",
+      cancelAckTimeoutMs: 25,
+    },
+    ensureAgent: async () => {
+      throw new Error("agent is gone");
+    },
+    hashRunPayload: () => "payload-hash",
+    writeNotification(_socket, method, params) {
+      notifications.push({ method, params });
+    },
+  });
+  const job = runtime.createJob(
+    { jobId: "job-steer-no-agent", profile: "codex", mode: "write", prompt: "fix" },
+    fakeSocket("originator"),
+  );
+  runtime.attachJob(job, fakeSocket("subscriber"));
+  runtime.trackSession("session-1", job);
+  const bytesBeforeSteer = job.persistedLogBytes;
+
+  const outcome = await runtime.steerJob(job, "skip the migration");
+
+  assert.deepEqual(outcome, {
+    ok: false,
+    code: "BROKER_ERROR",
+    message: "agent is gone",
+  });
+  assert.equal(notifications.length, 0);
+  assert.equal(job.pendingSteer, null);
+  assert.equal(job.persistedLogBytes, bytesBeforeSteer);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(job.status, "running");
+  assert.equal(runtime.isTainted(), false);
+});
+
 test("steerJob refuses guidance that would overrun the persisted log budget", async (t: TestContext) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
