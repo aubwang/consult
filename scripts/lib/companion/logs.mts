@@ -1,10 +1,8 @@
-import fs from "node:fs/promises";
-
-import {
-  jobLogPath,
-  readWorkspaceJobRecord,
-} from "../job-records.mts";
+import { readWorkspaceJobRecord } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
+import { readJobLogEntries } from "../job-log-entries.mts";
+import type { ParsedJobLog } from "../job-log-entries.mts";
+import { REPORT_LOG_METHOD, renderReportLogEntry } from "../job-reports.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
 import { renderSessionUpdate } from "../session-update-renderer.mts";
 import { createOutput } from "./output.mts";
@@ -28,11 +26,6 @@ export interface LogsDeps extends OutputDeps {
   maxWaitMs?: number;
   poll?: (ms: number) => Promise<void>;
   nowMs?: () => number;
-}
-
-interface ParsedLog {
-  entries: unknown[];
-  lineCount: number;
 }
 
 interface WaitTimeoutError extends Error {
@@ -83,7 +76,7 @@ export async function runLogs({
     return await followLogs(workspaceRoot, jobId, tail.value, deps);
   }
 
-  let parsed: ParsedLog;
+  let parsed: ParsedJobLog;
   try {
     parsed = await readParsedLog(workspaceRoot, jobId, deps);
   } catch (error) {
@@ -172,18 +165,11 @@ async function readParsedLog(
   jobId: string,
   deps: LogsDeps,
   { dropPartialTail = false }: { dropPartialTail?: boolean } = {},
-): Promise<ParsedLog> {
-  let contents: string;
-  const path = jobLogPath(workspaceRoot, jobId);
-  try {
-    contents = await (deps.readLogFile ?? defaultReadLogFile)(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { entries: [], lineCount: 0 };
-    }
-    throw error;
-  }
-  return parseLog(contents, path, { dropPartialTail });
+): Promise<ParsedJobLog> {
+  return await readJobLogEntries(workspaceRoot, jobId, {
+    readLogFile: deps.readLogFile,
+    dropPartialTail,
+  });
 }
 
 async function readJobRecord(
@@ -194,45 +180,6 @@ async function readJobRecord(
   return await (deps.readJobRecord ?? readWorkspaceJobRecord)(workspaceRoot, jobId);
 }
 
-async function defaultReadLogFile(path: string): Promise<string> {
-  return await fs.readFile(path, "utf8");
-}
-
-function parseLog(
-  contents: string,
-  path: string,
-  { dropPartialTail = false }: { dropPartialTail?: boolean } = {},
-): ParsedLog {
-  let text = contents;
-  if (dropPartialTail && !text.endsWith("\n")) {
-    // A writer may still be flushing the trailing line; parse it on a later read.
-    text = text.slice(0, text.lastIndexOf("\n") + 1);
-  }
-  const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
-  const entries: unknown[] = [];
-  if (lines.length === 1 && lines[0] === "") {
-    return { entries, lineCount: 0 };
-  }
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line === "") {
-      continue;
-    }
-    try {
-      const entry: unknown = JSON.parse(line);
-      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-        throw new SyntaxError("log entry is not an object");
-      }
-      entries.push(entry);
-    } catch {
-      const error = new Error(`job log malformed: ${path}:${index + 1}`) as NodeJS.ErrnoException;
-      error.code = "JOB_LOG_MALFORMED";
-      throw error;
-    }
-  }
-  return { entries, lineCount: lines.length };
-}
-
 function renderLogEntries(entries: unknown[]): string {
   return entries.map((entry) => renderLogEntry(entry)).join("");
 }
@@ -241,6 +188,12 @@ function renderLogEntry(entry: unknown): string {
   const method = (entry as { method?: unknown }).method;
   if (method === "consult/update") {
     return renderSessionUpdate((entry as { params?: unknown }).params as never);
+  }
+  // Interim reports are written by the Job itself, not by the ACP session, so
+  // they get their own rendering instead of falling through to the session
+  // update renderer (which would silently drop them).
+  if (method === REPORT_LOG_METHOD) {
+    return renderReportLogEntry(entry);
   }
   return renderSessionUpdate(entry as never);
 }
