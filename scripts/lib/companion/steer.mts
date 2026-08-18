@@ -97,8 +97,9 @@ export async function runSteer({
   }
   // Inline runners hold no socket: the foreground companion and an --isolated
   // background Job both run their turn in-process, so nothing can reach the
-  // live prompt turn from another process.
-  if (record.runner === "inline") {
+  // live prompt turn from another process. An isolated Job is checked by its
+  // own field too, not only by the runner its worker stamps at pickup.
+  if (record.runner === "inline" || record.isolated === true) {
     return {
       exitCode: STEER_UNSUPPORTED_EXIT_CODE,
       stdout: "",

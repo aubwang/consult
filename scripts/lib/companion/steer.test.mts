@@ -99,7 +99,7 @@ test("steer exits 5 for a Job that is not running", async (t) => {
 
 // A foreground delegate and an --isolated background Job both run their turn
 // in the companion process, so no other process can reach the prompt turn.
-test("steer refuses an inline-runner Job without dialing a Broker", async (t) => {
+test("steer refuses inline-runner and isolated Jobs without dialing a Broker", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   await writeJob(workspaceRoot, {
@@ -108,21 +108,34 @@ test("steer refuses an inline-runner Job without dialing a Broker", async (t) =>
     runner: "inline",
     runnerPid: 4242,
   });
+  await writeJob(workspaceRoot, {
+    jobId: "job-isolated",
+    status: "running",
+    isolated: true,
+  });
+  const deps = {
+    resolveWorkspaceRoot: async () => workspaceRoot,
+    connectBrokerSession: async () => {
+      throw new Error("broker should not be dialed");
+    },
+  };
 
-  const result = await runSteer({
+  const inline = await runSteer({
     args: { positional: ["job-inline", "go left"], flags: {} },
     env: {},
-    deps: {
-      resolveWorkspaceRoot: async () => workspaceRoot,
-      connectBrokerSession: async () => {
-        throw new Error("broker should not be dialed");
-      },
-    },
+    deps,
+  });
+  const isolated = await runSteer({
+    args: { positional: ["job-isolated", "go left"], flags: {} },
+    env: {},
+    deps,
   });
 
-  assert.equal(result.exitCode, 1);
-  assert.match(result.stderr, /steer is not available for job job-inline \(inline runner\)/u);
-  assert.match(result.stderr, /cancel and re-delegate/u);
+  assert.equal(inline.exitCode, 1);
+  assert.match(inline.stderr, /steer is not available for job job-inline \(inline runner\)/u);
+  assert.match(inline.stderr, /cancel and re-delegate/u);
+  assert.equal(isolated.exitCode, 1);
+  assert.match(isolated.stderr, /steer is not available for job job-isolated \(inline runner\)/u);
 });
 
 test("steer maps Broker refusals onto the exit-code contract", async (t) => {
