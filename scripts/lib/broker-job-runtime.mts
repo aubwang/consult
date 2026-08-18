@@ -16,6 +16,7 @@ import { isInsideWorkspaceSync } from "./path-safety.mts";
 import { extractAgentMessageText } from "./session-update-renderer.mts";
 import type { JobAuthority } from "./job-authority.mts";
 import { canonicalizeRunParams } from "./job-agent.mts";
+import { STEER_LOG_METHOD } from "./job-steer.mts";
 import {
   DEFAULT_JOB_LOG_LIMIT_BYTES,
   DEFAULT_JOB_WALL_CLOCK_LIMIT_MS,
@@ -119,6 +120,14 @@ export interface BrokerJob {
   finalized: BrokerJobFinalized | null;
   originatorSocket: BrokerJobSocketLike;
   cancelRequested: boolean;
+  /**
+   * Guidance accepted by `consult/steer` and not yet delivered. It is set
+   * before the steer's `session/cancel`, and consumed when that turn settles:
+   * a turn that stops with a pending steer is re-prompted on the same Session
+   * instead of finalizing (ADR-0040). It is deliberately not `cancelRequested`
+   * — a steer must never leave the Job's record cancelled.
+   */
+  pendingSteer: string | null;
   awaitingViolatedTurn: boolean;
   cancelAckTimer: NodeJS.Timeout | null;
   wallClockTimer: NodeJS.Timeout | null;
@@ -148,6 +157,10 @@ export interface CreateBrokerJobRuntimeOptions {
   clearWallClock?(timer: NodeJS.Timeout): void;
 }
 
+export type SteerJobOutcome =
+  | { ok: true; at: string }
+  | { ok: false; code: string; message: string };
+
 export interface BrokerJobRuntime {
   readonly tainted: boolean;
   isTainted(): boolean;
@@ -169,6 +182,8 @@ export interface BrokerJobRuntime {
   failJob(job: BrokerJob, errorMessage: string): Promise<void>;
   cancelJob(job: BrokerJob): Promise<void>;
   cancelJobCascade(job: BrokerJob): string[];
+  steerJob(job: BrokerJob, guidance: string): Promise<SteerJobOutcome>;
+  consumePendingSteer(job: BrokerJob): string | null;
   noteTurnSettled(job: BrokerJob): void;
   handleSocketClosed(socket: BrokerJobSocketLike): void;
   hasRunningJob(): boolean;
@@ -247,6 +262,7 @@ export function createBrokerJobRuntime({
         finalized: null,
         originatorSocket,
         cancelRequested: false,
+        pendingSteer: null,
         awaitingViolatedTurn: false,
         cancelAckTimer: null,
         wallClockTimer: null,
@@ -412,6 +428,75 @@ export function createBrokerJobRuntime({
         this.cancelJob(target).catch(() => {});
       }
       return descendants.map((candidate) => candidate.jobId);
+    },
+    async steerJob(job, guidance) {
+      // A Job being cancelled is still `running` for a moment; guidance would
+      // restart a turn the caller just stopped, so cancellation wins here too.
+      if (job.status !== "running" || job.cancelRequested) {
+        return {
+          ok: false,
+          code: "JOB_NOT_RUNNING",
+          message: "job is not running a prompt turn",
+        };
+      }
+      if (job.pendingSteer !== null) {
+        return {
+          ok: false,
+          code: "STEER_PENDING",
+          message: "a previous steer is still being delivered to this job",
+        };
+      }
+      if (!job.sessionId) {
+        return {
+          ok: false,
+          code: "JOB_NOT_RUNNING",
+          message: "job has no live session yet",
+        };
+      }
+      const at = new Date().toISOString();
+      const params = { jobId: job.jobId, at, guidance };
+      // Steer lines go through the Broker, so unlike `consult report` they are
+      // metered against the same persisted-log limit as updates, and the limit
+      // keeps applying across the steered turn rather than resetting.
+      const steerBytes = jobLogLineBytes(STEER_LOG_METHOD, params);
+      if (
+        job.persistedLogBytes + steerBytes + job.terminalLogReserveBytes >
+        maxPersistedLogBytes
+      ) {
+        return {
+          ok: false,
+          code: "JOB_LOG_LIMIT",
+          message: jobLimitErrorMessage(JOB_LOG_LIMIT_EXCEEDED, maxPersistedLogBytes),
+        };
+      }
+      job.persistedLogBytes += steerBytes;
+      job.pendingSteer = guidance;
+      // The subscriber that owns this Job's log persists the line, so a steer
+      // lands in file order between the updates it interrupted.
+      for (const subscriber of job.subscribers) {
+        writeNotification(subscriber, STEER_LOG_METHOD, params);
+      }
+      // The steer's session/cancel reuses the cancel-ack machinery: an agent
+      // that never acknowledges it fails the Job and taints the Broker exactly
+      // as an unacknowledged cancel does.
+      startCancelAckTimer(job);
+      const currentAgent = await ensureAgent(job.authority);
+      await cancelPrompt(currentAgent.connection, { sessionId: job.sessionId });
+      return { ok: true, at };
+    },
+    consumePendingSteer(job) {
+      const guidance = job.pendingSteer;
+      if (guidance === null) {
+        return null;
+      }
+      job.pendingSteer = null;
+      clearCancelAckTimer(job);
+      // Cancellation is terminal; a cancel that raced the steer wins and the
+      // guidance is dropped rather than reopening the turn.
+      if (job.status !== "running" || job.cancelRequested) {
+        return null;
+      }
+      return guidance;
     },
     noteTurnSettled(job) {
       job.awaitingViolatedTurn = false;

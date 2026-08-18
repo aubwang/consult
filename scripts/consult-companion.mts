@@ -24,6 +24,7 @@ const handlers: Record<string, () => Promise<CompanionHandler>> = {
   logs: () => import("./lib/companion/logs.mts"),
   report: () => import("./lib/companion/report.mts"),
   events: () => import("./lib/companion/events.mts"),
+  steer: () => import("./lib/companion/steer.mts"),
   review: () => import("./lib/companion/review.mts"),
   status: () => import("./lib/companion/status.mts"),
   result: () => import("./lib/companion/result.mts"),

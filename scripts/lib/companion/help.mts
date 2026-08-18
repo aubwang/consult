@@ -31,6 +31,7 @@ Commands:
   result     Print a finished Job result.
   report     Record an interim event on a running Job.
   events     Print or follow a Job's typed event stream.
+  steer      Send guidance into a running Job.
   chain      Show a Job's delegation lineage.
   cancel     Cancel an active Job and descendants.
   brokers    Inspect or clean Broker state.
@@ -46,6 +47,7 @@ Topics:
   jobs         Background Jobs, waiting, dependencies, sessions, inspection.
   reporting    Interim Job events: what a running Job can say, and how to read
                it back.
+  steering     Guidance for a Job that is already running.
   chains       Nested delegation and lineage.
   contracts    Job Result JSON, the report contract, and exit codes.
   guardrails   The rules that keep delegated work safe to act on.
@@ -512,7 +514,54 @@ requirement, a finding that invalidates the remaining plan - and not as a
 narration channel. A Job that reports every step spends its own turn writing
 status lines.
 
-See also: consult help jobs, consult help contracts, consult report --help
+See also: consult help jobs, consult help steering, consult report --help
+`;
+
+const steeringTopic = `Topic: steering
+
+Reporting is the Job talking to the Host. Steering is the Host talking back,
+into a turn that has already started:
+
+  consult steer <job-id> -- "skip the migration; the schema is frozen"
+
+Consult stops the in-flight prompt turn and re-prompts the same Session with
+the guidance inside BEGIN/END CONSULT SUPERVISOR GUIDANCE delimiters, followed
+by an instruction to continue the original task. The Job keeps its id, its
+Session and conversation, its log, and the wall-clock and log budgets it
+started with - nothing resets, and the Job never lands in the cancelled state.
+The Profile answers the whole task, guidance included, in the continued turn.
+
+## When it applies
+
+Only background Jobs can be steered. A foreground delegate and an --isolated
+Job run their turn in the companion process, with no Broker socket another
+process can reach; steering one exits 1 and says to cancel and re-delegate
+instead. A Job that is still queued or already finalized exits 5, and a second
+steer sent while the first is still being delivered exits 3.
+
+Guidance is bounded at 16384 UTF-8 bytes and rejected, never trimmed, when it
+is longer.
+
+## When to use it
+
+Steer when new information changes the task and the turn is worth keeping:
+a constraint the prompt got wrong, a decision the Job asked for with
+consult report --type decision_needed, a direction that is clearly going
+nowhere. Prefer cancel and a fresh delegate when the task itself changed -
+a continued turn carries all of the Profile's earlier context, including the
+part you now want it to abandon.
+
+Steering costs a turn boundary, so batch guidance into one message rather than
+sending three.
+
+## Reading it back
+
+  consult events <job-id>          # steer events, in sequence with reports
+  consult logs <job-id>            # [steer: ...] in the raw transcript
+
+Events carry a bounded preview of the guidance; the full text stays in the log.
+
+See also: consult help reporting, consult steer --help, consult help jobs
 `;
 
 const chainsTopic = `Topic: chains
@@ -584,9 +633,11 @@ stream is not a Job Result:
 
 With --follow it emits NDJSON instead, one
 {"schemaVersion":1,"jobId":"job-...","event":{}} per line. Each event carries
-kind ("report" or "lifecycle"), type, and at; report events add seq, message,
-and optional data, while the terminal event adds status and errorMessage.
-Branch on schemaVersion and ignore unknown fields.
+kind ("report", "steer", or "lifecycle"), type, and at; report and steer events
+add seq and message, reports add optional data, and the terminal event adds
+status and errorMessage. Reports and steers share one sequence space in file
+order. A steer event's message is a bounded preview of the guidance, not the
+whole of it. Branch on schemaVersion and ignore unknown fields.
 
 ## Host Identity
 
@@ -597,11 +648,13 @@ terminal/default.
 ## Exit codes
 
   0    success
-  1    internal, agent, or Broker error; doctor also uses 1 when not ready
+  1    internal, agent, or Broker error; doctor also uses 1 when not ready; a
+       Job or Profile that cannot be steered refuses here too
   2    usage or configuration error, unknown Job, diff error, no Git Workspace
-  3    Broker busy, tainted, or Job payload conflict
+  3    Broker busy, tainted, Job payload conflict, or a steer already in flight
   4    status or log follow timeout
-  5    Job lifecycle ordering: result before final, report outside running
+  5    Job lifecycle ordering: result before final, report or steer outside
+       the running window
   6    delegated turn finalized as failed
   8    Codex native review command was not advertised by the installed shim
   130  wait interrupted by SIGINT
@@ -641,6 +694,7 @@ const topics: Record<string, string> = {
   review: reviewTopic,
   jobs: jobsTopic,
   reporting: reportingTopic,
+  steering: steeringTopic,
   chains: chainsTopic,
   contracts: contractsTopic,
   guardrails: guardrailsTopic,

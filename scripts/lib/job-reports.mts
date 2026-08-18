@@ -1,3 +1,4 @@
+import { liveJobLogEntries } from "./job-log-entries.mts";
 import { isRecord } from "./objects.mts";
 
 // Interim Job reports share the per-job append-only NDJSON log with
@@ -5,8 +6,6 @@ import { isRecord } from "./objects.mts";
 // single JSON object written with one O_APPEND write, so concurrent writers
 // interleave whole lines rather than corrupting each other.
 export const REPORT_LOG_METHOD = "consult/report";
-
-const FINALIZED_LOG_METHOD = "consult/finalized";
 
 export const REPORT_TYPES: readonly string[] = Object.freeze([
   "blocked",
@@ -93,10 +92,7 @@ export function reportParamsFromLogEntry(entry: unknown): JobReportParams | null
 // stream deterministic, rather than any check the writer could perform.
 export function liveReportParams(entries: readonly unknown[]): JobReportParams[] {
   const reports: JobReportParams[] = [];
-  for (const entry of entries) {
-    if (isRecord(entry) && entry.method === FINALIZED_LOG_METHOD) {
-      break;
-    }
+  for (const entry of liveJobLogEntries(entries)) {
     const params = reportParamsFromLogEntry(entry);
     if (params) {
       reports.push(params);

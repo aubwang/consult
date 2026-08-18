@@ -222,6 +222,22 @@ export function profileRejectsResume(registryId: string | undefined): boolean {
 }
 
 /**
+ * Whether Consult will deliver mid-Job guidance to this Profile (ADR-0040).
+ * True for every registry Profile in v1: steering is a `session/cancel`
+ * followed by a new prompt on the *same live Session*, not a resume, so none
+ * of `profileRejectsResume`'s persisted-approval concerns apply and no
+ * Session state is reopened. What would flip this to false is an ACP adapter
+ * that cannot survive `session/cancel` and be prompted again — one that closes
+ * or wedges the Session on cancel, resolves the cancelled prompt without ever
+ * reporting a stop, or refuses a second `session/prompt` on a Session it has
+ * already cancelled. Per-agent native mid-turn injection would land behind
+ * this same seam without changing the CLI contract.
+ */
+export function profileSupportsSteer(_registryId: string | undefined): boolean {
+  return true;
+}
+
+/**
  * Environment that points codex-acp at the Codex CLI Consult pinned during
  * setup. codex-acp spawns `$CODEX_PATH app-server` when the variable is set and
  * otherwise resolves `@openai/codex/bin/codex.js` through the npm tree around

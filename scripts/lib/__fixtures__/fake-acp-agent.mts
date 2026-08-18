@@ -386,6 +386,24 @@ function handleMessage(message: FakeAgentMessage): void {
       });
       return;
     }
+    if (scenario === "prompt-steer") {
+      // The first prompt stays in flight until session/cancel settles it as
+      // cancelled; the steered re-prompt answers normally.
+      if (promptCount > 1) {
+        writeUpdate(message.params.sessionId, "steered");
+        writeMessage({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            stopReason: "end_turn",
+          },
+        });
+        return;
+      }
+      writeUpdate(message.params.sessionId, "working");
+      cancellablePrompt = message;
+      return;
+    }
     if (scenario === "prompt-first-resolve-second-cancel-ack") {
       if (promptCount === 1) {
         writeMessage({
@@ -562,6 +580,7 @@ function handleMessage(message: FakeAgentMessage): void {
     }
     if (
       (scenario === "prompt-cancel-ack" ||
+        scenario === "prompt-steer" ||
         scenario === "prompt-first-resolve-second-cancel-ack" ||
         AUTO_APPROVED_EDIT_SCENARIOS.has(scenario) ||
         CLAUDE_STYLE_EDIT_SCENARIOS.has(scenario)) &&

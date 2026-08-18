@@ -6,10 +6,11 @@ import {
   unsupportedFlagError,
 } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
-import { readJobLogEntries } from "../job-log-entries.mts";
+import { liveJobLogEntries, readJobLogEntries } from "../job-log-entries.mts";
 import { isFinalStatus, readWorkspaceJobRecord } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
-import { REPORT_TYPES, liveReportParams } from "../job-reports.mts";
+import { REPORT_TYPES, reportParamsFromLogEntry } from "../job-reports.mts";
+import { steerGuidancePreview, steerParamsFromLogEntry } from "../job-steer.mts";
 import { workspaceRootResolver } from "./invocation-context.mts";
 import { jobLookupErrorResult } from "./job-record-errors.mts";
 import { pollUntilFinalRecord } from "./job-poll.mts";
@@ -27,8 +28,11 @@ export const LIFECYCLE_EVENT_TYPES: readonly string[] = Object.freeze([
   "terminal",
 ]);
 
+export const STEER_EVENT_TYPE = "steer";
+
 const EVENT_TYPES: readonly string[] = Object.freeze([
   ...REPORT_TYPES,
+  STEER_EVENT_TYPE,
   ...LIFECYCLE_EVENT_TYPES,
 ]);
 
@@ -200,10 +204,13 @@ async function readEvents(
   return filterEvents(jobEvents(record, entries), filter);
 }
 
-// A Job only accepts reports while it is running, so file order places every
-// admitted report between the running and terminal transitions. Deriving seq
-// here rather than storing it keeps each append a single independent line, and
-// liveReportParams drops any line that raced past finalization.
+// A Job only accepts reports and steers while it is running, so file order
+// places every admitted one between the running and terminal transitions.
+// Deriving seq here rather than storing it keeps each append a single
+// independent line, and liveJobLogEntries drops anything that raced past
+// finalization. Reports and steers share one sequence space because they are
+// one ordered stream of a Job's interim events: a reader resuming with --since
+// must not be able to skip a steer by having read a report past it.
 export function jobEvents(record: JobRecord, entries: readonly unknown[]): JobEvent[] {
   const events: JobEvent[] = [];
   if (typeof record.submittedAt === "string") {
@@ -213,16 +220,33 @@ export function jobEvents(record: JobRecord, entries: readonly unknown[]): JobEv
     events.push({ kind: "lifecycle", type: "running", at: record.startedAt });
   }
   let seq = 0;
-  for (const params of liveReportParams(entries)) {
-    seq += 1;
-    events.push({
-      kind: "report",
-      type: params.type,
-      at: params.at,
-      seq,
-      message: params.message,
-      ...("data" in params ? { data: params.data } : {}),
-    });
+  for (const entry of liveJobLogEntries(entries)) {
+    const report = reportParamsFromLogEntry(entry);
+    if (report) {
+      seq += 1;
+      events.push({
+        kind: "report",
+        type: report.type,
+        at: report.at,
+        seq,
+        message: report.message,
+        ...("data" in report ? { data: report.data } : {}),
+      });
+      continue;
+    }
+    const steer = steerParamsFromLogEntry(entry);
+    if (steer) {
+      seq += 1;
+      // The event carries a bounded preview, not the whole guidance: the full
+      // text is one line up in `consult logs`.
+      events.push({
+        kind: STEER_EVENT_TYPE,
+        type: STEER_EVENT_TYPE,
+        at: steer.at,
+        seq,
+        message: steerGuidancePreview(steer.guidance),
+      });
+    }
   }
   if (isFinalStatus(record.status)) {
     events.push({
@@ -238,8 +262,9 @@ export function jobEvents(record: JobRecord, entries: readonly unknown[]): JobEv
   return events;
 }
 
-// --since addresses the report stream only; lifecycle transitions have no seq
-// and are always replayed so a reconnecting reader still learns the Job ended.
+// --since addresses the sequenced stream only; lifecycle transitions have no
+// seq and are always replayed so a reconnecting reader still learns the Job
+// ended.
 function filterEvents(events: readonly JobEvent[], filter: EventFilter): JobEvent[] {
   return events.filter((event) => {
     if (filter.type !== undefined && event.type !== filter.type) {
@@ -250,12 +275,12 @@ function filterEvents(events: readonly JobEvent[], filter: EventFilter): JobEven
 }
 
 function eventKey(event: JobEvent): string {
-  return event.seq === undefined ? `lifecycle:${event.type}` : `report:${event.seq}`;
+  return event.seq === undefined ? `lifecycle:${event.type}` : `event:${event.seq}`;
 }
 
 function renderEvent(event: JobEvent): string {
   const at = event.at || "-";
-  if (event.kind === "report") {
+  if (event.kind === "report" || event.kind === STEER_EVENT_TYPE) {
     const data = event.data === undefined ? "" : `    data: ${JSON.stringify(event.data)}\n`;
     return `[${at}] #${event.seq} ${event.type}: ${singleLine(event.message ?? "")}\n${data}`;
   }

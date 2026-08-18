@@ -210,6 +210,19 @@ export async function runPromptTurn({
     });
   });
 
+  // Guidance accepted mid-turn by `consult/steer` (ADR-0040). The Broker meters
+  // and orders the line; persisting it here — on the same chain as the updates
+  // — keeps it in file order between the updates it interrupted, with one
+  // writer per Job log.
+  client.on("consult/steer", (notification) => {
+    notificationChain = notificationChain.then(async () => {
+      await appendLogLine(workspaceRoot, jobRecord.jobId!, {
+        method: "consult/steer",
+        params: notification,
+      }).catch(reportWriteFailure);
+    });
+  });
+
   client.on("consult/finalized", (notification) => {
     finalizedSeen = true;
     const finalizedNotification = notification as FinalizedNotification;

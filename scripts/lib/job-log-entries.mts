@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 
 import { jobLogPath } from "./job-records.mts";
+import { isRecord } from "./objects.mts";
+
+const FINALIZED_LOG_METHOD = "consult/finalized";
 
 export interface ParsedJobLog {
   entries: unknown[];
@@ -66,6 +69,22 @@ export function parseJobLog(
     }
   }
   return { entries, lineCount: lines.length };
+}
+
+// A Job's derived event stream ends where its finalization line does. The log
+// is multi-writer by design, so a line can land after `consult/finalized`;
+// voiding those at read time is what makes the derived stream deterministic,
+// rather than any check a writer could perform (ADR-0039). Reports and steers
+// share this window, so they share one place that defines it.
+export function liveJobLogEntries(entries: readonly unknown[]): unknown[] {
+  const live: unknown[] = [];
+  for (const entry of entries) {
+    if (isRecord(entry) && entry.method === FINALIZED_LOG_METHOD) {
+      break;
+    }
+    live.push(entry);
+  }
+  return live;
 }
 
 async function defaultReadLogFile(path: string): Promise<string> {
