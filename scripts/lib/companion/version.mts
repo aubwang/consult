@@ -7,13 +7,18 @@ import { fileURLToPath } from "node:url";
 // layout. Walk up until a package.json with a version appears rather than
 // hard-coding either depth.
 export function resolvePackageVersion(moduleUrl: string = import.meta.url): string {
+  const root = resolvePackageRoot(moduleUrl);
+  return root ? readVersion(path.join(root, "package.json")) ?? "unknown" : "unknown";
+}
+
+// The directory of the nearest package.json carrying a version, which is the
+// package root in both the checkout and the installed layout.
+export function resolvePackageRoot(moduleUrl: string = import.meta.url): string | null {
   let directory = path.dirname(fileURLToPath(moduleUrl));
   for (;;) {
-    const manifestPath = path.join(directory, "package.json");
-    const version = readVersion(manifestPath);
-    if (version) return version;
+    if (readVersion(path.join(directory, "package.json"))) return directory;
     const parent = path.dirname(directory);
-    if (parent === directory) return "unknown";
+    if (parent === directory) return null;
     directory = parent;
   }
 }

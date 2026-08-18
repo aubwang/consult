@@ -2,8 +2,11 @@ import path from "node:path";
 
 import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 
+import type { JobConfinement } from "./job-authority.mts";
 import { isInsideWorkspace } from "./path-safety.mts";
 import type { AgentSandboxMode } from "./process-sandbox.mts";
+import { isApprovedReportExec } from "./report-exec-policy.mts";
+import type { ReportExecDeps } from "./report-exec-policy.mts";
 
 // `other` is included because normalizeKind funnels every unrecognized kind here.
 // Without it, write mode reaches its blanket allow with no confinement at all, so
@@ -91,6 +94,17 @@ export interface DecidePermissionOptions {
   allowFetch?: boolean;
   allowExecute?: boolean;
   sandbox?: AgentSandboxMode;
+  /**
+   * Job confinement (ADR-0042). Defaults to `confined`, which keeps execute
+   * unconditionally denied: the interim-report carve-out is only available to a
+   * Job that already runs under the Host's ambient authority.
+   */
+  confinement?: JobConfinement;
+  /**
+   * Resolvers for the interim-report carve-out. Absent means no carve-out, so a
+   * caller that does not opt in keeps today's behavior exactly.
+   */
+  reportExec?: ReportExecDeps;
 }
 
 export async function decidePermission(
@@ -101,6 +115,8 @@ export async function decidePermission(
     allowFetch = false,
     allowExecute = false,
     sandbox = "off",
+    confinement = "confined",
+    reportExec,
   }: DecidePermissionOptions,
 ): Promise<PermissionDecision> {
   if (mode !== "write" && mode !== "read-only") {
@@ -130,6 +146,18 @@ export async function decidePermission(
     const cwd = (request.toolCall.rawInput as { cwd?: string } | undefined)?.cwd ?? workspaceRoot;
     if (!(await isConfined(cwd, workspaceRoot))) {
       return { allowed: false, reason: `cwd outside workspace: ${cwd}` };
+    }
+    // The one execute a delegated Job may run without an execute grant is
+    // `consult report` on itself (ADR-0042). It is narrow on every axis: only
+    // under inherited authority, only one simple invocation of this very
+    // installation's binary, and only the report subcommand's data flags. Any
+    // uncertainty falls through to the unchanged denials below.
+    if (
+      confinement === "inherit" &&
+      reportExec !== undefined &&
+      (await isApprovedReportExec(request.toolCall.rawInput, { cwd, deps: reportExec }))
+    ) {
+      return { allowed: true };
     }
     if (mode !== "write") {
       return { allowed: false, reason: "execute denied in read-only mode" };
