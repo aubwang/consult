@@ -6,6 +6,8 @@ import { isRecord } from "./objects.mts";
 // interleave whole lines rather than corrupting each other.
 export const REPORT_LOG_METHOD = "consult/report";
 
+const FINALIZED_LOG_METHOD = "consult/finalized";
+
 export const REPORT_TYPES: readonly string[] = Object.freeze([
   "blocked",
   "decision_needed",
@@ -83,6 +85,24 @@ export function reportParamsFromLogEntry(entry: unknown): JobReportParams | null
     message: params.message,
     ...(params.data === undefined ? {} : { data: params.data }),
   };
+}
+
+// A Job's reports end where its finalization line does. The log is
+// multi-writer by design, so a reporter can lose the race and land a line after
+// `consult/finalized`; voiding those at read time is what makes the derived
+// stream deterministic, rather than any check the writer could perform.
+export function liveReportParams(entries: readonly unknown[]): JobReportParams[] {
+  const reports: JobReportParams[] = [];
+  for (const entry of entries) {
+    if (isRecord(entry) && entry.method === FINALIZED_LOG_METHOD) {
+      break;
+    }
+    const params = reportParamsFromLogEntry(entry);
+    if (params) {
+      reports.push(params);
+    }
+  }
+  return reports;
 }
 
 // `consult logs` renders one line per entry, so a multi-line report message is

@@ -270,11 +270,12 @@ Options:
 
 Bounds:
   Messages longer than 4096 UTF-8 bytes are truncated with a marker, and a Job
-  accepts at most 256 reports.
+  accepts at most 256 reports. A Job accepts reports only while it is running.
 
 Exit codes:
   0 recorded, 2 usage error, unknown type, unknown Job, bad or oversized --data,
-  or the report limit is reached, 5 the Job has already finalized.
+  or the report limit is reached, 5 the Job is not running: still queued,
+  already finalized, or finalized during the report.
 
 Examples:
   consult report --type blocked -- "need the staging database URL"

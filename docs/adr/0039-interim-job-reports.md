@@ -49,6 +49,36 @@ require a read-modify-write across processes — precisely the coordination the
 append-only design avoids. Deriving at read time keeps each append independent
 and self-contained.
 
+## The running window, and who enforces it
+
+A Job accepts reports only while its status is `running`. Outside that window a
+report has no correct place in the stream: a line written while the Job is still
+`queued` would render after the `running` transition it actually preceded, and a
+line written after finalization would render before a `terminal` event that had
+already happened.
+
+Both ends are enforced at the reader, because the writer cannot enforce either.
+The log is multi-writer by design — that is the point of a host-agnostic CLI —
+so between any check a reporter performs and its append, the Broker may finalize
+the Job. **The invariant is therefore a read-time rule: a reader stops admitting
+report lines at the Job's `consult/finalized` line.** A report that lost the race
+is void. It is in the file, but it is not in the Job's event stream, it does not
+consume the 256-report budget, and no reader has to guess.
+
+The writer's checks are best effort layered on top of that invariant, and exist
+for the caller's benefit rather than the stream's. `consult report` refuses a Job
+that is not `running` before appending, which catches the ordinary case cheaply,
+and re-reads the record afterwards so a reporter that lost the race is told its
+report was discarded (exit 5) instead of being told it succeeded. Neither check
+is load-bearing: remove both and readers still agree on the same stream.
+
+`consult logs` deliberately does *not* apply the void rule. It is the raw
+transcript — the surface for asking "what was actually written to this file" —
+and hiding a line there would make it lie. `consult events` is the contract
+surface, and it is the one that voids. Applying the rule to `logs` would also
+require carrying the "finalization seen" state across the incremental slices
+`logs --follow` renders, for no gain in a debugging view.
+
 ## Bounds
 
 Enforced by the writer, before the append:
@@ -98,8 +128,9 @@ Consult.
   emits NDJSON: one `{"schemaVersion":1,"jobId":...,"event":{}}` per line.
   Both evolve additively under ADR-0023's rules.
 - Exit code 5 widens from "result requested before finalization" to the general
-  lifecycle-ordering violation, which now also covers a report on a Job that has
-  already finalized. Existing `result` behavior is unchanged.
+  lifecycle-ordering violation, which now also covers a report on a Job outside
+  its running window — still queued, already finalized, or finalized while the
+  report was being written. Existing `result` behavior is unchanged.
 - Report content is a Profile's claim about its own progress, exactly like a Job
   Result. It is data, never instructions, and it is bounded before it is stored.
 - This narrows the "no Host-specific prompt injection or wake-up APIs" non-goal:

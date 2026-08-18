@@ -363,10 +363,15 @@ selects one event type, `--json` emits
 one framed event per line as NDJSON until the Job finalizes. Reports also show
 up in `consult logs` as `[report <type>: <message>]`.
 
+A Job accepts reports only while it is `running`. Reporting before its Profile
+turn starts or after it finalizes exits 5, as does a report that loses a race
+with finalization: readers stop admitting report lines at the Job's
+`consult/finalized` line, so a line that landed after it is void rather than
+part of the stream. `consult logs` stays the raw transcript and still shows it.
+
 Reports are bounded at the write: messages over 4096 UTF-8 bytes are truncated
 with a marker, `--data` over 16384 serialized bytes is rejected rather than
-trimmed, and a Job accepts at most 256 reports. Reporting on a Job that has
-already finalized exits 5.
+trimmed, and a Job accepts at most 256 reports.
 
 Only Jobs launched with `--sandbox inherit` can run `consult` at all, so
 confined Jobs cannot report (ADR-0039). Report content is a Profile's claim
