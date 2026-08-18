@@ -361,22 +361,17 @@ function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
 // ("Error: ...") and still resolves session/prompt with end_turn, so a dead
 // endpoint or revoked login would otherwise persist as a successful Job.
 // Keyed on the agent-reported identity, not the Profile name, so aliased or
-// custom Profiles that launch Copilot are covered too. Chunk boundaries are
-// arbitrary, so the turn's agent text is assembled (bounded to a tail) and
-// matched against known provider-error signatures near the end of the turn;
-// ordinary answers that merely mention "Error:" do not match. The signature
-// list is a stopgap until Copilot reports structured errors over ACP.
-// Classification is match-completion over chunks: a rolling window of recent
-// agent text spans chunk boundaries, and a pending terminal error is marked
-// when a chunk COMPLETES a recognized signature — whether the notice arrived
-// whole (observed live: the CLI injects each notice as one session/update
-// notification) or split across notifications ("Err" + "or: Failed ...").
-// A substantive chunk that completes no signature is answer text and clears
-// the pending error, so a recovered answer — glued, indented, or on its own
-// line — finalizes as end_turn; whitespace-only chunks are inert. Known
-// residual until Copilot reports structured errors: a notice whose
-// CONTINUATION (not its head) streams in later substantive chunks would
-// clear the pending error; that upstream behavior has not been observed.
+// custom Profiles that launch Copilot are covered too. ACP exposes both model
+// deltas and Copilot's session.error events as untagged agent_message_chunk
+// text, so the signature list is a stopgap until Copilot reports structured
+// errors over ACP. A candidate must open at a chunk boundary (after optional
+// whitespace), but a rolling window lets that candidate complete across
+// arbitrary notification boundaries ("Err" + "or: Failed ..."). This keeps a
+// diagnostic preceded by prose in the same chunk from matching. A model delta
+// whose chunk itself opens with the signature remains indistinguishable from a
+// real notice and therefore fails closed. Once recognized, an error stays
+// pending through end_turn: later untagged text cannot prove recovery because
+// it is indistinguishable from a streamed continuation.
 const COPILOT_ERROR_CAPTURE_CHARS = 2000;
 const COPILOT_ERROR_RECENT_CHARS = 512;
 const COPILOT_MODEL_ERROR_SIGNATURE =
@@ -387,26 +382,54 @@ function createCopilotErrorTracker(): {
   pending(): string | null;
 } {
   let recentText = "";
+  let recentChunkStarts: number[] = [];
   let pendingError: string | null = null;
   return {
     observe(chunkText) {
       const appendedStart = recentText.length;
       const candidate = recentText + chunkText;
-      if (chunkText.trim() !== "") {
-        let completed: string | null = null;
-        COPILOT_MODEL_ERROR_SIGNATURE.lastIndex = 0;
-        for (
-          let match = COPILOT_MODEL_ERROR_SIGNATURE.exec(candidate);
-          match !== null;
-          match = COPILOT_MODEL_ERROR_SIGNATURE.exec(candidate)
-        ) {
-          if (match.index + match[0].length > appendedStart) {
-            completed = candidate.slice(match.index, match.index + COPILOT_ERROR_CAPTURE_CHARS);
-          }
+      const candidateChunkStarts = chunkText.length === 0
+        ? recentChunkStarts
+        : [...recentChunkStarts, appendedStart];
+      let completed: string | null = null;
+      COPILOT_MODEL_ERROR_SIGNATURE.lastIndex = 0;
+      for (
+        let match = COPILOT_MODEL_ERROR_SIGNATURE.exec(candidate);
+        match !== null;
+        match = COPILOT_MODEL_ERROR_SIGNATURE.exec(candidate)
+      ) {
+        const completedInChunk = match.index + match[0].length > appendedStart;
+        let nearestChunkStart = -1;
+        for (const start of candidateChunkStarts) {
+          if (start > match.index) break;
+          nearestChunkStart = start;
         }
-        pendingError = completed;
+        const opensChunk = nearestChunkStart >= 0 &&
+          candidate.slice(nearestChunkStart, match.index).trim() === "";
+        if (completedInChunk && opensChunk) {
+          completed = candidate.slice(match.index, match.index + COPILOT_ERROR_CAPTURE_CHARS);
+        }
       }
-      recentText = candidate.slice(-COPILOT_ERROR_RECENT_CHARS);
+      if (completed !== null) pendingError = completed;
+
+      const retainedStart = Math.max(0, candidate.length - COPILOT_ERROR_RECENT_CHARS);
+      let spanningChunkStart = -1;
+      for (const start of candidateChunkStarts) {
+        if (start >= retainedStart) break;
+        spanningChunkStart = start;
+      }
+      const retainedChunkStarts = candidateChunkStarts
+        .filter((start) => start >= retainedStart)
+        .map((start) => start - retainedStart);
+      if (
+        spanningChunkStart >= 0 &&
+        candidate.slice(spanningChunkStart, retainedStart).trim() === "" &&
+        retainedChunkStarts[0] !== 0
+      ) {
+        retainedChunkStarts.unshift(0);
+      }
+      recentText = candidate.slice(retainedStart);
+      recentChunkStarts = retainedChunkStarts;
     },
     pending() {
       return pendingError;

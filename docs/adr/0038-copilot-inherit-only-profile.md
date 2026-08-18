@@ -71,15 +71,16 @@ Launch and policy decisions, verified against `@github/copilot` 1.0.80:
 - Copilot maps model/provider failures to plain `"Error: ..."` message chunks
   and still stops with `end_turn`; Consult fails such turns with
   `COPILOT_MODEL_ERROR` instead of persisting the outage as a successful
-  Job Result. Detection is match-completion over a rolling window that spans
-  chunk boundaries: a chunk that completes a known provider-error signature —
-  whether the notice arrived whole or split across notifications — marks a
-  pending terminal error, whatever its length or internal layout; any later
-  substantive chunk that completes no signature is answer text and clears it,
-  so recovered answers (glued, indented, or on their own line) finalize as
-  end_turn. Known residual until Copilot reports structured errors over ACP:
-  a notice whose continuation, not its head, streams in later substantive
-  chunks would clear the pending error; that has not been observed upstream.
+  Job Result. Detection is match-completion over a rolling window: a candidate
+  must open at a chunk boundary (after optional whitespace), but may complete
+  across later notifications, so a diagnostic preceded by prose in the same
+  chunk does not match while split notices still do. Copilot maps both model
+  deltas and `session.error` to untagged `agent_message_chunk` text; a model
+  delta whose chunk itself opens with the signature remains indistinguishable
+  from a real notice. A completed signature stays pending through `end_turn`,
+  because later text likewise cannot prove recovery rather than diagnostic
+  continuation. Both ambiguities fail closed until Copilot reports structured
+  errors over ACP.
 - ACP `initialize` answers in well under Consult's timeout and advertises
   `authMethods` instead of blocking on a TTY when logged out. Copilot's
   permission options use spec-standard `allow_*`/`reject_*` kinds that

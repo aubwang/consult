@@ -281,7 +281,7 @@ substituting another agent.
 - --resume and --resume-job are rejected: copilot persists tool approvals
   across sessions, so Consult does not reopen them until that state is
   bounded.
-- A turn ending in a Copilot model/provider error notice fails with
+- A turn containing a recognized Copilot model/provider error notice fails with
   COPILOT_MODEL_ERROR instead of completing; check the login (copilot login)
   or the COPILOT_PROVIDER_* endpoint and retry.
 

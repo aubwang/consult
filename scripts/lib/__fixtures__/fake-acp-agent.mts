@@ -302,7 +302,8 @@ function handleMessage(message: FakeAgentMessage): void {
     if (scenario === "prompt-copilot-model-error-split") {
       // One logical notice split across notifications: JSON-RPC delivers each
       // notification whole, but nothing promises one notice per notification.
-      writeUpdate(message.params.sessionId, "Err");
+      // Oversized leading whitespace also exercises rolling-window trimming.
+      writeUpdate(message.params.sessionId, " ".repeat(600) + "Err");
       writeUpdate(message.params.sessionId, "or: Failed to get response fro");
       writeUpdate(message.params.sessionId, "m the AI model after retrying.");
       writeMessage({
@@ -312,13 +313,41 @@ function handleMessage(message: FakeAgentMessage): void {
       });
       return;
     }
-    if (scenario === "prompt-copilot-error-then-glued-answer") {
+    if (scenario === "prompt-copilot-model-error-continuation") {
       writeUpdate(
         message.params.sessionId,
         "Error: Failed to get response from the AI model after retrying.",
       );
-      // No leading newline: concatenated text would glue this onto the
-      // notice's line, but it is a distinct chunk, so the turn recovered.
+      writeUpdate(
+        message.params.sessionId,
+        "\nrequest id: req-123; retry budget exhausted",
+      );
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
+      return;
+    }
+    if (scenario === "prompt-copilot-quotes-model-error") {
+      writeUpdate(
+        message.params.sessionId,
+        'The log message "Error: Failed to get response from the AI model" means the provider was unavailable.',
+      );
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
+      return;
+    }
+    if (scenario === "prompt-copilot-error-then-glued-text") {
+      writeUpdate(
+        message.params.sessionId,
+        "Error: Failed to get response from the AI model after retrying.",
+      );
+      // ACP carries no provenance that could prove this later chunk is a
+      // recovered answer rather than more diagnostic text.
       writeUpdate(message.params.sessionId, "recovered-final-answer");
       writeMessage({
         jsonrpc: "2.0",
@@ -327,7 +356,7 @@ function handleMessage(message: FakeAgentMessage): void {
       });
       return;
     }
-    if (scenario === "prompt-copilot-error-then-indented-answer") {
+    if (scenario === "prompt-copilot-error-then-indented-text") {
       writeUpdate(
         message.params.sessionId,
         "Error: Failed to get response from the AI model after retrying.",
