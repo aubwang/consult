@@ -47,9 +47,12 @@ Launch and policy decisions, verified against `@github/copilot` 1.0.80:
   so the verified binary cannot swap itself out mid-Job.
 - Delegated launches refuse Copilot CLI builds older than 1.0.60
   (`copilotAgentVersionDiagnostic`, enforced at setup, preflight, and every
-  turn, keyed on the agent-reported `agentInfo`): ACP permission flags landed
-  at 0.0.400, but ACP-mode permission behavior kept consolidating until
-  1.0.60, so an older binary can accept the pins without honoring them.
+  turn): ACP permission flags landed at 0.0.400, but ACP-mode permission
+  behavior kept consolidating until 1.0.60, so an older binary can accept
+  the pins without honoring them. The check fails closed: agentInfo is
+  optional in ACP, so a copilot-identity Profile whose agent omits or
+  renames it is refused as unverifiable, while an agent that reports the
+  Copilot identity is enforced under any Profile name.
 - The pins bound model-initiated tool calls only. Copilot's user- and
   repository-configured hooks, custom instructions, and MCP servers execute
   with the Host's ambient authority outside the `shell` permission — during
@@ -68,7 +71,10 @@ Launch and policy decisions, verified against `@github/copilot` 1.0.80:
 - Copilot maps model/provider failures to plain `"Error: ..."` message chunks
   and still stops with `end_turn`; Consult fails such turns with
   `COPILOT_MODEL_ERROR` instead of persisting the outage as a successful
-  Job Result.
+  Job Result. Known provider-error signatures are matched against the
+  assembled turn text, anchored to its end (indented continuation lines
+  allowed), so a recovered or quoted error followed by a real answer still
+  completes. This is a heuristic pending structured errors upstream.
 - ACP `initialize` answers in well under Consult's timeout and advertises
   `authMethods` instead of blocking on a TTY when logged out. Copilot's
   permission options use spec-standard `allow_*`/`reject_*` kinds that

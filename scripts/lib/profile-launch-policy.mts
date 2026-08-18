@@ -145,12 +145,30 @@ export function profileStripEnvKeys(registryId: string | undefined): string[] {
  */
 export const COPILOT_MIN_VERSION = "1.0.60";
 
-export function copilotAgentVersionDiagnostic(capabilities: unknown): string | null {
-  if (typeof capabilities !== "object" || capabilities === null) return null;
-  const agentInfo = (capabilities as { agentInfo?: unknown }).agentInfo;
-  if (typeof agentInfo !== "object" || agentInfo === null) return null;
-  const { name, version } = agentInfo as { name?: unknown; version?: unknown };
-  if (name !== "Copilot") return null;
+export function copilotAgentVersionDiagnostic(
+  registryId: string | undefined,
+  capabilities: unknown,
+): string | null {
+  const agentInfo =
+    typeof capabilities === "object" && capabilities !== null
+      ? (capabilities as { agentInfo?: unknown }).agentInfo
+      : undefined;
+  const info =
+    typeof agentInfo === "object" && agentInfo !== null
+      ? (agentInfo as { name?: unknown; version?: unknown })
+      : null;
+  if (info?.name !== "Copilot") {
+    // ACP makes agentInfo optional, so a copilot Profile whose agent hides or
+    // renames it must fail closed: the floor cannot be verified.
+    if (registryId !== "copilot") return null;
+    return (
+      `Profile registry identity 'copilot' launched an agent that did not ` +
+      `report a Copilot agentInfo identity, so the ${COPILOT_MIN_VERSION} ` +
+      `version floor cannot be verified. ` +
+      `Update with npm install -g @github/copilot@latest and retry`
+    );
+  }
+  const version = info.version;
   if (typeof version === "string" && versionAtLeast(version, COPILOT_MIN_VERSION)) {
     return null;
   }

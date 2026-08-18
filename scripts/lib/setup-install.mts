@@ -189,7 +189,10 @@ export async function installAndVerify({
     // The handshake reports the agent's own identity and version; a Copilot
     // binary older than the supported floor would accept the launch pins
     // without honoring them, so it is refused before the Profile is recorded.
-    const versionDiagnostic = copilotAgentVersionDiagnostic(agent.capabilities);
+    const versionDiagnostic = copilotAgentVersionDiagnostic(
+      registryEntry.id,
+      agent.capabilities,
+    );
     await agent.dispose();
     if (versionDiagnostic !== null) {
       return {

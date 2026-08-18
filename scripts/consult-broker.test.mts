@@ -168,6 +168,30 @@ test("consult/run fails a Copilot turn from a binary older than the supported fl
   }
 });
 
+test("consult/run fails a Copilot turn whose terminal error carries a long diagnostic", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-model-error-long"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-copilot-model-error-long",
+      prompt: "respond with exactly: alive",
+      profile: "copilot",
+      mode: "read-only",
+    });
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "failed");
+    assert.match(finalized.errorMessage, /COPILOT_MODEL_ERROR/u);
+  } finally {
+    await client.close();
+  }
+});
+
 test("consult/run completes a Copilot turn whose error notice is followed by an answer", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",

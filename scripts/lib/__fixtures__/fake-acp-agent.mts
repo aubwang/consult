@@ -170,7 +170,7 @@ function handleMessage(message: FakeAgentMessage): void {
   }
 
   if (message.method === "session/new") {
-    if (scenario === "new-session-auth-error") {
+    if (scenario.endsWith("new-session-auth-error")) {
       writeMessage({
         jsonrpc: "2.0",
         id: message.id,
@@ -298,8 +298,30 @@ function handleMessage(message: FakeAgentMessage): void {
       return;
     }
     if (scenario === "prompt-copilot-error-then-answer") {
-      writeUpdate(message.params.sessionId, "Error: transient provider hiccup.");
-      writeUpdate(message.params.sessionId, "recovered-final-answer");
+      writeUpdate(
+        message.params.sessionId,
+        "Error: Failed to get response from the AI model after retrying.",
+      );
+      writeUpdate(
+        message.params.sessionId,
+        "\nRecovered: the provider came back, so here is the real answer.",
+      );
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
+      return;
+    }
+    if (scenario === "prompt-copilot-model-error-long") {
+      writeUpdate(
+        message.params.sessionId,
+        "Error: Failed to get response from the AI model after retrying.",
+      );
+      writeUpdate(
+        message.params.sessionId,
+        `\n  ${"diagnostic detail follows and keeps going. ".repeat(20)}`,
+      );
       writeMessage({
         jsonrpc: "2.0",
         id: message.id,
@@ -522,7 +544,7 @@ function capabilitiesForScenario(currentScenario: string): AgentCapabilities {
 }
 
 function agentInfoForScenario(currentScenario: string): { agentInfo?: AgentInfo } {
-  if (currentScenario.startsWith("prompt-copilot-")) {
+  if (currentScenario.startsWith("prompt-copilot-") || currentScenario.startsWith("copilot-")) {
     return {
       agentInfo: {
         name: "Copilot",

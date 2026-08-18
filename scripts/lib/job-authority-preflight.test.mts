@@ -162,7 +162,7 @@ test("inherited probe creates a session for copilot and fails on auth errors", a
     authority: INHERIT,
     profileLaunch: {
       binary: process.execPath,
-      args: [fakeAgentPath, "sessions", "new-session-auth-error"],
+      args: [fakeAgentPath, "sessions", "copilot-new-session-auth-error"],
       env: {},
     },
   });
@@ -180,11 +180,31 @@ test("inherited probe creates a session for copilot and fails on auth errors", a
     authority: INHERIT,
     profileLaunch: {
       binary: process.execPath,
-      args: [fakeAgentPath, "sessions", "default"],
+      args: [fakeAgentPath, "sessions", "copilot-ok"],
       env: {},
     },
   });
   assert.deepEqual(authenticated, { ok: true, authority: INHERIT });
+});
+
+test("inherited probe refuses a copilot Profile whose agent hides its identity", async () => {
+  const result = await probeInheritedProfileLaunch({
+    workspaceRoot: process.cwd(),
+    profile: "copilot",
+    profileRegistryId: "copilot",
+    platform: "linux",
+    authority: INHERIT,
+    profileLaunch: {
+      binary: process.execPath,
+      args: [fakeAgentPath, "sessions", "default"],
+      env: {},
+    },
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.diagnostic.code, "AUTHORITY_PREFLIGHT_FAILED");
+    assert.match(result.diagnostic.message, /version floor cannot be verified/u);
+  }
 });
 
 test("inherited probe refuses a Copilot agent older than the supported floor", async () => {

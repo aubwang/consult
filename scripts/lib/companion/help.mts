@@ -272,8 +272,8 @@ substituting another agent.
   and read-only is cooperative. Consult launches copilot with --deny-tool
   pins matched to the Job mode (shell and url always, write unless the Job
   grants writes), removes ambient COPILOT_ALLOW_ALL, pins --no-auto-update,
-  and refuses Copilot CLI builds older than 1.0.60 — so saved allow-all
-  approvals cannot silently bypass the Job Authority.
+  and refuses builds older than 1.0.60 or without a verifiable version — so
+  saved allow-all approvals cannot silently bypass the Job Authority.
 - The pins govern model tool calls only: Copilot hooks, custom instructions,
   and user-configured MCP servers still run with the Host's ambient
   authority.

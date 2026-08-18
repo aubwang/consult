@@ -176,8 +176,9 @@ or newer). If a `copilot` binary is already on PATH, setup adopts it instead of
 installing over it. The Copilot CLI serves ACP itself via `copilot --acp`, so
 there is no separate adapter to install. Copilot CLI 1.0.60 or newer is
 required — setup, doctor, and every delegated turn refuse older builds whose
-ACP permission handling predates the launch pins Consult relies on, and
-delegated launches pin `--no-auto-update`.
+ACP permission handling predates the launch pins Consult relies on, refuse
+agents that do not report a verifiable Copilot version, and pin
+`--no-auto-update` on delegated launches.
 
 Authenticate before the first delegated turn: run `copilot` once and use
 `/login`, or set `COPILOT_GITHUB_TOKEN` (a fine-grained personal access token
