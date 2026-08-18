@@ -1,19 +1,28 @@
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 import {
+  commandTokens,
   isApprovedReportExec,
   isReportArgv,
-  reportExecArgv,
   resolveConsultBinPath,
   tokenizeCommandString,
 } from "./report-exec-policy.mts";
 
 const REAL_BIN = "/opt/consult/bin/consult";
-const WORKSPACE = "/work";
+// The wrapper's trust anchor is a real path so the Workspace-containment check
+// resolves against a real filesystem, as it does in production.
+const SYSTEM_BASH = "/bin/bash";
+const PATH_BASH = "/usr/bin/bash";
+const WORKSPACE = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "consult-exec-ws-")));
+
+after(() => {
+  fs.rmSync(WORKSPACE, { recursive: true, force: true });
+});
 
 // Every denial below is a denial of something a hostile or confused Job could
 // actually send, so the assertions name the construct rather than the shape.
@@ -155,6 +164,95 @@ test("only the report subcommand is approved", async () => {
   }
 });
 
+// The wrapper is a program that actually runs, so trusting it by basename
+// approved whatever ./bash happened to be while the argv check only ever looked
+// at the consult invocation inside it.
+test("a workspace-local bash imposter denies however it is spelled", async () => {
+  const denied = [
+    ["./bash", "-lc", `${REAL_BIN} report --type progress -- ok`],
+    [`${WORKSPACE}/bash`, "-lc", `${REAL_BIN} report --type progress -- ok`],
+    [`${WORKSPACE}/tools/bash`, "-lc", `${REAL_BIN} report --type progress -- ok`],
+  ];
+
+  for (const command of denied) {
+    assert.equal(await approve({ command }), false, JSON.stringify(command));
+  }
+  // The string form goes through the same check.
+  assert.equal(
+    await approve({ command: `./bash -lc "${REAL_BIN} report --type progress -- ok"` }),
+    false,
+  );
+});
+
+test("an absolute path to the canonical system bash is approved", async () => {
+  const approved = await approve({
+    command: [SYSTEM_BASH, "-lc", `${REAL_BIN} report --type progress -- ok`],
+  });
+  const impostorAbsolute = await approve({
+    command: ["/opt/evil/bash", "-lc", `${REAL_BIN} report --type progress -- ok`],
+  });
+
+  assert.equal(approved, true);
+  assert.equal(impostorAbsolute, false);
+});
+
+// A PATH the delegate can influence must not be able to nominate the anchor.
+test("a bash reached through a Workspace PATH entry denies", async (t) => {
+  const bin = path.join(WORKSPACE, "poisoned-bin");
+  const planted = path.join(bin, "bash");
+  await fsp.mkdir(bin, { recursive: true });
+  await fsp.writeFile(planted, "#!/bin/sh\n", { mode: 0o755 });
+  t.after(async () => {
+    await fsp.rm(bin, { recursive: true, force: true });
+  });
+  const deps = hostDeps({
+    realpath: async (target: string) => target,
+    isExecutableFile: async (target: string) => target === planted,
+    pathEnv: bin,
+  });
+
+  const bare = await approve(
+    { command: ["bash", "-lc", `${REAL_BIN} report --type progress -- ok`] },
+    deps,
+  );
+  const absolute = await approve(
+    { command: [planted, "-lc", `${REAL_BIN} report --type progress -- ok`] },
+    deps,
+  );
+
+  assert.equal(bare, false, "the anchor itself must not live inside the Workspace");
+  assert.equal(absolute, false);
+});
+
+test("a wrapper that cannot be resolved denies", async () => {
+  const command = ["bash", "-lc", `${REAL_BIN} report --type progress -- ok`];
+  const noBashOnPath = await approve({ command }, hostDeps({ pathEnv: "" }));
+  const unresolvable = await approve(
+    { command },
+    hostDeps({
+      realpath: async (target: string) => {
+        if (target === PATH_BASH) throw new Error("ENOENT");
+        return target;
+      },
+    }),
+  );
+
+  assert.equal(noBashOnPath, false);
+  assert.equal(unresolvable, false);
+});
+
+// Widening the wrapper allowlist would mean verifying more binaries, so this
+// fix recognizes bash only; every other shell keeps denying as a leading name.
+test("shells other than bash are not unwrapped", async () => {
+  for (const shell of ["sh", "zsh", "dash", "ksh", "/bin/sh"]) {
+    assert.equal(
+      await approve({ command: [shell, "-lc", `${REAL_BIN} report --type progress -- ok`] }),
+      false,
+      shell,
+    );
+  }
+});
+
 test("a workspace-local consult imposter denies", async () => {
   const imposter = await approve({ command: ["./consult", "report", "--type", "progress"] });
   const nested = await approve({
@@ -168,24 +266,24 @@ test("a workspace-local consult imposter denies", async () => {
 // npm global installs put a symlink on PATH, so identity has to be decided
 // after resolving both sides, not by comparing spellings.
 test("a symlink to the real consult is approved and a second install is not", async (t) => {
-  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "consult-exec-")));
+  const dir = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), "consult-exec-")));
   const realBin = path.join(dir, "real-consult");
   const link = path.join(dir, "consult-link");
   const other = path.join(dir, "other-consult");
-  await fs.writeFile(realBin, "#!/bin/sh\n", { mode: 0o755 });
-  await fs.writeFile(other, "#!/bin/sh\n", { mode: 0o755 });
-  await fs.symlink(realBin, link);
+  await fsp.writeFile(realBin, "#!/bin/sh\n", { mode: 0o755 });
+  await fsp.writeFile(other, "#!/bin/sh\n", { mode: 0o755 });
+  await fsp.symlink(realBin, link);
   t.after(async () => {
-    await fs.rm(dir, { recursive: true, force: true });
+    await fsp.rm(dir, { recursive: true, force: true });
   });
 
-  const viaSymlink = await isApprovedReportExec(
+  const viaSymlink = await approve(
     { command: [link, "report", "--type", "progress", "--", "ok"] },
-    { cwd: WORKSPACE, deps: { consultBinPath: async () => realBin } },
+    hostDeps({ consultBinPath: async () => realBin, realpath: undefined }),
   );
-  const viaOther = await isApprovedReportExec(
+  const viaOther = await approve(
     { command: [other, "report", "--type", "progress", "--", "ok"] },
-    { cwd: WORKSPACE, deps: { consultBinPath: async () => realBin } },
+    hostDeps({ consultBinPath: async () => realBin, realpath: undefined }),
   );
 
   assert.equal(viaSymlink, true);
@@ -193,30 +291,18 @@ test("a symlink to the real consult is approved and a second install is not", as
 });
 
 test("a bare name resolves through PATH and must still be the same installation", async () => {
-  const deps = {
-    consultBinPath: async () => REAL_BIN,
+  const deps = hostDeps({
     realpath: async (target: string) =>
       target === "/usr/local/bin/consult" ? REAL_BIN : target,
     isExecutableFile: async (target: string) =>
       target === "/usr/local/bin/consult" || target === "/usr/bin/consult",
     pathEnv: "/usr/local/bin:/usr/bin",
-  };
+  });
+  const command = { command: ["consult", "report", "--type", "progress", "--", "ok"] };
 
-  const resolved = await isApprovedReportExec(
-    { command: ["consult", "report", "--type", "progress", "--", "ok"] },
-    { cwd: WORKSPACE, deps },
-  );
-  const shadowed = await isApprovedReportExec(
-    { command: ["consult", "report", "--type", "progress", "--", "ok"] },
-    {
-      cwd: WORKSPACE,
-      deps: { ...deps, pathEnv: "/usr/bin" },
-    },
-  );
-  const absent = await isApprovedReportExec(
-    { command: ["consult", "report", "--type", "progress", "--", "ok"] },
-    { cwd: WORKSPACE, deps: { ...deps, pathEnv: "" } },
-  );
+  const resolved = await approve(command, deps);
+  const shadowed = await approve(command, { ...deps, pathEnv: "/usr/bin" });
+  const absent = await approve(command, { ...deps, pathEnv: "" });
 
   assert.equal(resolved, true);
   assert.equal(shadowed, false, "a different consult on PATH is not this installation");
@@ -224,9 +310,9 @@ test("a bare name resolves through PATH and must still be the same installation"
 });
 
 test("an unknown consult entry point denies every command", async () => {
-  const approved = await isApprovedReportExec(
+  const approved = await approve(
     { command: [REAL_BIN, "report", "--type", "progress", "--", "ok"] },
-    { cwd: WORKSPACE, deps: { consultBinPath: async () => null } },
+    hostDeps({ consultBinPath: async () => null }),
   );
 
   assert.equal(approved, false);
@@ -283,14 +369,20 @@ test("an argv array carries message text a shell would treat as an operator", as
   assert.equal(approved, true);
 });
 
-test("reportExecArgv reports the argv it would approve for reuse in diagnostics", () => {
-  assert.deepEqual(reportExecArgv({ command: ["bash", "-lc", "c report --type progress"] }), [
+test("commandTokens gates rawInput and returns the pre-unwrap tokens", () => {
+  assert.deepEqual(commandTokens({ command: ["bash", "-lc", "c report"] }), [
+    "bash",
+    "-lc",
+    "c report",
+  ]);
+  assert.deepEqual(commandTokens({ command: "c report --type progress" }), [
     "c",
     "report",
     "--type",
     "progress",
   ]);
-  assert.equal(reportExecArgv({ command: ["bash", "-lc", "c delegate"] }), null);
+  assert.equal(commandTokens({ command: ["c"], env: { A: "1" } }), null);
+  assert.equal(commandTokens("c report"), null);
 });
 
 test("isReportArgv mirrors how consult itself parses the flags", () => {
@@ -309,17 +401,24 @@ test("resolveConsultBinPath finds this installation's own entry point", async ()
 
   assert.ok(resolved, "expected the running installation to have a bin/consult");
   assert.equal(path.basename(resolved), "consult");
-  assert.equal(resolved, await fs.realpath(resolved));
+  assert.equal(resolved, await fsp.realpath(resolved));
 });
 
-async function approve(rawInput: unknown): Promise<boolean> {
-  return await isApprovedReportExec(rawInput, {
-    cwd: WORKSPACE,
-    deps: {
-      consultBinPath: async () => REAL_BIN,
-      realpath: async (target: string) => target,
-      isExecutableFile: async () => false,
-      pathEnv: "",
-    },
-  });
+// Models the ordinary host: bash is on PATH at /usr/bin/bash, symlinked to the
+// system /bin/bash, and neither is inside the Workspace.
+function hostDeps(overrides: Partial<Parameters<typeof isApprovedReportExec>[1]["deps"]> = {}) {
+  return {
+    consultBinPath: async () => REAL_BIN,
+    realpath: async (target: string) => (target === PATH_BASH ? SYSTEM_BASH : target),
+    isExecutableFile: async (target: string) => target === PATH_BASH,
+    pathEnv: "/usr/bin:/bin",
+    ...overrides,
+  };
+}
+
+async function approve(
+  rawInput: unknown,
+  deps: Parameters<typeof isApprovedReportExec>[1]["deps"] = hostDeps(),
+): Promise<boolean> {
+  return await isApprovedReportExec(rawInput, { cwd: WORKSPACE, workspaceRoot: WORKSPACE, deps });
 }

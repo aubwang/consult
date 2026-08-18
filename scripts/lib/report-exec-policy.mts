@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { isRecord } from "./objects.mts";
+import { isInsideWorkspace } from "./path-safety.mts";
 import { resolvePackageRoot } from "./companion/version.mts";
 
 // ADR-0042. Execute is denied for every Job, with exactly one carve-out: a Job
@@ -17,9 +18,15 @@ export const REPORT_EXEC_SUBCOMMAND = "report";
 // into another Job's event stream.
 const ALLOWED_REPORT_FLAGS = new Set(["--type", "--message", "--data"]);
 
+// Names that deny outright when they lead a command: approving a shell means
+// approving whatever script it is handed.
 const SHELL_BASENAMES = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-// Only the two spellings that mean "run exactly this one script string".
-// Anything else (-i, -s, -e, extra options) changes how the script is read.
+// The one wrapper form that is unwrapped instead of denied, because several
+// Profiles route every shell tool call through it. Narrower than the deny list
+// on purpose: recognizing more shells here would mean verifying more binaries.
+const WRAPPER_BASENAME = "bash";
+// Only the spellings that mean "run exactly this one script string". Anything
+// else (-i, -s, -e, extra options) changes how the script is read.
 const SHELL_COMMAND_FLAGS = new Set(["-c", "-lc", "-cl"]);
 
 // rawInput keys that would change what the command actually does. `env` is the
@@ -49,23 +56,35 @@ export interface ReportExecDeps {
 
 export interface ReportExecContext {
   cwd: string;
+  workspaceRoot: string;
   deps: ReportExecDeps;
 }
 
 export async function isApprovedReportExec(
   rawInput: unknown,
-  { cwd, deps }: ReportExecContext,
+  { cwd, workspaceRoot, deps }: ReportExecContext,
 ): Promise<boolean> {
-  const argv = reportExecArgv(rawInput);
-  if (argv === null) {
+  const tokens = commandTokens(rawInput);
+  if (tokens === null) {
+    return false;
+  }
+  const wrapped = wrapperScriptArgv(tokens);
+  // Syntax first, then identity: the filesystem work only runs for something
+  // already shaped like `<binary> report [allowed flags] [-- message]`.
+  const argv = wrapped ?? tokens;
+  if (argv.length === 0 || argv[0] === "" || isShellName(argv[0]) || !isReportArgv(argv)) {
+    return false;
+  }
+  // Both binaries in a wrapped command are executed, so both are verified. The
+  // wrapper was the hole: recognizing `bash` by basename and then discarding it
+  // approved whatever ./bash happened to be.
+  if (wrapped !== null && !(await isCanonicalShell(tokens[0], cwd, workspaceRoot, deps))) {
     return false;
   }
   return await resolvesToConsult(argv[0], cwd, deps);
 }
 
-// Syntax first: the filesystem work only runs for something already shaped like
-// `<binary> report [allowed flags] [-- message]`.
-export function reportExecArgv(rawInput: unknown): string[] | null {
+export function commandTokens(rawInput: unknown): string[] | null {
   if (!isRecord(rawInput)) {
     return null;
   }
@@ -74,15 +93,7 @@ export function reportExecArgv(rawInput: unknown): string[] | null {
       return null;
     }
   }
-  const parsed = commandArgv(rawInput.command);
-  if (parsed === null) {
-    return null;
-  }
-  const argv = unwrapShell(parsed) ?? parsed;
-  if (argv.length === 0 || argv[0] === "" || isShellName(argv[0])) {
-    return null;
-  }
-  return isReportArgv(argv) ? argv : null;
+  return commandArgv(rawInput.command);
 }
 
 // A string command is read by a shell, so it is tokenized under shell rules and
@@ -164,12 +175,14 @@ export function tokenizeCommandString(command: string): string[] | null {
 // `bash -lc "<script>"` is how several Profiles run every shell tool call, so
 // refusing it outright would refuse the feature. It is unwrapped exactly once,
 // only in the three-token form, and only when the script inside is itself one
-// simple invocation - which the same tokenizer decides.
-function unwrapShell(argv: readonly string[]): string[] | null {
-  if (!isShellName(argv[0])) {
+// simple invocation - which the same tokenizer decides. Returning the inner
+// argv only says "this parses as a wrapper"; the wrapper's identity is checked
+// separately, because the wrapper is a program that actually runs.
+function wrapperScriptArgv(argv: readonly string[]): string[] | null {
+  if (argv.length !== 3 || path.basename(argv[0]) !== WRAPPER_BASENAME) {
     return null;
   }
-  if (argv.length !== 3 || !SHELL_COMMAND_FLAGS.has(argv[1])) {
+  if (!SHELL_COMMAND_FLAGS.has(argv[1])) {
     return null;
   }
   const inner = tokenizeCommandString(argv[2]);
@@ -177,6 +190,57 @@ function unwrapShell(argv: readonly string[]): string[] | null {
     return null;
   }
   return inner;
+}
+
+// The wrapper has to clear the same bar as the consult binary: the executor's
+// own bash, resolved outside the Workspace, and not something the delegate
+// planted. The PATH-resolved bash is the trust anchor, so a `./bash` or an
+// absolute path to anything that is not it denies, and a PATH whose bash lives
+// inside the Workspace disqualifies the anchor itself.
+async function isCanonicalShell(
+  candidate: string,
+  cwd: string,
+  workspaceRoot: string,
+  deps: ReportExecDeps,
+): Promise<boolean> {
+  const realpath = deps.realpath ?? ((target: string) => fs.realpath(target));
+  const anchorPath = await findOnPath(WRAPPER_BASENAME, deps);
+  if (anchorPath === null) {
+    return false;
+  }
+  let anchor: string;
+  try {
+    anchor = await realpath(anchorPath);
+  } catch {
+    return false;
+  }
+  if (await isInsideWorkspaceOrUnknown(anchor, workspaceRoot)) {
+    return false;
+  }
+  const target = candidate.includes("/")
+    ? path.resolve(cwd, candidate)
+    : await findOnPath(candidate, deps);
+  if (target === null) {
+    return false;
+  }
+  try {
+    return (await realpath(target)) === anchor;
+  } catch {
+    return false;
+  }
+}
+
+// A containment check that cannot be answered is answered as "inside": an
+// unknown location is not a location we can vouch for.
+async function isInsideWorkspaceOrUnknown(
+  target: string,
+  workspaceRoot: string,
+): Promise<boolean> {
+  try {
+    return await isInsideWorkspace(target, workspaceRoot);
+  } catch {
+    return true;
+  }
 }
 
 function isShellName(candidate: string): boolean {
