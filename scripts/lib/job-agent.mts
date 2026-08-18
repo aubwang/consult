@@ -181,7 +181,7 @@ export async function startJobAgent(
 }
 
 export interface AgentTurnContext {
-  config: { cwd: string };
+  config: { cwd: string; profileRegistryId?: string };
   ensureAgent(
     authority: JobAuthority,
     jobId?: string | null,
@@ -215,7 +215,10 @@ export async function runAgentJobTurn(
   if (job.status !== "running") {
     return;
   }
-  const versionDiagnostic = copilotAgentVersionDiagnostic(agent.capabilities);
+  const versionDiagnostic = copilotAgentVersionDiagnostic(
+    ctx.config.profileRegistryId ?? params.profile,
+    agent.capabilities,
+  );
   if (versionDiagnostic !== null) {
     throw copilotVersionError(versionDiagnostic);
   }
@@ -366,12 +369,17 @@ function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
 // matched against known provider-error signatures near the end of the turn;
 // ordinary answers that merely mention "Error:" do not match. The signature
 // list is a stopgap until Copilot reports structured errors over ACP.
-// No line anchor: Copilot's chunks concatenate without separators, so the
-// notice can directly follow earlier text ("...Retrying...Error: ...").
-const COPILOT_TURN_TAIL_CHARS = 2000;
-const COPILOT_MODEL_ERROR_TAIL_WINDOW = 600;
+// No start-of-line anchor: Copilot's chunks concatenate without separators,
+// so the notice can directly follow earlier text ("...Retrying...Error: ...").
+// Anchored to the END of the assembled text instead — the notice's own line
+// plus indented continuation lines and trailing whitespace may follow, but
+// any recovered answer after the notice starts an unindented line and breaks
+// the anchor, so it completes normally. The whole kept tail is scanned; a
+// notice whose continuation exceeds the kept tail loses its head and is
+// missed, so the tail is sized well past any observed diagnostic.
+const COPILOT_TURN_TAIL_CHARS = 8192;
 const COPILOT_MODEL_ERROR_SIGNATURE =
-  /Error: (?:Failed to get response from the AI model|Could not connect to [^\n]{0,120}provider)[^\n]*/u;
+  /Error: (?:Failed to get response from the AI model|Could not connect to [^\n]{0,120}provider)[^\n]*(?:\n[ \t][^\n]*)*[ \t\n]*$/u;
 
 function reportsModelErrorsAsMessages(capabilities: unknown): boolean {
   if (!isRecord(capabilities)) return false;
@@ -386,8 +394,7 @@ function agentMessageChunkText(update: unknown): string | null {
 }
 
 function trailingCopilotModelError(turnTextTail: string): string | null {
-  const tail = turnTextTail.slice(-COPILOT_MODEL_ERROR_TAIL_WINDOW);
-  const match = COPILOT_MODEL_ERROR_SIGNATURE.exec(tail);
+  const match = COPILOT_MODEL_ERROR_SIGNATURE.exec(turnTextTail);
   return match ? match[0].trim() : null;
 }
 

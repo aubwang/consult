@@ -175,7 +175,10 @@ export async function probeInheritedProfileLaunch(
       profileRegistryId: input.profileRegistryId,
       codexPath: input.profileLaunch.codexPath,
     });
-    const versionDiagnostic = copilotAgentVersionDiagnostic(agent.capabilities);
+    const versionDiagnostic = copilotAgentVersionDiagnostic(
+      input.profileRegistryId,
+      agent.capabilities,
+    );
     if (versionDiagnostic !== null) {
       throw new Error(versionDiagnostic);
     }

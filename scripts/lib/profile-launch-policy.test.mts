@@ -111,17 +111,40 @@ test("profileStripEnvKeys removes copilot allow-all and stays inert otherwise", 
 test("copilotAgentVersionDiagnostic enforces the floor from agent identity", () => {
   const copilotInfo = (version: unknown) => ({ agentInfo: { name: "Copilot", version } });
 
-  assert.equal(copilotAgentVersionDiagnostic(copilotInfo(COPILOT_MIN_VERSION)), null);
-  assert.equal(copilotAgentVersionDiagnostic(copilotInfo("1.0.80")), null);
-  assert.match(copilotAgentVersionDiagnostic(copilotInfo("1.0.59"))!, /older than the supported/u);
-  assert.match(copilotAgentVersionDiagnostic(copilotInfo("0.0.421"))!, /older than the supported/u);
-  assert.match(copilotAgentVersionDiagnostic(copilotInfo(undefined))!, /unknown/u);
-  assert.match(copilotAgentVersionDiagnostic(copilotInfo("1.0.79-8"))!, /older than the supported/u);
+  assert.equal(copilotAgentVersionDiagnostic("copilot", copilotInfo(COPILOT_MIN_VERSION)), null);
+  assert.equal(copilotAgentVersionDiagnostic("copilot", copilotInfo("1.0.80")), null);
+  assert.match(
+    copilotAgentVersionDiagnostic("copilot", copilotInfo("1.0.59"))!,
+    /older than the supported/u,
+  );
+  assert.match(
+    copilotAgentVersionDiagnostic("copilot", copilotInfo("0.0.421"))!,
+    /older than the supported/u,
+  );
+  assert.match(copilotAgentVersionDiagnostic("copilot", copilotInfo(undefined))!, /unknown/u);
+  assert.match(
+    copilotAgentVersionDiagnostic("copilot", copilotInfo("1.0.79-8"))!,
+    /older than the supported/u,
+  );
+  // A genuine Copilot behind an aliased or custom Profile is still enforced.
+  assert.match(
+    copilotAgentVersionDiagnostic("my-alias", copilotInfo("1.0.50"))!,
+    /older than the supported/u,
+  );
+});
 
-  assert.equal(copilotAgentVersionDiagnostic(null), null);
-  assert.equal(copilotAgentVersionDiagnostic({}), null);
+test("copilotAgentVersionDiagnostic fails closed when a copilot Profile hides identity", () => {
+  assert.match(copilotAgentVersionDiagnostic("copilot", null)!, /cannot be verified/u);
+  assert.match(copilotAgentVersionDiagnostic("copilot", {})!, /cannot be verified/u);
+  assert.match(
+    copilotAgentVersionDiagnostic("copilot", { agentInfo: { name: "other-agent" } })!,
+    /cannot be verified/u,
+  );
+
+  assert.equal(copilotAgentVersionDiagnostic("codex", null), null);
+  assert.equal(copilotAgentVersionDiagnostic("claude", {}), null);
   assert.equal(
-    copilotAgentVersionDiagnostic({ agentInfo: { name: "other-agent", version: "0.0.1" } }),
+    copilotAgentVersionDiagnostic(undefined, { agentInfo: { name: "other-agent" } }),
     null,
   );
 });

@@ -193,7 +193,7 @@ export function createInlineClient({
     job = acceptedJob;
     runtime.attachJob(acceptedJob, sink);
     runAgentJobTurn(canonicalParams, acceptedJob, {
-      config: { cwd: executionRoot },
+      config: { cwd: executionRoot, profileRegistryId: entry.registryId ?? profile },
       ensureAgent,
       getSession: () => sessionId,
       getSessionState: () => sessionState ?? undefined,
