@@ -149,7 +149,8 @@ transcript ever lands in the main thread:
 ```
 
 Background Jobs compose: `--after <job-id>` chains a dependent prompt onto an
-upstream result, `consult logs --follow` tails a running Job, `--json` makes
+upstream result, `consult logs --follow` tails a running Job, `consult events`
+reads the interim events a Job wrote with `consult report`, `--json` makes
 every result machine-readable, and `--resume` reopens a Profile session for a
 follow-up turn. The [usage reference](docs/USAGE.md) covers all of it.
 

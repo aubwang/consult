@@ -42,7 +42,9 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 - Cross-Profile native conversation transfer.
 - A permanent agent app server or a dependency on Codex app-server APIs.
 - Host-specific prompt injection or wake-up APIs. Portable waiting remains a
-  normal blocking CLI operation.
+  normal blocking CLI operation, and interim Job events are recorded portably
+  (`consult report` / `consult events`, ADR-0039) without Consult delivering,
+  pushing, or waking anything Host-side.
 - Forwarding one Host's private MCP configuration to a Profile.
 - Interactive permission prompting during a Job.
 - Native Windows or macOS x64 process support, or an ambient-authority fallback
@@ -194,6 +196,32 @@ Profile selection, and resume lookup stay under the original Workspace.
 JSON state updates use same-directory temp files, file and directory fsync,
 and atomic rename. There is no shared `jobs.json` index: listing scans
 individual records to avoid a multi-writer index race.
+
+`logs/<job-id>.log` is strict append-only NDJSON with three methods:
+`consult/update` and `consult/finalized` from the Job runtime, and
+`consult/report` from `consult report` (ADR-0039). Report lines are single
+`O_APPEND` writes by an external process; readers drop a partially flushed
+trailing line and re-read, and must ignore methods they do not recognize.
+
+## Interim Job Events
+
+`consult report` appends one typed, bounded interim event to the running Job's
+log: `blocked`, `decision_needed`, `discovery`, or `progress`, with an optional
+JSON payload. The Job comes from `--job` or the injected `CONSULT_PARENT_JOB`,
+and the Workspace from `CONSULT_WORKSPACE` or Git-root detection.
+
+`consult events <job-id>` reads that stream back, deriving a 1-based sequence
+number from the order of report lines and synthesizing `queued`, `running`, and
+`terminal` transitions from the Job record. `--since <seq>` resumes after a
+report already read, `--type` selects one event type, `--json` emits a small
+`{"schemaVersion":1,"jobId":...,"events":[...]}` envelope, and `--follow`
+streams on the same 200 ms record poll as `logs --follow` (NDJSON when combined
+with `--json`, exit 4 on the 30-minute deadline).
+
+Bounds are enforced at the write — 4096-byte messages, 16 KiB serialized data,
+256 reports per Job — because these lines bypass the Broker's persisted-log
+accounting. Reporting requires `--sandbox inherit`, since confined Jobs cannot
+execute `consult` at all.
 
 ## Foreground and Background Execution
 
