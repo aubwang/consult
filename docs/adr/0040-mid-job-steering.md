@@ -44,6 +44,26 @@ on the runtime's Job, deliberately **not** `cancelRequested`: the steer's
 writer — can never be triggered by a steer, and a steered Job cannot end up
 `cancelled` by accident.
 
+Accepting a steer is a **two-phase publish**, because the two halves have
+opposite failure requirements. The pending steer is set *before* the cancel is
+issued: the turn can settle the instant `session/cancel` lands, and a stop
+handler that found nothing pending would finalize the Job as cancelled — the one
+outcome steering must never produce. Everything observable waits until the
+cancel is actually in flight: the log line is published to subscribers and the
+cancel-ack timer is armed only after `cancelPrompt` resolves.
+
+If reaching the agent or delivering the cancel fails, the steer withdraws whole.
+A rejection there means the `session/cancel` notification never left the
+process, so the turn is still running its original prompt and there is nothing
+to be consistent with: the pending steer is cleared, the metered bytes are
+refunded, no timer is armed, and the CLI is told it failed. Without that
+rollback the supervisor would be told the steer failed while the Job went on to
+apply the guidance anyway, the next steer would be refused `STEER_PENDING`
+forever, and an armed timer would eventually fail the Job for not acknowledging
+a cancel that was never sent. The pending steer is withdrawn *by identity* —
+the field holds the steer's own record, not a bare string — so a steer whose
+cancel failed cannot clear a later one that was accepted while it awaited.
+
 Cancellation still wins when it is real. A `consult cancel` that arrives while
 a steer is pending sets `cancelRequested`, and consuming the pending steer then
 returns nothing: the guidance is dropped rather than reopening a turn the
@@ -142,7 +162,10 @@ is a deliberate departure from having the Broker append the file itself: the
 Broker does not otherwise write the per-job log, and appending from a second
 process would put the steer in a racy position relative to the updates it
 interrupted. Routing it through the existing writer makes file order exactly
-delivery order, and keeps one writer per Job log.
+delivery order, and keeps one writer per Job log. Publishing after the cancel
+resolves does not disturb that: the continuation turn cannot start until the
+agent has answered the cancelled prompt, which is I/O, while the publish is the
+already-queued continuation of the same call.
 
 `consult events` synthesizes a `{"kind":"steer","type":"steer"}` event from
 those lines. Reports and steers **share one sequence space**, derived in file

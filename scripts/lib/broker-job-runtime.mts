@@ -17,6 +17,7 @@ import { extractAgentMessageText } from "./session-update-renderer.mts";
 import type { JobAuthority } from "./job-authority.mts";
 import { canonicalizeRunParams } from "./job-agent.mts";
 import { STEER_LOG_METHOD } from "./job-steer.mts";
+import type { JobSteerParams } from "./job-steer.mts";
 import {
   DEFAULT_JOB_LOG_LIMIT_BYTES,
   DEFAULT_JOB_WALL_CLOCK_LIMIT_MS,
@@ -125,9 +126,11 @@ export interface BrokerJob {
    * before the steer's `session/cancel`, and consumed when that turn settles:
    * a turn that stops with a pending steer is re-prompted on the same Session
    * instead of finalizing (ADR-0040). It is deliberately not `cancelRequested`
-   * — a steer must never leave the Job's record cancelled.
+   * — a steer must never leave the Job's record cancelled. The record rather
+   * than the bare guidance string is held so a steer whose cancel failed can
+   * withdraw itself by identity without clobbering a later one.
    */
-  pendingSteer: string | null;
+  pendingSteer: JobSteerParams | null;
   awaitingViolatedTurn: boolean;
   cancelAckTimer: NodeJS.Timeout | null;
   wallClockTimer: NodeJS.Timeout | null;
@@ -470,7 +473,34 @@ export function createBrokerJobRuntime({
         };
       }
       job.persistedLogBytes += steerBytes;
-      job.pendingSteer = guidance;
+      // Two-phase publish. The pending steer has to be set *before* the cancel,
+      // because the turn can settle the instant session/cancel lands and a stop
+      // handler that found nothing pending would finalize the Job as cancelled.
+      // Everything observable — the log line and the cancel-ack timer — waits
+      // until the cancel is actually in flight.
+      job.pendingSteer = params;
+      try {
+        // Reuse the agent that runs this job; a bare ensureAgent() would default
+        // to read-only and restart a sandboxed write-mode agent mid-turn.
+        const currentAgent = await ensureAgent(job.authority);
+        await cancelPrompt(currentAgent.connection, { sessionId: job.sessionId });
+      } catch (error) {
+        // A rejection here means session/cancel was never delivered, so the
+        // original turn is still running its original prompt and this steer can
+        // be withdrawn whole: no log line, no armed timer, no budget charge,
+        // and the next steer is accepted rather than refused STEER_PENDING.
+        // Only withdraw *this* steer — the turn may have settled naturally and
+        // been steered again while this awaited.
+        if (job.pendingSteer === params) {
+          job.pendingSteer = null;
+          job.persistedLogBytes -= steerBytes;
+        }
+        return {
+          ok: false,
+          code: (error as { code?: string }).code ?? "BROKER_ERROR",
+          message: errorMessage(error),
+        };
+      }
       // The subscriber that owns this Job's log persists the line, so a steer
       // lands in file order between the updates it interrupted.
       for (const subscriber of job.subscribers) {
@@ -480,13 +510,11 @@ export function createBrokerJobRuntime({
       // that never acknowledges it fails the Job and taints the Broker exactly
       // as an unacknowledged cancel does.
       startCancelAckTimer(job);
-      const currentAgent = await ensureAgent(job.authority);
-      await cancelPrompt(currentAgent.connection, { sessionId: job.sessionId });
       return { ok: true, at };
     },
     consumePendingSteer(job) {
-      const guidance = job.pendingSteer;
-      if (guidance === null) {
+      const pending = job.pendingSteer;
+      if (pending === null) {
         return null;
       }
       job.pendingSteer = null;
@@ -496,7 +524,7 @@ export function createBrokerJobRuntime({
       if (job.status !== "running" || job.cancelRequested) {
         return null;
       }
-      return guidance;
+      return pending.guidance;
     },
     noteTurnSettled(job) {
       job.awaitingViolatedTurn = false;
