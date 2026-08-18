@@ -471,8 +471,8 @@ boundary.
 ## JSON output
 
 Use `--json` with `delegate`, `review`, `status`, `wait`, `result`, `logs`,
-`chain`, `doctor`, `agents`, `setup`, and `brokers`. Job-bearing commands use a
-versioned envelope:
+`events`, `chain`, `doctor`, `agents`, `setup`, `brokers`, and `capabilities`.
+Job-bearing commands use a versioned envelope:
 
 ```json
 {
@@ -491,6 +491,47 @@ identifies an isolated implementation reviewed by a review Job.
 `wait --json` returns a `jobs` collection of the same payloads. Internal Job
 record fields are not a public API. Status JSON does not embed log tails; use
 `logs --json` when structured updates are explicitly needed.
+
+## Detecting what a build supports
+
+`consult capabilities --json` reports what the installed build can do, so a Host
+never has to run a command to find out whether it exists:
+
+```json
+{
+  "schemaVersion": 1,
+  "version": "1.2.0",
+  "contracts": { "jobResult": 1, "events": 1, "profiles": 1 },
+  "features": {
+    "report": true,
+    "events": true,
+    "steer": true,
+    "nativeReviewProfiles": ["codex"]
+  },
+  "bounds": {
+    "reportMessageBytes": 4096,
+    "reportDataBytes": 16384,
+    "reportsPerJob": 256,
+    "steerGuidanceBytes": 16384
+  }
+}
+```
+
+`contracts` gives the schema version of each machine-readable envelope,
+`features` names the optional commands this build ships, and `bounds` carries
+the limits they enforce, so a Host can size a report or a steer before sending
+it. Without `--json` the same report prints as a short table.
+
+Capabilities is a static self-description like `help` and `version`: it reads no
+Workspace, Job, or Profile state and works outside a Git repository. Builds
+before 1.2.0 have no `capabilities` command and exit 2 with
+`unknown subcommand: capabilities`; treat that as `report`, `events`, and
+`steer` being unavailable. That is the only exit-code probe worth doing, and
+only for pre-1.2 builds (ADR-0041).
+
+Note that `features` describes the build, not a given Job. `steer` still refuses
+an unsteerable Profile or an isolated Job at call time, and `report` still needs
+an inherit-sandbox Job.
 
 ## Host Identity
 
@@ -571,7 +612,7 @@ From there the agent discloses what it needs progressively:
 | `reporting` | Interim Job events: what a running Job can say, and how to read it back. |
 | `steering` | Sending guidance into a Job that is already running, and when to prefer cancelling. |
 | `chains` | Nested delegation, authority ceilings, and lineage. |
-| `contracts` | The semantic report contract, Job Result JSON, and exit codes. |
+| `contracts` | The semantic report contract, Job Result JSON, capabilities JSON, and exit codes. |
 | `guardrails` | Treating results as data, secrets, and never widening authority on failure. |
 
 `consult help --all` prints the whole set in one pass for a Host that wants it

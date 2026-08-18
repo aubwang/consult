@@ -55,6 +55,32 @@ Examples:
   consult doctor --agent codex       # verify the Profile actually launches
 `;
 
+const capabilitiesUsage = `Usage:
+  consult capabilities [--json]
+
+Print what this Consult build supports: its version, the schema version of each
+machine-readable contract, which optional commands exist, and the bounds they
+enforce. This is the supported way for a Host to detect a feature. Probing by
+running a command and reading its exit code cannot tell a missing command apart
+from a bad argument, and older builds did not report a distinguishing version.
+
+Options:
+  --json   Emit the schema-version-1 capabilities report.
+  --help   Print this help instead of reporting capabilities.
+
+Capabilities is a static self-description, like help and version: it reads no
+Workspace, Job, or Profile state and works outside a Git repository.
+
+Examples:
+  consult capabilities
+  consult capabilities --json
+
+Builds before 1.2.0 have no capabilities command and exit 2; treat that as
+"report, events, and steer are unavailable".
+
+See also: consult help contracts
+`;
+
 const delegateUsage = `Usage:
   consult delegate [options] -- <prompt>
   consult delegate [options] --prompt <text>
@@ -430,6 +456,7 @@ Examples:
 const commandUsages: Record<string, string> = {
   agents: agentsUsage,
   brokers: brokersUsage,
+  capabilities: capabilitiesUsage,
   cancel: cancelUsage,
   chain: chainUsage,
   delegate: delegateUsage,

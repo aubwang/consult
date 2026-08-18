@@ -100,6 +100,7 @@ test("dispatch prints the overview for the help subcommand", async () => {
     "logs",
     "chain",
     "brokers",
+    "capabilities",
   ]) {
     assert.match(result.stdout, new RegExp(`\\n  ${command} `, "u"), command);
   }

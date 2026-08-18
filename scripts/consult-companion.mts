@@ -18,6 +18,7 @@ interface CompanionHandler {
 const handlers: Record<string, () => Promise<CompanionHandler>> = {
   setup: () => import("./lib/companion/setup.mts"),
   agents: () => import("./lib/companion/agents.mts"),
+  capabilities: () => import("./lib/companion/capabilities.mts"),
   delegate: () => import("./lib/companion/delegate.mts"),
   doctor: () => import("./lib/companion/doctor.mts"),
   chain: () => import("./lib/companion/chain.mts"),
