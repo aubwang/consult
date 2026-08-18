@@ -281,15 +281,17 @@ function handleMessage(message: FakeAgentMessage): void {
       return;
     }
     if (scenario === "prompt-copilot-model-error") {
+      // The CLI injects each notice as one complete update; the terminal
+      // error's continuation lines ride inside the same chunk.
       writeUpdate(
         message.params.sessionId,
         "Info: Response was interrupted due to a server error. Retrying...",
       );
-      // Deliberately split mid-word across chunk boundaries: chunking is
-      // transport framing, not message framing.
-      writeUpdate(message.params.sessionId, "Err");
-      writeUpdate(message.params.sessionId, "or: Failed to get response fro");
-      writeUpdate(message.params.sessionId, "m the AI model after retrying.");
+      writeUpdate(
+        message.params.sessionId,
+        "Error: Could not connect to local model provider at http://127.0.0.1:9/v1.\n" +
+          "  Check that the service is running and the port is correct.",
+      );
       writeMessage({
         jsonrpc: "2.0",
         id: message.id,
@@ -297,14 +299,29 @@ function handleMessage(message: FakeAgentMessage): void {
       });
       return;
     }
-    if (scenario === "prompt-copilot-error-then-answer") {
+    if (scenario === "prompt-copilot-error-then-glued-answer") {
+      writeUpdate(
+        message.params.sessionId,
+        "Error: Failed to get response from the AI model after retrying.",
+      );
+      // No leading newline: concatenated text would glue this onto the
+      // notice's line, but it is a distinct chunk, so the turn recovered.
+      writeUpdate(message.params.sessionId, "recovered-final-answer");
+      writeMessage({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { stopReason: "end_turn" },
+      });
+      return;
+    }
+    if (scenario === "prompt-copilot-error-then-indented-answer") {
       writeUpdate(
         message.params.sessionId,
         "Error: Failed to get response from the AI model after retrying.",
       );
       writeUpdate(
         message.params.sessionId,
-        "\nRecovered: the provider came back, so here is the real answer.",
+        "  - recovered: here is the indented answer list the prompt asked for",
       );
       writeMessage({
         jsonrpc: "2.0",
@@ -314,13 +331,11 @@ function handleMessage(message: FakeAgentMessage): void {
       return;
     }
     if (scenario === "prompt-copilot-model-error-long") {
+      // One terminal error chunk with >8 KiB of unindented multiline detail.
       writeUpdate(
         message.params.sessionId,
-        "Error: Failed to get response from the AI model after retrying.",
-      );
-      writeUpdate(
-        message.params.sessionId,
-        `\n  ${"diagnostic detail follows and keeps going. ".repeat(20)}`,
+        "Error: Failed to get response from the AI model after retrying.\n" +
+          "stack and request diagnostics follow without indentation\n".repeat(200),
       );
       writeMessage({
         jsonrpc: "2.0",

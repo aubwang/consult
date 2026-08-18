@@ -137,7 +137,7 @@ test("consult/run fails a Copilot turn whose last agent message is a model error
     const finalized = await finalizedPromise;
     assert.equal(finalized.stopReason, "failed");
     assert.match(finalized.errorMessage, /COPILOT_MODEL_ERROR/u);
-    assert.match(finalized.errorMessage, /Failed to get response from the AI model/u);
+    assert.match(finalized.errorMessage, /Could not connect to local model provider/u);
   } finally {
     await client.close();
   }
@@ -168,7 +168,7 @@ test("consult/run fails a Copilot turn from a binary older than the supported fl
   }
 });
 
-test("consult/run fails a Copilot turn whose terminal error carries a long diagnostic", async (t) => {
+test("consult/run fails a Copilot turn whose terminal error carries an oversized unindented diagnostic", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",
     agentArgs: ["sessions", "prompt-copilot-model-error-long"],
@@ -192,18 +192,41 @@ test("consult/run fails a Copilot turn whose terminal error carries a long diagn
   }
 });
 
-test("consult/run completes a Copilot turn whose error notice is followed by an answer", async (t) => {
+test("consult/run completes a Copilot turn recovered by an answer glued to the notice", async (t) => {
   const harness = await startBroker(t, {
     profile: "copilot",
-    agentArgs: ["sessions", "prompt-copilot-error-then-answer"],
+    agentArgs: ["sessions", "prompt-copilot-error-then-glued-answer"],
   });
   const client = await connectBroker(harness.endpoint);
   const finalizedPromise = nextNotification(client, "consult/finalized");
 
   try {
     await client.request("consult/run", {
-      jobId: "job-copilot-error-then-answer",
+      jobId: "job-copilot-error-then-glued-answer",
       prompt: "respond with exactly: recovered-final-answer",
+      profile: "copilot",
+      mode: "read-only",
+    });
+
+    const finalized = await finalizedPromise;
+    assert.equal(finalized.stopReason, "end_turn");
+  } finally {
+    await client.close();
+  }
+});
+
+test("consult/run completes a Copilot turn recovered by an indented answer", async (t) => {
+  const harness = await startBroker(t, {
+    profile: "copilot",
+    agentArgs: ["sessions", "prompt-copilot-error-then-indented-answer"],
+  });
+  const client = await connectBroker(harness.endpoint);
+  const finalizedPromise = nextNotification(client, "consult/finalized");
+
+  try {
+    await client.request("consult/run", {
+      jobId: "job-copilot-error-then-indented-answer",
+      prompt: "respond with an indented list",
       profile: "copilot",
       mode: "read-only",
     });
