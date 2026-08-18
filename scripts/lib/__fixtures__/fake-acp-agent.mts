@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 
@@ -48,6 +48,7 @@ const clientLogPath = process.env.CONSULT_FAKE_AGENT_CLIENT_LOG;
 const methodLogPath = process.env.CONSULT_FAKE_AGENT_METHOD_LOG;
 const envLogPath = process.env.CONSULT_FAKE_AGENT_ENV_LOG;
 const targetPath = process.env.CONSULT_FAKE_AGENT_TARGET_PATH;
+const execCommand = process.env.CONSULT_FAKE_AGENT_EXEC_COMMAND;
 const descendantPidPath = process.env.CONSULT_FAKE_AGENT_DESCENDANT_PID_PATH;
 const AUTO_APPROVED_EDIT_SCENARIOS = new Set([
   "prompt-auto-approved-edit",
@@ -482,6 +483,45 @@ function handleMessage(message: FakeAgentMessage): void {
           result: {
             stopReason: "end_turn",
           },
+        });
+      });
+      return;
+    }
+    // A real Profile asks before it runs a shell command and gives up when the
+    // client rejects, which is why the silent-spawn scenarios above never
+    // exercised the execute permission path. This one behaves like the real
+    // thing: request, then run only what was approved.
+    if (scenario === "prompt-permission-exec-command") {
+      const command = JSON.parse(execCommand ?? "[]") as string[];
+      callClient("session/request_permission", {
+        sessionId: message.params.sessionId,
+        options: permissionOptions(),
+        toolCall: {
+          toolCallId: "call-exec",
+          kind: "execute",
+          rawInput: { command, cwd: targetPath ?? "." },
+        },
+      }, (response) => {
+        logClientObservation("session/request_permission", response);
+        const result = response.result as { outcome?: { optionId?: string } } | undefined;
+        let outcome = "exec rejected";
+        if (result?.outcome?.optionId === "allow") {
+          // spawnSync, not spawn: this fixture drives itself from a blocking
+          // fs.readSync loop, so the event loop never runs and a child-process
+          // callback would never be delivered.
+          const child = spawnSync(command[0], command.slice(1), {
+            cwd: targetPath ?? process.cwd(),
+            stdio: "ignore",
+          });
+          outcome = child.error
+            ? `exec error ${child.error.message}`
+            : `exec allowed exit=${child.status}`;
+        }
+        writeUpdate(message.params.sessionId, outcome);
+        writeMessage({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { stopReason: "end_turn" },
         });
       });
       return;

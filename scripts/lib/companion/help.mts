@@ -480,6 +480,12 @@ passes no id; a Host reporting on someone else's Job passes --job <job-id>.
 Only Jobs launched with --sandbox inherit can run consult at all, so confined
 Jobs cannot report. Say so in a prompt that asks for reports.
 
+An inherit Job needs no execute grant for this. Consult's permission layer
+approves exactly one command without one - this installation's own consult,
+running report, with only --type, --message, --data, and the message after --.
+Everything else about execute stays denied, and --job is not accepted from a
+Job: a Job reports as itself or not at all.
+
 A Host that needs to know whether the build in front of it has report and
 events at all should read consult capabilities --json rather than run a command
 to see whether it exists: an exit code cannot tell a missing command apart from

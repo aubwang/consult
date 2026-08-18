@@ -40,6 +40,7 @@ test("capabilities --json reports the versioned envelope a Host branches on", as
     "report",
     "events",
     "steer",
+    "reportExec",
     "nativeReviewProfiles",
   ]);
   assert.deepEqual(Object.keys(report.bounds), [

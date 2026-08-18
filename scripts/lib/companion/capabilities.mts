@@ -35,6 +35,7 @@ export interface CapabilitiesReport {
     report: boolean;
     events: boolean;
     steer: boolean;
+    reportExec: boolean;
     nativeReviewProfiles: string[];
   };
   bounds: {
@@ -116,6 +117,9 @@ export function capabilitiesReport(
       report: true,
       events: true,
       steer: true,
+      // An inherit-sandbox Job can run `consult report` itself: the permission
+      // layer approves that one execute without an execute grant (ADR-0042).
+      reportExec: true,
       nativeReviewProfiles: registry.agents
         .filter((agent) => agent.advertisesReview === true)
         .map((agent) => agent.id),
@@ -143,6 +147,7 @@ function renderReport(report: CapabilitiesReport): string {
     `report\t${yesNo(report.features.report)}`,
     `events\t${yesNo(report.features.events)}`,
     `steer\t${yesNo(report.features.steer)}`,
+    `reportExec\t${yesNo(report.features.reportExec)}`,
     `nativeReview\t${nativeReview.length > 0 ? nativeReview.join(", ") : "(none)"}`,
     "",
     "bound\tvalue",
