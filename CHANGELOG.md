@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.0](https://github.com/aubwang/consult/compare/v1.0.0...v1.1.0) (2026-08-18)
+
+
+### Features
+
+* add GitHub Copilot CLI as a built-in inherit-only Profile ([c0e984f](https://github.com/aubwang/consult/commit/c0e984f211c6575dc9789b1b6ab670a91479616f))
+
+
+### Bug Fixes
+
+* classify copilot model errors per chunk instead of over assembled text ([98cf8fc](https://github.com/aubwang/consult/commit/98cf8fc3f6c9987eebce4f8a9198d2fd017f8eec))
+* correct copilot permission pins, add version floor, harden error detection ([9394e72](https://github.com/aubwang/consult/commit/9394e720e19d280ed6f2f3c2b92def68603e642f))
+* detect copilot model errors by signature match completion across chunks ([37a260a](https://github.com/aubwang/consult/commit/37a260a779fd182c5f95ba89927c6ebacbd38ea1))
+* fail copilot version checks closed and anchor model-error detection ([3082236](https://github.com/aubwang/consult/commit/3082236a383fba4b38ec7359f24e86705b50111a))
+* harden the copilot Profile against permission bypass and masked failures ([528f249](https://github.com/aubwang/consult/commit/528f249d131f96facdc0edb16282ade17b5bb6ed))
+* make copilot model error detection fail closed ([19168f2](https://github.com/aubwang/consult/commit/19168f22e188530fe6236a1a48f64c7d08b6d31b))
+
 ## [1.0.0](https://github.com/aubwang/consult/compare/v0.12.0...v1.0.0) (2026-08-14)
 
 
