@@ -267,7 +267,7 @@ export async function runAgentJobTurn(
 
   let vulnerableClaudeAsyncSubagentStarted = false;
   const copilotErrorMasquerade = reportsModelErrorsAsMessages(agent.capabilities);
-  let copilotTurnTextTail = "";
+  let copilotPendingErrorChunk: string | null = null;
 
   for await (const event of promptTurn(agent.connection, {
     sessionId,
@@ -282,8 +282,10 @@ export async function runAgentJobTurn(
     }
     if (event.type === "update" && copilotErrorMasquerade) {
       const chunkText = agentMessageChunkText(event.update);
-      if (chunkText !== null) {
-        copilotTurnTextTail = (copilotTurnTextTail + chunkText).slice(-COPILOT_TURN_TAIL_CHARS);
+      if (chunkText !== null && chunkText.trim() !== "") {
+        copilotPendingErrorChunk = COPILOT_MODEL_ERROR_SIGNATURE.test(chunkText)
+          ? chunkText.slice(0, COPILOT_ERROR_CAPTURE_CHARS)
+          : null;
       }
     }
     if (event.type === "stop") {
@@ -296,11 +298,8 @@ export async function runAgentJobTurn(
       if (vulnerableClaudeAsyncSubagentStarted) {
         throw claudeAsyncFinalizationError(agent.capabilities);
       }
-      if (event.stopReason === "end_turn") {
-        const modelError = trailingCopilotModelError(copilotTurnTextTail);
-        if (modelError !== null) {
-          throw copilotModelErrorTurnError(modelError);
-        }
+      if (event.stopReason === "end_turn" && copilotPendingErrorChunk !== null) {
+        throw copilotModelErrorTurnError(copilotPendingErrorChunk);
       }
       // Busy clears in handleRunMessage only after this turn fully settles.
       await ctx.finalizeJob(job, {
@@ -369,17 +368,18 @@ function claudeAsyncFinalizationError(capabilities: unknown): CodedAgentError {
 // matched against known provider-error signatures near the end of the turn;
 // ordinary answers that merely mention "Error:" do not match. The signature
 // list is a stopgap until Copilot reports structured errors over ACP.
-// No start-of-line anchor: Copilot's chunks concatenate without separators,
-// so the notice can directly follow earlier text ("...Retrying...Error: ...").
-// Anchored to the END of the assembled text instead — the notice's own line
-// plus indented continuation lines and trailing whitespace may follow, but
-// any recovered answer after the notice starts an unindented line and breaks
-// the anchor, so it completes normally. The whole kept tail is scanned; a
-// notice whose continuation exceeds the kept tail loses its head and is
-// missed, so the tail is sized well past any observed diagnostic.
-const COPILOT_TURN_TAIL_CHARS = 8192;
+// Classification is per chunk, not over assembled text: the CLI injects each
+// notice as one complete session/update notification (a JSON-RPC string
+// arrives whole; observed live — every "Info:"/"Error:" notice is its own
+// chunk), while model answers stream as separate chunks. A chunk that OPENS
+// with a recognized signature marks a pending terminal error, whatever its
+// length or internal layout; any later non-whitespace chunk — a recovered
+// answer, wherever its text would visually land — clears it. Assembled-text
+// heuristics cannot make this distinction, because concatenation erases the
+// notice/answer boundary.
+const COPILOT_ERROR_CAPTURE_CHARS = 2000;
 const COPILOT_MODEL_ERROR_SIGNATURE =
-  /Error: (?:Failed to get response from the AI model|Could not connect to [^\n]{0,120}provider)[^\n]*(?:\n[ \t][^\n]*)*[ \t\n]*$/u;
+  /^\s*Error: (?:Failed to get response from the AI model|Could not connect to [^\n]{0,120}provider)/u;
 
 function reportsModelErrorsAsMessages(capabilities: unknown): boolean {
   if (!isRecord(capabilities)) return false;
@@ -391,11 +391,6 @@ function agentMessageChunkText(update: unknown): string | null {
   if (!isRecord(update) || update.sessionUpdate !== "agent_message_chunk") return null;
   const content = isRecord(update.content) ? update.content : null;
   return content?.type === "text" && typeof content.text === "string" ? content.text : null;
-}
-
-function trailingCopilotModelError(turnTextTail: string): string | null {
-  const match = COPILOT_MODEL_ERROR_SIGNATURE.exec(turnTextTail);
-  return match ? match[0].trim() : null;
 }
 
 function copilotModelErrorTurnError(errorText: string): CodedAgentError {

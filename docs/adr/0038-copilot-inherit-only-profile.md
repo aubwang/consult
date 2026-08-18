@@ -71,10 +71,12 @@ Launch and policy decisions, verified against `@github/copilot` 1.0.80:
 - Copilot maps model/provider failures to plain `"Error: ..."` message chunks
   and still stops with `end_turn`; Consult fails such turns with
   `COPILOT_MODEL_ERROR` instead of persisting the outage as a successful
-  Job Result. Known provider-error signatures are matched against the
-  assembled turn text, anchored to its end (indented continuation lines
-  allowed), so a recovered or quoted error followed by a real answer still
-  completes. This is a heuristic pending structured errors upstream.
+  Job Result. Detection is chunk-aware rather than text-assembly: the CLI
+  injects each notice as one complete `session/update` notification, so a
+  chunk that opens with a known provider-error signature marks a pending
+  terminal error — whatever its length or internal layout — and any later
+  non-whitespace chunk (a recovered answer, glued or indented) clears it.
+  This is a signature heuristic pending structured errors upstream.
 - ACP `initialize` answers in well under Consult's timeout and advertises
   `authMethods` instead of blocking on a TTY when logged out. Copilot's
   permission options use spec-standard `allow_*`/`reject_*` kinds that
