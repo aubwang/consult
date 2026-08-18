@@ -29,13 +29,22 @@ const WRAPPER_BASENAME = "bash";
 // else (-i, -s, -e, extra options) changes how the script is read.
 const SHELL_COMMAND_FLAGS = new Set(["-c", "-lc", "-cl"]);
 
-// rawInput keys that would change what the command actually does. `env` is the
-// important one: a delegate that could set CONSULT_PARENT_JOB would be able to
-// report as a different Job, which is the whole thing --job is excluded for.
+// rawInput keys that would change what the command actually does, whatever else
+// validates. `env` is the important one: a delegate that could set
+// CONSULT_PARENT_JOB would be able to report as a different Job, which is the
+// whole reason --job is excluded. `sudo` is host privilege elevation, which is
+// not something a bounded log append ever needs.
+//
+// Codex's `with_escalated_permissions` is deliberately NOT here (ADR-0042). It
+// changes *where* the command runs - outside the Profile's own filesystem
+// sandbox - not *what* runs, and what runs has already been pinned to the real
+// consult binary's report subcommand by the time this matters. Codex's
+// read-only agent mode blocks the report's log append and then retries with
+// escalation, so denying it made the carve-out useless for the Profile most
+// likely to use it. Field names are normalized, so `with_escalated_permissions`,
+// `withEscalatedPermissions`, and `escalated-permissions` are all the same key.
 const REJECTED_RAW_INPUT_FIELDS = new Set(
-  ["env", "environment", "withEscalatedPermissions", "escalatedPermissions", "sudo"].map(
-    normalizeFieldName,
-  ),
+  ["env", "environment", "sudo"].map(normalizeFieldName),
 );
 
 // Characters an unquoted token may contain without being able to change what
@@ -60,6 +69,10 @@ export interface ReportExecContext {
   deps: ReportExecDeps;
 }
 
+// Order is the safety property, not an implementation detail. Nothing about a
+// request is tolerated until the command shape, the wrapper's identity, the
+// binary's identity, and the argv allowlist have all validated; an escalation
+// flag rides on that validation rather than relaxing it.
 export async function isApprovedReportExec(
   rawInput: unknown,
   { cwd, workspaceRoot, deps }: ReportExecContext,

@@ -385,6 +385,9 @@ single simple invocation carrying only `--type`, `--message`, `--data`, and the
 message after `--`. Anything else — a chained or piped command, a different
 subcommand, a different binary of the same name, or `--job` — is denied with the
 same diagnostics execute has always had. A Job reports as itself or not at all.
+A Profile that runs its own filesystem sandbox (Codex does) may need to escalate
+to write the log; that is permitted for an otherwise fully validated report and
+for nothing else.
 Ask `consult capabilities --json` for `features.reportExec` to tell a build that
 approves the call from one that refuses it.
 

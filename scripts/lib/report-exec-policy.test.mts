@@ -105,25 +105,117 @@ test("an environment-prefixed command denies", async () => {
   assert.equal(arrayForm, false);
 });
 
-test("a rawInput env or escalation field denies even with a clean command", async () => {
+test("a rawInput env or sudo field denies even with a clean command", async () => {
   const withEnv = await approve({
     command: [REAL_BIN, "report", "--type", "progress", "--", "ok"],
     env: { CONSULT_PARENT_JOB: "job-other" },
   });
-  const withEscalation = await approve({
+  const withSudo = await approve({
     command: [REAL_BIN, "report", "--type", "progress", "--", "ok"],
-    with_escalated_permissions: true,
+    sudo: true,
   });
   // An empty or false-y field is not an attempt to change anything.
   const withEmptyEnv = await approve({
     command: [REAL_BIN, "report", "--type", "progress", "--", "ok"],
     env: {},
-    with_escalated_permissions: false,
+    sudo: false,
   });
 
   assert.equal(withEnv, false);
-  assert.equal(withEscalation, false);
+  assert.equal(withSudo, false);
   assert.equal(withEmptyEnv, true);
+});
+
+// Codex's read-only agent mode blocks the report's own log append and retries
+// with escalation, so refusing it made the carve-out useless for the Profile
+// most likely to reach for it. Escalation changes where an already-pinned
+// command runs, not what runs.
+test("an escalated request is approved when everything else validates", async () => {
+  const spellings = [
+    "with_escalated_permissions",
+    "withEscalatedPermissions",
+    "escalated_permissions",
+    "escalatedPermissions",
+  ];
+
+  for (const field of spellings) {
+    assert.equal(
+      await approve({
+        command: `${REAL_BIN} report --type blocked --message "need guidance: A or B?"`,
+        cwd: WORKSPACE,
+        [field]: true,
+        justification: "the report could not write its log",
+      }),
+      true,
+      field,
+    );
+  }
+});
+
+// The exact shape a live Codex Job sent: the string form, a bare `consult` off
+// PATH, `cwd` rather than `workdir`, and a double-quoted message carrying
+// punctuation that is not safe unquoted.
+test("the shape a live Codex Job sends is approved, escalated or not", async () => {
+  const deps = hostDeps({
+    realpath: async (target: string) =>
+      target === "/usr/local/bin/consult" ? REAL_BIN : target,
+    isExecutableFile: async (target: string) => target === "/usr/local/bin/consult",
+    pathEnv: "/usr/local/bin",
+  });
+  const rawInput = {
+    command: 'consult report --type blocked --message "need guidance: A or B?"',
+    cwd: WORKSPACE,
+  };
+
+  assert.equal(await approve(rawInput, deps), true);
+  assert.equal(await approve({ ...rawInput, with_escalated_permissions: true }, deps), true);
+});
+
+// Escalation rides on the rest of the predicate; it never substitutes for it.
+test("escalation does not rescue a request that fails any other check", async () => {
+  const escalated = (rawInput: Record<string, unknown>) =>
+    approve({ with_escalated_permissions: true, ...rawInput });
+
+  // Attribution is what the env denial protects, and escalation does not touch it.
+  assert.equal(
+    await escalated({
+      command: [REAL_BIN, "report", "--type", "progress", "--", "ok"],
+      env: { CONSULT_PARENT_JOB: "job-other" },
+    }),
+    false,
+    "env forging stays denied under escalation",
+  );
+  assert.equal(
+    await escalated({ command: [REAL_BIN, "delegate", "--", "do it"] }),
+    false,
+    "a non-report subcommand stays denied",
+  );
+  assert.equal(
+    await escalated({
+      command: [REAL_BIN, "report", "--job", "job-other", "--type", "progress"],
+    }),
+    false,
+    "--job stays denied",
+  );
+  assert.equal(
+    await escalated({
+      command: ["./bash", "-lc", `${REAL_BIN} report --type progress -- ok`],
+    }),
+    false,
+    "a wrapper imposter stays denied",
+  );
+  assert.equal(
+    await escalated({ command: ["./consult", "report", "--type", "progress"] }),
+    false,
+    "a binary imposter stays denied",
+  );
+  assert.equal(
+    await escalated({
+      command: `${REAL_BIN} report --type progress -- ok && rm -rf /`,
+    }),
+    false,
+    "a chained command stays denied",
+  );
 });
 
 test("--job denies however it is spelled", async () => {

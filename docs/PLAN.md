@@ -234,9 +234,12 @@ array, or a command string tokenized under shell rules and denied on any
 metacharacter, with a single `bash -lc` unwrap), the binary realpaths to the
 running installation's own `bin/consult`, and the argv is `report` plus only
 `--type`, `--message`, `--data`, and the message after `--`. `--job` is excluded
-so a Job cannot report as another Job. Confined Jobs keep unconditional denial,
-every parse uncertainty denies, and all other execute requests keep their
-existing diagnostics. The predicate lives in `report-exec-policy.mts` as a pure
+so a Job cannot report as another Job. A Profile's own sandbox escalation flag
+is permitted once everything else has validated — it changes where an
+already-pinned command runs, not what runs — while a `rawInput.env` that could
+forge attribution stays denied under escalation. Confined Jobs keep
+unconditional denial, every parse uncertainty denies, and all other execute
+requests keep their existing diagnostics. The predicate lives in `report-exec-policy.mts` as a pure
 function over `rawInput` plus injected resolvers; `job-agent.mts` resolves the
 real binary once per Job, beside the `CONSULT_*` environment.
 
