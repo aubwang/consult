@@ -67,6 +67,17 @@ An execute request is approved only when **all** of the following hold.
      one simple invocation that is not another shell. Several Profiles wrap
      every shell tool call this way, so refusing it outright would refuse the
      feature.
+   - **The wrapper is verified as a binary, not as a name.** A wrapped command
+     runs two programs, so both are checked. `bash` on `PATH`, resolved and
+     `realpath`ed, is the trust anchor; it must resolve, and it must land
+     outside the Workspace, or nothing is approved. A wrapper token carrying a
+     path is resolved against the working directory and must `realpath` to that
+     same anchor. `./bash`, a planted `<workspace>/tools/bash`, an absolute path
+     to some other shell, and a `PATH` whose first `bash` lives inside the
+     Workspace all deny; `/bin/bash` and a bare `bash` reaching the host's own
+     shell pass. Only `bash` is recognized as a wrapper — widening that list
+     would mean vouching for more binaries — and every other shell name still
+     denies outright when it leads a command.
    - An environment-prefixed command (`FOO=1 consult report …`) is denied, as is
      a `rawInput.env` or escalation field. `CONSULT_PARENT_JOB` is what decides
      which Job a report belongs to, so anything able to set it is anything able
@@ -99,6 +110,14 @@ it.
 Every uncertainty denies. The tokenizer understands a deliberately small subset
 of shell syntax and refuses everything outside it, because approving a construct
 it does not model would mean approving whatever that construct actually does.
+
+The same rule applies to every name in an approved command, which is the lesson
+the wrapper check encodes: an earlier revision recognized the `bash` wrapper by
+basename and then discarded it, checking only the consult invocation inside. The
+approved command was therefore `./bash -lc "<real consult> report …"`, which runs
+an attacker-planted `./bash` and never reaches consult at all. A name in a
+command is a claim about a file; the file has to be resolved before the claim
+means anything.
 
 ## Consequences
 

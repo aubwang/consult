@@ -155,7 +155,11 @@ export async function decidePermission(
     if (
       confinement === "inherit" &&
       reportExec !== undefined &&
-      (await isApprovedReportExec(request.toolCall.rawInput, { cwd, deps: reportExec }))
+      (await isApprovedReportExec(request.toolCall.rawInput, {
+        cwd,
+        workspaceRoot,
+        deps: reportExec,
+      }))
     ) {
       return { allowed: true };
     }
