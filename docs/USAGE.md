@@ -75,6 +75,47 @@ consult delegate --agent claude --read-only -- \
   "Inspect scripts/lib/process.mts for cancellation races; report findings only."
 ```
 
+### Prompts too large for argv
+
+`--prompt <text>` and everything after `--` travel in a single argv argument.
+Linux caps one argument at 128 KiB (`MAX_ARG_STRLEN`) regardless of the ~2 MiB
+`ARG_MAX` total, and macOS caps all of argv plus the environment near 1 MiB.
+`execve` rejects the oversize argument before `consult` runs, so the failure
+surfaces as the shell's `Argument list too long` and Consult never sees it.
+`--prompt "$(cat prompt.md)"` does not work around this: command substitution
+rebuilds the same oversize argument.
+
+Two channels keep a large prompt out of argv. `--prompt -` reads stdin, which a
+quoted heredoc fills in the same command — no temp file, and no shell expansion,
+so quotes, `$`, and backticks reach the Profile verbatim:
+
+```sh
+consult delegate --agent claude --read-only --prompt - <<'PROMPT'
+Inspect scripts/lib/process.mts for cancellation races.
+Report findings only; keep `$PATH` and "quoted" text intact.
+PROMPT
+```
+
+`--prompt-file <path>` reads a prompt that already exists or was generated, and
+`--prompt-file -` is a synonym for stdin:
+
+```sh
+consult delegate --agent codex --read-only --prompt-file .tmp/task.md
+```
+
+The prompt file is read with Host authority at compose time, before the Job
+starts, so it may sit outside the Workspace where a confined Job could not read
+it. Both channels accept up to 1 MiB; a larger prompt is rejected with the
+limit named, and a binary file is rejected rather than decoded. Stdin is read
+only when `-` is passed, so an invocation that says nothing about stdin never
+blocks waiting on input.
+
+Exactly one channel may carry the prompt: `--prompt-file` cannot be combined
+with `--prompt` or with a positional prompt after `--`. A queued
+(`--background`) Job persists the resolved prompt in its Job record, and the
+detached worker rehydrates it from there rather than from argv, so the OS limit
+applies once at the CLI boundary and never again.
+
 When a task depends on uncommitted work, attach a bounded deterministic snapshot
 of the current diff:
 
