@@ -92,6 +92,27 @@ cannot read Host-private attachment or cache paths outside the Workspace, so
 read those in the Host and embed only the bounded text the Job needs. Use
 --include-diff [--base <ref>], or consult review, for a pinned Git change.
 
+## Prompts too large for argv
+
+A prompt passed as --prompt <text> or after -- travels in one argv argument,
+which the OS caps at 128 KiB on Linux and about 1 MiB across all of argv on
+macOS. The shell rejects an oversize command before Consult runs, so there is
+no Consult error to read; the fix is to keep the prompt out of argv.
+
+--prompt - reads the prompt from stdin. A quoted heredoc sends it in the same
+command, with no temp file and no shell expansion, so quotes, $, and backticks
+reach the Profile verbatim:
+
+  consult delegate --read-only --prompt - <<'PROMPT'
+  review scripts/server.mts for races; report findings only
+  PROMPT
+
+--prompt-file <path> reads a prompt that already exists or was generated. It
+is read with Host authority before the Job starts, so it may sit outside the
+Workspace where a confined Job could not reach it. Both channels accept up to
+1 MiB. --prompt "$(cat file)" does not help: command substitution rebuilds the
+same oversize argument.
+
 ## Shape of the ask
 
 Ask reviews for prioritized, actionable findings with file and line evidence.

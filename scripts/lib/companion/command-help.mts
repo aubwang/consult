@@ -84,10 +84,28 @@ See also: consult help contracts
 const delegateUsage = `Usage:
   consult delegate [options] -- <prompt>
   consult delegate [options] --prompt <text>
+  consult delegate [options] --prompt -
+  consult delegate [options] --prompt-file <path>
 
 Send one self-contained prompt turn to a Profile. The Profile does not receive
 the current Host conversation, so the prompt must carry the paths, question,
 constraints, and acceptance criteria on its own.
+
+Prompt channel (exactly one):
+  -- <prompt>         Everything after -- is the prompt.
+  --prompt <text>     The prompt as one argument.
+  --prompt -          Read the prompt from stdin. A quoted heredoc keeps the
+                      prompt out of argv and out of shell expansion, so quotes,
+                      $, and backticks survive verbatim.
+  --prompt-file <p>   Read the prompt from a file, or from stdin for -. The file
+                      is read with Host authority before the Job starts, so it
+                      may sit outside the Workspace where a confined Job could
+                      not reach it.
+
+A single argv argument is capped by the OS well below a large prompt: Linux
+allows 128 KiB per argument and macOS about 1 MiB for all of argv. That limit
+rejects the command before Consult runs, so a prompt near it belongs on stdin
+or in a file rather than in --prompt. Either channel accepts up to 1 MiB.
 
 Profile and model:
   --agent <profile>   Profile to delegate to (alias --profile). Defaults to the
@@ -137,6 +155,10 @@ Context and output:
 Examples:
   consult delegate --read-only -- "review src/server.ts for races"
   consult delegate --agent codex --write --isolated -- "implement the fix"
+  consult delegate --read-only --prompt - <<'PROMPT'
+  review src/server.ts for races
+  PROMPT
+  consult delegate --read-only --prompt-file .tmp/task.md
   consult delegate --read-only --include-diff --base main -- "review this branch"
   consult delegate --background --label "api audit" -- "audit the API surface"
 

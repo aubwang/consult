@@ -50,6 +50,8 @@ import {
 } from "../isolated-workspace.mts";
 import type { PreparedIsolatedWorkspace } from "../isolated-workspace.mts";
 import { processStartTime } from "../process-identity.mts";
+import { readPromptSource, selectPromptSource } from "../prompt-input.mts";
+import type { PromptInputDeps, PromptSource } from "../prompt-input.mts";
 import { runDelegateOnce } from "./delegate-core.mts";
 import type { RunDelegateOnceDeps } from "./delegate-core.mts";
 import { tryResolveInvocationContext } from "./invocation-context.mts";
@@ -69,7 +71,8 @@ export type DelegateResult = CliResult;
 export interface DelegateDeps
   extends OutputDeps,
     ResolveInvocationContextDeps,
-    RunDelegateOnceDeps {
+    RunDelegateOnceDeps,
+    PromptInputDeps {
   now?: () => string;
   generateJobId?: () => string;
   writeJobRecord?: typeof defaultWriteJobRecord;
@@ -98,7 +101,7 @@ export interface ValidatedDelegateArgs {
   mode?: string;
   writeExplicit?: boolean;
   parentJobId?: string | null;
-  prompt?: string;
+  promptSource?: PromptSource;
   model?: string;
   effort?: string;
   label?: string;
@@ -138,6 +141,15 @@ export async function runDelegate({
     output.stderr(`${validated.error}\n`);
     return output.result(2);
   }
+
+  // Reading --prompt-file or stdin before the Workspace and Broker are resolved
+  // keeps an unreadable prompt from costing a Profile launch.
+  const promptInput = await readPromptSource(validated.promptSource as PromptSource, deps);
+  if (promptInput.error) {
+    output.stderr(`${promptInput.error}\n`);
+    return output.result(2);
+  }
+  const promptText = promptInput.prompt as string;
 
   const { context, errorResult } = await tryResolveInvocationContext({
     args,
@@ -313,7 +325,7 @@ export async function runDelegate({
     }
   }
 
-  let delegatedPrompt = validated.prompt as string;
+  let delegatedPrompt = promptText;
   if (validated.includeDiff) {
     try {
       const getDiff = deps.getDiff ?? defaultGetDiff;
@@ -354,7 +366,7 @@ export async function runDelegate({
     hostSessionId: hostIdentity.hostSessionId,
     profile: selected.profile,
     label: validated.label,
-    prompt: validated.background ? delegatedPrompt : truncatePrompt(validated.prompt as string),
+    prompt: validated.background ? delegatedPrompt : truncatePrompt(promptText),
     model: validated.model,
     effort: validated.effort,
     afterJobIds: validated.afterJobIds,
@@ -455,7 +467,8 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const unsupported = unsupportedFlagError(flags, [
     "agent", "profile", "model", "effort", "host", "host-session",
     "host-session-id", "parent-job", "parent-job-id", "resume-job", "prompt",
-    "base", "sandbox", "after", "label", "write", "read-only", "resume", "fresh", "background",
+    "prompt-file", "base", "sandbox", "after", "label", "write", "read-only", "resume",
+    "fresh", "background",
     "wait", "include-diff", "isolated", "allow-fetch", "allow-exec", "json",
   ]);
   if (unsupported) return { error: unsupported };
@@ -471,6 +484,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     "parent-job-id",
     "resume-job",
     "prompt",
+    "prompt-file",
     "base",
     "sandbox",
     "after",
@@ -528,9 +542,13 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   if (!authority.ok) {
     return { diagnostic: authority.diagnostic };
   }
-  const promptFromFlag = stringFlag(flags.prompt);
-  const promptFromPositionals = (args.positional ?? []).join(" ").trim();
-  if (!promptFromFlag && !promptFromPositionals) {
+  const promptSource = selectPromptSource({
+    promptFlag: stringFlag(flags.prompt),
+    promptFileFlag: stringFlag(flags["prompt-file"]),
+    positional: args.positional,
+  });
+  if (promptSource.error) return { error: promptSource.error };
+  if (!promptSource.source) {
     return { error: "delegate prompt is required" };
   }
 
@@ -540,7 +558,7 @@ function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
     writeExplicit: write,
     parentJobId:
       stringFlag(flags["parent-job"]) ?? stringFlag(flags["parent-job-id"]) ?? null,
-    prompt: promptFromFlag || promptFromPositionals,
+    promptSource: promptSource.source,
     model: stringFlag(flags.model),
     effort: stringFlag(flags.effort),
     label: label.label,

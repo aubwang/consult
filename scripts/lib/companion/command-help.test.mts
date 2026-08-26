@@ -27,6 +27,19 @@ test("agents usage explains selection order and both default scopes", () => {
   assert.match(usage, /consult doctor --agent claude/u);
 });
 
+// The OS rejects an oversize --prompt before Consult runs, so there is no
+// runtime error to carry this; help is the only place a Host can learn it.
+test("delegate usage documents both non-argv prompt channels", () => {
+  const usage = commandUsage("delegate");
+
+  assert.ok(usage);
+  assert.match(usage, /consult delegate \[options\] --prompt -/u);
+  assert.match(usage, /consult delegate \[options\] --prompt-file <path>/u);
+  assert.match(usage, /--prompt -\s+Read the prompt from stdin/u);
+  assert.match(usage, /--prompt-file <p>\s+Read the prompt from a file/u);
+  assert.match(usage, /128 KiB per argument/u);
+});
+
 test("commandUsage returns null for an unknown command", () => {
   assert.equal(commandUsage("nonsense"), null);
 });

@@ -43,6 +43,15 @@ test("topic pages stay individually readable", () => {
   }
 });
 
+test("the delegation topic teaches the heredoc prompt channel", () => {
+  const page = helpTopic("delegation");
+
+  assert.ok(page);
+  assert.match(page, /--prompt - reads the prompt from stdin/u);
+  assert.match(page, /<<'PROMPT'/u);
+  assert.match(page, /--prompt-file <path>/u);
+});
+
 test("helpFor resolves topics, commands, and the bare overview", () => {
   assert.equal(helpFor(undefined, false).stdout, helpOverview());
   assert.equal(helpFor("help", false).stdout, helpOverview());
