@@ -486,6 +486,163 @@ test("nested Claude delegate never refreshes the Host credential", async (t) => 
   );
 });
 
+test("delegate carries a --prompt-file prompt through to the Profile", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+  // Deliberately outside the Workspace: the Host reads it at compose time, which
+  // is exactly what a confined Job cannot do for itself.
+  const promptPath = await writePromptFile(
+    t,
+    'review scripts/lib/acp-client.mts for races; keep "quotes" and $vars intact\n',
+  );
+
+  const resultPromise = runDelegate({
+    args: { positional: [], flags: { "prompt-file": promptPath } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-prompt-file",
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-prompt-file",
+    stopReason: "end_turn",
+    sessionId: "session-prompt-file",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(
+    request.params.prompt,
+    'review scripts/lib/acp-client.mts for races; keep "quotes" and $vars intact',
+  );
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-prompt-file.json"), "utf8"),
+  );
+  assert.equal(
+    record.prompt,
+    'review scripts/lib/acp-client.mts for races; keep "quotes" and $vars intact',
+  );
+});
+
+test("delegate reads a stdin prompt larger than one argv argument", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+  // Past the Linux MAX_ARG_STRLEN wall that makes --prompt <text> fail outright.
+  const body = `audit the API surface\n${"detail line\n".repeat(20_000)}`;
+  assert.ok(Buffer.byteLength(body) > 131_072);
+
+  const resultPromise = runDelegate({
+    args: { positional: [], flags: { prompt: "-", background: true } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-stdin",
+      spawn: () => ({ unref: () => {} }),
+      readStdin: async function* () {
+        yield Buffer.from(body, "utf8");
+      },
+    }),
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  const record = JSON.parse(
+    await fs.readFile(path.join(jobsDir(workspaceRoot), "job-stdin.json"), "utf8"),
+  );
+  // A queued Job persists the whole prompt; the worker rehydrates it from the
+  // record rather than from argv, so the OS limit never applies again.
+  assert.equal(record.prompt, body.trimEnd());
+});
+
+test("delegate rejects an unreadable prompt file before resolving the workspace", async () => {
+  const missing = path.join(os.tmpdir(), "consult-delegate-missing-prompt.md");
+  const result = await runDelegate({
+    args: { positional: [], flags: { "prompt-file": missing } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => {
+        throw new Error("workspace should not be resolved");
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.stderr, `prompt file not found: ${missing}\n`);
+});
+
+test("delegate rejects combining --prompt-file with another prompt channel", async () => {
+  const deps = quietDeps({
+    resolveWorkspaceRoot: async () => {
+      throw new Error("workspace should not be resolved");
+    },
+    readStdin: () => {
+      throw new Error("stdin should not be read");
+    },
+  });
+
+  const withFlag = await runDelegate({
+    args: { positional: [], flags: { prompt: "inline", "prompt-file": "prompt.md" } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps,
+  });
+  const withPositional = await runDelegate({
+    args: { positional: ["inline"], flags: { "prompt-file": "prompt.md" } },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps,
+  });
+
+  assert.equal(withFlag.exitCode, 2);
+  assert.equal(withFlag.stderr, "--prompt and --prompt-file are mutually exclusive\n");
+  assert.equal(withPositional.exitCode, 2);
+  assert.equal(
+    withPositional.stderr,
+    "--prompt-file cannot be combined with a positional prompt after --\n",
+  );
+});
+
+test("delegate never reads stdin unless a prompt channel selects it", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  const client = new FakeBrokerClient();
+
+  const resultPromise = runDelegate({
+    args: { positional: ["fix", "the", "bug"], flags: {} },
+    env: { CONSULT_HOST: "claude-code", CONSULT_HOST_SESSION_ID: "claude-1" },
+    deps: quietDeps({
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      loadOverride: async () => null,
+      loadProfiles: async () => profilesFixture(),
+      ensureBrokerSession: async () => ({ client }),
+      generateJobId: () => "job-no-stdin",
+      readStdin: () => {
+        throw new Error("stdin should not be read");
+      },
+    }),
+  });
+
+  const request = await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: "job-no-stdin",
+    stopReason: "end_turn",
+    sessionId: "session-no-stdin",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(request.params.prompt, "fix the bug");
+});
+
 test("delegate rejects --base without --include-diff", async () => {
   const result = await runDelegate({
     args: { positional: ["inspect"], flags: { base: "main" } },
@@ -1665,6 +1822,16 @@ class FakeBrokerClient {
   rejectRequest(error: Error) {
     this.#requestError = error;
   }
+}
+
+async function writePromptFile(t: TestContext, body: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "consult-delegate-prompt-"));
+  t.after(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const filePath = path.join(dir, "prompt.md");
+  await fs.writeFile(filePath, body, "utf8");
+  return filePath;
 }
 
 async function makeWorkspace() {
