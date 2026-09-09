@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/aubwang/consult/compare/v1.4.0...v1.5.0) (2026-09-09)
+
+
+### Features
+
+* discover model routes and configured launch recipes ([ab5d980](https://github.com/aubwang/consult/commit/ab5d980d1288412c3dca91535f671ca0201db555))
+
 ## [1.4.0](https://github.com/aubwang/consult/compare/v1.3.0...v1.4.0) (2026-09-09)
 
 
