@@ -242,3 +242,13 @@ test("inherited probe stays initialize-only for profiles without a session probe
   });
   assert.deepEqual(result, { ok: true, authority: INHERIT });
 });
+
+
+test("explicit inherited model discovery reads the real ACP session catalogue", async () => {
+  const result = await probeInheritedProfileLaunch({
+    workspaceRoot: process.cwd(), profile: "custom", profileRegistryId: "custom",
+    authority: INHERIT, discoverModels: true,
+    profileLaunch: { binary: process.execPath, args: [fakeAgentPath, "sessions", "controls"], env: {} },
+  });
+  assert.deepEqual(result, { ok: true, authority: INHERIT, models: ["default-model", "gpt-test"] });
+});

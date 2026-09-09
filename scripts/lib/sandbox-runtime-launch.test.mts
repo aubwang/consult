@@ -1551,3 +1551,31 @@ async function privateFile(file: string, contents: string): Promise<void> {
   await fsp.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   await fsp.writeFile(file, contents, { mode: 0o600 });
 }
+
+
+test("confined model discovery preserves the launch boundary and disposes on session failure", async (t) => {
+  const fixture = await makeFixture(t);
+  for (const fail of [false, true]) {
+    let disposed = false;
+    const result = await probeConfinedSandboxRuntime({
+      authority: authority(), workspaceRoot: fixture.workspace, profile: "codex",
+      profileRegistryId: "codex", discoverModels: true,
+      profileLaunch: { binary: "/configured/codex-acp", args: [], env: {} },
+    }, {
+      platform: "linux", arch: "x64",
+      startAgent: async (_options, deps) => {
+        assert.ok(deps?.acquireLaunch);
+        return {
+          connection: { newSession: async () => {
+            if (fail) throw new Error("synthetic discovery failure");
+            return { sessionId: "synthetic", models: { availableModels: [{ modelId: "test-model" }] } };
+          } },
+          dispose: async () => { disposed = true; },
+        } as unknown as StartedAgent;
+      },
+    });
+    assert.equal(disposed, true);
+    if (fail) assert.equal(result.ok, false);
+    else assert.deepEqual(result, { ok: true, authority: authority(), models: ["test-model"] });
+  }
+});

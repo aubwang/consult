@@ -1,3 +1,8 @@
+import { MODELS_SCHEMA_VERSION } from "../model-discovery.mts";
+import { profilesPath } from "../broker-endpoint.mts";
+import { configuredDiscovery } from "../profile-discovery.mts";
+import { loadProfiles, type ProfilesData } from "../profiles.mts";
+import { profileErrorResult } from "./profile-errors.mts";
 import { boolFlag, invalidBooleanFlagValueError, unsupportedFlagError } from "../args.mts";
 import type { ParsedArgs } from "../args.mts";
 import { JOB_RESULT_SCHEMA_VERSION } from "../job-result-contract.mts";
@@ -20,18 +25,24 @@ import { resolvePackageVersion } from "./version.mts";
 // arguments were wrong". Capabilities is the versioned answer to that question,
 // and like help and version it is a static self-description: it reads no
 // Workspace, no Job state, and no configured Profiles, so it answers the same
-// way from anywhere on the filesystem.
+// way from anywhere on the filesystem. --configured explicitly adds configuration
+// metadata without launching a Profile or checking readiness.
 export const CAPABILITIES_SCHEMA_VERSION = 1;
 
 export interface CapabilitiesReport {
   schemaVersion: number;
   version: string;
+  configured?: ReturnType<typeof configuredDiscovery>;
   contracts: {
+    models: number;
     jobResult: number;
     events: number;
     profiles: number;
   };
   features: {
+    models: boolean;
+    configuredDiscovery: boolean;
+    clean: boolean;
     report: boolean;
     events: boolean;
     steer: boolean;
@@ -49,6 +60,7 @@ export interface CapabilitiesReport {
 export interface CapabilitiesDeps {
   loadRegistry?: () => Promise<Registry>;
   version?: () => string;
+  loadProfiles?: (file: string) => Promise<ProfilesData>;
 }
 
 export interface RunCapabilitiesOptions {
@@ -64,7 +76,7 @@ export async function runCapabilities({
   args,
   deps = {},
 }: RunCapabilitiesOptions): Promise<CliResult> {
-  const unsupported = unsupportedFlagError(args.flags, ["json"]);
+  const unsupported = unsupportedFlagError(args.flags, ["json", "configured"]);
   if (unsupported) {
     return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
   }
@@ -91,6 +103,14 @@ export async function runCapabilities({
     throw error;
   }
   const report = capabilitiesReport(registry, deps.version ?? resolvePackageVersion);
+  if (boolFlag(args.flags.configured)) {
+    try { report.configured = configuredDiscovery(await (deps.loadProfiles ?? loadProfiles)(profilesPath())); }
+    catch (error) {
+      const result = profileErrorResult(error as any);
+      if (result) return result;
+      throw error;
+    }
+  }
   return {
     exitCode: 0,
     stdout: boolFlag(args.flags?.json) ? `${JSON.stringify(report)}\n` : renderReport(report),
@@ -109,11 +129,15 @@ export function capabilitiesReport(
     schemaVersion: CAPABILITIES_SCHEMA_VERSION,
     version: version(),
     contracts: {
+      models: MODELS_SCHEMA_VERSION,
       jobResult: JOB_RESULT_SCHEMA_VERSION,
       events: EVENTS_SCHEMA_VERSION,
       profiles: PROFILES_SCHEMA_VERSION,
     },
     features: {
+      models: true,
+      configuredDiscovery: true,
+      clean: true,
       report: true,
       events: true,
       steer: true,
@@ -139,17 +163,22 @@ function renderReport(report: CapabilitiesReport): string {
     `consult ${report.version}`,
     "",
     "contract\tversion",
+    `models\t${report.contracts.models}`,
     `jobResult\t${report.contracts.jobResult}`,
     `events\t${report.contracts.events}`,
     `profiles\t${report.contracts.profiles}`,
     "",
     "feature\tavailable",
+    "models\tyes",
+    "configuredDiscovery\tyes",
+    "clean\tyes",
     `report\t${yesNo(report.features.report)}`,
     `events\t${yesNo(report.features.events)}`,
     `steer\t${yesNo(report.features.steer)}`,
     `reportExec\t${yesNo(report.features.reportExec)}`,
     `nativeReview\t${nativeReview.length > 0 ? nativeReview.join(", ") : "(none)"}`,
     "",
+    ...(report.configured ? ["configured Profiles (readiness unchecked):", ...report.configured.profiles.map((profile) => `${profile.id}\t${profile.confinement}`), "Use --configured --json for launch arguments and restrictions.", ""] : []),
     "bound\tvalue",
     `reportMessageBytes\t${report.bounds.reportMessageBytes}`,
     `reportDataBytes\t${report.bounds.reportDataBytes}`,

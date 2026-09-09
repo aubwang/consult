@@ -35,8 +35,11 @@ test("capabilities --json reports the versioned envelope a Host branches on", as
   ]);
   assert.equal(report.schemaVersion, CAPABILITIES_SCHEMA_VERSION);
   assert.equal(report.version, "9.9.9");
-  assert.deepEqual(Object.keys(report.contracts), ["jobResult", "events", "profiles"]);
+  assert.deepEqual(Object.keys(report.contracts), ["models", "jobResult", "events", "profiles"]);
   assert.deepEqual(Object.keys(report.features), [
+    "models",
+    "configuredDiscovery",
+    "clean",
     "report",
     "events",
     "steer",
@@ -61,6 +64,7 @@ test("capabilities reports the constants the commands are actually bounded by", 
   const report = JSON.parse(result.stdout);
 
   assert.deepEqual(report.contracts, {
+    models: 1,
     jobResult: JOB_RESULT_SCHEMA_VERSION,
     events: EVENTS_SCHEMA_VERSION,
     profiles: PROFILES_SCHEMA_VERSION,
@@ -208,3 +212,25 @@ function withCwd(t: TestContext, directory: string): void {
     process.chdir(original);
   });
 }
+
+
+test("configured capabilities gives launch recipes without exposing launch environment or checking readiness", async () => {
+  let reads = 0;
+  const deps = {
+    loadRegistry: async () => registry(), version: () => "1.4.0",
+    loadProfiles: async () => {
+      reads++;
+      return { schemaVersion: 1, default: "router", profiles: {
+        router: { registryId: "opencode", binary: "/private/executable", args: ["acp"], env: { SECRET: "synthetic-secret" }, installedAt: "2026-09-09" },
+      } };
+    },
+  };
+  const plain = await runCapabilities({ args: { positional: [], flags: { json: true } }, deps });
+  assert.equal(reads, 0); assert.equal(JSON.parse(plain.stdout).configured, undefined);
+  const result = await runCapabilities({ args: { positional: [], flags: { json: true, configured: true } }, deps });
+  assert.equal(reads, 1); assert.equal(result.exitCode, 0);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.configured.profiles[0].readiness, "unchecked");
+  assert.equal(report.configured.profiles[0].requiresExplicitInheritance, true);
+  assert.doesNotMatch(result.stdout, /synthetic-secret|private\/executable/u);
+});

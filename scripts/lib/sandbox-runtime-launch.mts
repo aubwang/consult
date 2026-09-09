@@ -1,3 +1,4 @@
+import { discoverSessionModels } from "./session-models.mts";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -604,6 +605,7 @@ export async function probeConfinedSandboxRuntime(
 
   let agent: Awaited<ReturnType<typeof startAgent>> | undefined;
   let failure: unknown;
+  let models: string[] | undefined;
   try {
     agent = await (deps.startAgent ?? startAgent)({
       binary: input.profileLaunch.binary,
@@ -623,6 +625,7 @@ export async function probeConfinedSandboxRuntime(
           oauthRefreshSkewMs: input.oauthRefreshSkewMs,
         }, deps),
     });
+    if (input.discoverModels) models = await discoverSessionModels(agent.connection, input.workspaceRoot);
   } catch (error) {
     failure = error;
   } finally {
@@ -671,7 +674,7 @@ export async function probeConfinedSandboxRuntime(
       },
     };
   }
-  return { ok: true, authority: input.authority };
+  return { ok: true, authority: input.authority, ...(models ? { models } : {}) };
 }
 
 const EGRESS_USAGE_SCHEMA_VERSION = 1;

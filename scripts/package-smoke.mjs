@@ -61,6 +61,7 @@ try {
 
   const binary = path.join(prefix, process.platform === "win32" ? "consult.cmd" : "bin/consult");
   await assertConsultHelp(binary);
+  await assertInstalledDiscovery(binary, temporaryRoot, "npm");
   await assertInstalledBackgroundJob(binary, temporaryRoot);
   if (process.env.CONSULT_PACKAGE_SMOKE_CONFINED === "1") {
     await assertInstalledConfinedMatrix(binary, temporaryRoot, "npm");
@@ -89,6 +90,7 @@ try {
     process.platform === "win32" ? "consult.exe" : "consult",
   );
   await assertConsultHelp(bunBinary);
+  await assertInstalledDiscovery(bunBinary, temporaryRoot, "bun");
   if (process.env.CONSULT_PACKAGE_SMOKE_CONFINED === "1") {
     await assertInstalledConfinedDoctors(bunBinary, temporaryRoot, "bun");
   }
@@ -97,6 +99,32 @@ try {
   );
 } finally {
   await removePackageTemporaryRoot(temporaryRoot);
+}
+
+async function assertInstalledDiscovery(binary, temporaryRoot, installer) {
+  const workspace = path.join(temporaryRoot, `${installer}-discovery-workspace`);
+  const data = path.join(temporaryRoot, `${installer}-discovery-data`);
+  await fs.mkdir(workspace);
+  await fs.mkdir(data);
+  await run("git", ["init", "--quiet"], { cwd: workspace });
+  const catalogue = path.join(workspace, "catalogue-agent");
+  await fs.writeFile(catalogue, '#!/usr/bin/env node\nif (process.argv[2] !== "models") process.exit(2);\nconsole.log("example/model-1");\n', { mode: 0o700 });
+  await fs.writeFile(path.join(data, "profiles.json"), JSON.stringify({
+    schemaVersion: 1, default: null, profiles: {
+      router: { registryId: "opencode", binary: catalogue, args: ["acp"], env: {}, installedAt: "2026-09-09" },
+    },
+  }));
+  const options = { cwd: workspace, env: { ...process.env, CONSULT_DATA_DIR: data } };
+  const capabilities = JSON.parse((await run(binary, ["capabilities", "--configured", "--json"], options)).stdout);
+  assert.equal(capabilities.features.models, true);
+  assert.equal(capabilities.configured.profiles[0].readiness, "unchecked");
+  const report = JSON.parse((await run(binary, ["models", "--match", "model-1", "--json"], options)).stdout);
+  assert.equal(report.complete, true);
+  assert.equal(report.total, 1);
+  assert.equal(report.models[0].model, "example/model-1");
+  assert.equal(report.models[0].profile, "router");
+  assert.equal(report.models[0].requiresExplicitInheritance, true);
+  assert.equal(report.version, capabilities.version);
 }
 
 async function assertConsultHelp(binary) {

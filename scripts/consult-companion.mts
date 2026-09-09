@@ -17,6 +17,7 @@ interface CompanionHandler {
 // of module loading before printing anything.
 const handlers: Record<string, () => Promise<CompanionHandler>> = {
   setup: () => import("./lib/companion/setup.mts"),
+  models: () => import("./lib/companion/models.mts"),
   agents: () => import("./lib/companion/agents.mts"),
   capabilities: () => import("./lib/companion/capabilities.mts"),
   delegate: () => import("./lib/companion/delegate.mts"),
