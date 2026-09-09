@@ -24,6 +24,19 @@ consult delegate --agent claude --read-only -- \
 
 Run these commands inside a Git repository. `doctor` checks the selected Profile in your current Host environment. A failure does not silently switch to broader permissions.
 
+A Host can discover configured routes and exact model IDs without reading all
+the help topics:
+
+```sh
+consult capabilities --configured --json
+consult models --match grok --json
+```
+
+The configured summary starts no agents. Model discovery may initialize a
+Profile or run its catalogue command, but sends no model prompt. Its JSON
+includes exact launch arguments and authority requirements. Advertised models
+still depend on your account access; see `consult models --help` for details.
+
 ## Prepare a change, then verify it
 
 ```sh

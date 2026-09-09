@@ -700,3 +700,39 @@ Keep Consult state on a coherent local filesystem. History listing builds
 relationships in linear time and reads files with bounded concurrency. It still
 reads the retained records, so cleanup is useful for long-lived workspaces. Log
 follow reads appended bytes and reports corruption with a line number.
+
+
+## Discover a model route
+
+`consult capabilities --configured --json` adds a compact configuration summary
+to the build capabilities: version, Profile selection defaults, authority
+requirements, restrictions, and argument arrays for delegation and diagnosis.
+It does not start a Profile or check authentication. Existing `capabilities`
+and `agents --json` contracts retain their default behavior.
+
+`consult models --match grok --json` lists exact model IDs across configured
+Profiles. Narrow with `--agent`, use `--limit` (default 20, maximum 200), and
+follow `nextOffset` with `--offset`. Matching is a case-insensitive substring
+of the model ID. An empty match set is valid; it never causes substitution.
+
+Each route includes its Profile, model, confinement mode, explicit-inheritance
+requirement, and delegate/Doctor argument arrays. Arrays exclude the Consult
+executable. Delegate recipes read the prompt from stdin; add `--background`
+before submitting when the Host should keep working. Discovery does not select
+a model or grant authority on the Host's behalf.
+
+Standard opencode configuration uses the configured binary and environment to
+run its native model catalogue command with Host authority. Codex and Claude
+use confined ACP session metadata. Other ACP initialization requires a selected
+Profile and explicit `--sandbox inherit`. Discovery reads the current Workspace
+context, sends no model prompt, refreshes no login, and creates no Consult Job.
+Backend session initialization may create backend-owned local session state.
+
+The JSON envelope is schema version 1 and includes the running Consult version.
+`readiness: "advertised-only"` means enumeration succeeded, not that credentials,
+model entitlement, or inference were verified. `complete:false` identifies
+partial discovery; inspect per-Profile diagnostics even when useful routes are
+present. A failed probe exits 1; invalid input/configuration exits 2. Inheritance
+requirements and absent advertised models are reported explicitly. No catalogue
+cache is persisted, and prompts, Profile arguments, and environment values are
+not included in discovery output.
