@@ -1,6 +1,6 @@
-import { readWorkspaceJobRecord } from "../job-records.mts";
+import { readWorkspaceJobRecord, jobLogPath, isFinalStatus } from "../job-records.mts";
 import type { JobRecord } from "../job-records.mts";
-import { readJobLogEntries } from "../job-log-entries.mts";
+import { readJobLogEntries, createJobLogCursor } from "../job-log-entries.mts";
 import type { ParsedJobLog } from "../job-log-entries.mts";
 import { REPORT_LOG_METHOD, renderReportLogEntry } from "../job-reports.mts";
 import { STEER_LOG_METHOD, renderSteerLogEntry } from "../job-steer.mts";
@@ -104,15 +104,22 @@ async function followLogs(
 ): Promise<CommandResult> {
   const output = createOutput(deps);
   let renderedLineCount = 0;
+  const cursor = deps.readLogFile ? null : createJobLogCursor(jobLogPath(workspaceRoot, jobId));
 
   try {
-    const initial = await readParsedLog(workspaceRoot, jobId, deps, { dropPartialTail: true });
+    const initial = cursor ? await cursor.read() : await readParsedLog(workspaceRoot, jobId, deps, { dropPartialTail: true });
     const initialText = tailRenderedText(renderLogEntries(initial.entries), tailLines);
     if (initialText) output.stdout(initialText);
     renderedLineCount = initial.entries.length;
     await pollUntilFinalRecord({
       readRecord: () => readJobRecord(workspaceRoot, jobId, deps),
-      onRecord: async () => {
+      onRecord: async (record) => {
+        if (cursor) {
+          const added = await cursor.read(isFinalStatus(record.status));
+          const text = renderLogEntries(added.entries);
+          if (text) output.stdout(text);
+          return;
+        }
         renderedLineCount = await appendNewLogText(
           workspaceRoot,
           jobId,

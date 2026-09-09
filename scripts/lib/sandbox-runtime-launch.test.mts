@@ -315,12 +315,12 @@ test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient"
     assert.equal(lease.launch.env.OPENAI_API_KEY, undefined);
     assert.equal(lease.launch.env.GH_TOKEN, undefined);
     assert.equal(lease.launch.env.OP_SERVICE_ACCOUNT_TOKEN, undefined);
-    assert.equal(lease.launch.env.HTTP_PROXY, undefined);
+    assert.equal(lease.launch.env.HTTP_PROXY, `http://consult:${TOKEN}@127.0.0.1:3128`);
     assert.equal(lease.launch.env.CONSULT_PARENT_JOB, "parent-job");
     assert.equal(lease.launch.env.HOME, lease.launch.env.CODEX_HOME?.replace(/\/\.codex$/u, ""));
     assert.equal(lease.launch.env.INITIAL_AGENT_MODE, "read-only");
     assert.ok(
-      lease.launch.args[1].includes(`http://consult:${TOKEN}@127.0.0.1:3128`),
+      lease.launch.args.every((argument) => !argument.includes(TOKEN)),
     );
     assert.match(harness.commands[0], /argument with spaces/u);
 
@@ -328,7 +328,7 @@ test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient"
       trustedHosts: CONFINED_PROFILE_POLICIES.codex.trustedHosts,
       allowPublicHosts: false,
     }]);
-    assert.deepEqual(harness.configs[0].filesystem.denyRead, ["/"]);
+    assert.deepEqual(harness.configs[0].filesystem.denyRead, ["/", "/sys"]);
     assert.ok(
       harness.configs[0].filesystem.allowRead.some((entry: string) =>
         entry.includes("/node_modules/@anthropic-ai/sandbox-runtime")),
@@ -1503,7 +1503,7 @@ function linuxArtifact(): string {
     "--setenv CLAUDE_CODE_HOST_HTTP_PROXY_PORT 41001",
     "--setenv CLAUDE_CODE_HOST_SOCKS_PROXY_PORT 41002",
     "--ro-bind / /",
-    "--tmpfs /home --tmpfs /root --tmpfs /var --tmpfs /etc",
+    "--tmpfs /home --tmpfs /root --tmpfs /var --tmpfs /etc --tmpfs /sys",
     "--bind /tmp/claude-http-0123456789abcdef.sock /tmp/claude-http-0123456789abcdef.sock",
     "--bind /tmp/claude-socks-fedcba9876543210.sock /tmp/claude-socks-fedcba9876543210.sock",
     "--bind /tmp/claude /tmp/claude",

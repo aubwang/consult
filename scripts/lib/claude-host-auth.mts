@@ -1,4 +1,7 @@
 import { newSession as defaultNewSession, startAgent as defaultStartAgent } from "./acp-client.mts";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { versionAtLeast } from "./profile-launch-policy.mts";
 import type { JobAuthorityDiagnostic } from "./job-authority.mts";
 import type {
   JobAuthorityPreflightInput,
@@ -21,21 +24,49 @@ export async function refreshClaudeHostOauth(
     throw new Error("automatic Claude Host refresh requires the exact built-in Claude Profile");
   }
 
-  const agent = await (deps.startAgent ?? defaultStartAgent)({
-    binary: input.profileLaunch.binary,
-    args: input.profileLaunch.args,
-    env: input.profileLaunch.env,
-    cwd: input.workspaceRoot,
-    workspaceRoot: input.workspaceRoot,
-    mode: "read-only",
-    sandbox: "off",
-    profileRegistryId: "claude",
-  });
+  // Do not honor Workspace-controlled TMPDIR here. This is a Host credential
+  // operation and must not discover project settings during initialization.
+  const cwd = await fs.mkdtemp("/tmp/consult-auth-");
+  const inherited = { ...process.env, ...input.profileLaunch.env };
+  const env: NodeJS.ProcessEnv = {
+    ...input.profileLaunch.env, PWD: cwd, TMPDIR: cwd, TMP: cwd, TEMP: cwd,
+    NODE_OPTIONS: undefined, NODE_PATH: undefined,
+    BASH_ENV: undefined, ENV: undefined, ZDOTDIR: undefined,
+  };
+  // Credential routing remains Host-owned; relative config paths would change
+  // meaning with the private cwd and are rejected instead of reinterpreted.
+  for (const key of ["HOME", "CLAUDE_CONFIG_DIR"]) {
+    if (inherited[key] && !path.isAbsolute(inherited[key]!)) {
+      await fs.rm(cwd, { recursive: true, force: true });
+      throw new Error(`Claude Host refresh requires an absolute ${key}`);
+    }
+  }
+  let agent: Awaited<ReturnType<typeof defaultStartAgent>> | undefined;
   let failure: unknown;
   try {
+    agent = await (deps.startAgent ?? defaultStartAgent)({
+      binary: input.profileLaunch.binary.includes("/")
+        ? path.resolve(input.workspaceRoot, input.profileLaunch.binary)
+        : input.profileLaunch.binary,
+      args: input.profileLaunch.args,
+      env,
+      cwd,
+      workspaceRoot: cwd,
+      mode: "read-only",
+      sandbox: "off",
+      profileRegistryId: "claude",
+    });
+    const info = agent.capabilities?.agentInfo;
+    if (info?.name !== "@agentclientprotocol/claude-agent-acp" || !versionAtLeast(info.version, "0.59.0")) {
+      throw new Error("Automatic Claude refresh requires claude-agent-acp 0.59.0 or newer");
+    }
     await withTimeout(
       (deps.newSession ?? defaultNewSession)(agent.connection, {
-        cwd: input.workspaceRoot,
+        cwd,
+        _meta: { claudeCode: { options: {
+          settingSources: [], settings: { disableAllHooks: true },
+          strictMcpConfig: true, tools: [], plugins: [], persistSession: false,
+        } } },
       }),
       deps.timeoutMs ?? DEFAULT_REFRESH_TIMEOUT_MS,
     );
@@ -43,17 +74,19 @@ export async function refreshClaudeHostOauth(
     failure = error;
   } finally {
     try {
-      await agent.dispose();
+      await agent?.dispose();
     } catch (cleanupError) {
       if (failure === undefined) failure = cleanupError;
       else noteCleanupFailure(failure, cleanupError);
     }
+    await fs.rm(cwd, { recursive: true, force: true });
   }
   if (failure !== undefined) throw failure;
 }
 
 export interface ClaudeRefreshPreflightDeps {
   allowHostRefresh: boolean;
+  onRefresh?: () => void;
   preflight(
     input: JobAuthorityPreflightInput,
   ): Promise<JobAuthorityPreflightResult>;
@@ -75,6 +108,7 @@ export async function preflightWithClaudeHostRefresh(
   }
 
   try {
+    deps.onRefresh?.();
     await (deps.refresh ?? refreshClaudeHostOauth)(input);
   } catch {
     return {

@@ -401,3 +401,23 @@ function createOutput() {
     },
   };
 }
+
+test("terminal persistence failure returns a failed outcome instead of successful completion", async () => {
+  const client = new FakeBrokerClient();
+  const output = createOutput();
+  const completion = runPromptTurn({
+    workspaceRoot: "/workspace", profileEntry: {},
+    jobRecord: { jobId: "job-full-disk", kind: "delegate", mode: "read-only", host: "terminal", profile: "codex" },
+    deps: {
+      ensureBrokerSession: async () => ({ client }),
+      appendLogLine: async () => {},
+      writeJobRecord: async () => { throw new Error("disk full"); },
+    }, output,
+  });
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", { jobId: "job-full-disk", stopReason: "end_turn", sessionId: "session" });
+  const result = await completion;
+  assert.ok("finalNotification" in result);
+  assert.equal(result.finalNotification.stopReason, "failed");
+  assert.match(result.finalNotification.errorMessage ?? "", /could not persist terminal Job record/);
+});

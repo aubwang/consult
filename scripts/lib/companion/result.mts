@@ -54,9 +54,10 @@ export async function runResult({ args, deps = {} }: RunResultOptions): Promise<
     };
   }
   if (boolFlag(args.flags?.json)) {
+    const warnings: string[] = [];
     let records;
     try {
-      records = await listWorkspaceJobRecords(workspaceRoot);
+      records = await listWorkspaceJobRecords(workspaceRoot, { onMalformed: (error) => warnings.push(`Skipped malformed history record: ${error.path}; relationships may be incomplete\n`) });
     } catch (error) {
       const malformedResult = jobRecordErrorResult(error);
       if (malformedResult) {
@@ -72,7 +73,7 @@ export async function runResult({ args, deps = {} }: RunResultOptions): Promise<
           logPath: jobLogPath(workspaceRoot, jobId),
         }),
       )}\n`,
-      stderr: "",
+      stderr: warnings.join(""),
     };
   }
   return {

@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import path from "node:path";
 
 import { RequestError } from "@agentclientprotocol/sdk";
 import type {
@@ -9,6 +9,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { resolveInsideWorkspace } from "./path-safety.mts";
+import { openWorkspaceFile } from "./workspace-files.mts";
 
 export type FsHandlerMode = "write" | "read-only";
 
@@ -29,19 +30,29 @@ export function createFsHandlers({ workspaceRoot, mode }: CreateFsHandlersOption
 
     return {
       async readTextFile(params) {
-        const safePath = await resolveWorkspacePath(params.path, workspaceRoot);
-        const content = await fs.readFile(safePath, "utf8");
-        return { content: applyLineWindow(content, params) };
+        await resolveWorkspacePath(params.path, workspaceRoot);
+        const file = await openFile(path.resolve(workspaceRoot, params.path), workspaceRoot, false);
+        try {
+          return { content: applyLineWindow(await file.readFile("utf8"), params) };
+        } finally {
+          await file.close();
+        }
       },
       async writeTextFile(params) {
-        const safePath = await resolveWorkspacePath(params.path, workspaceRoot);
+        await resolveWorkspacePath(params.path, workspaceRoot);
         if (mode === "read-only") {
           throw RequestError.invalidParams(
             { path: params.path },
             "write denied in read-only mode",
           );
         }
-        await fs.writeFile(safePath, params.content, "utf8");
+        const file = await openFile(path.resolve(workspaceRoot, params.path), workspaceRoot, true);
+        try {
+          await file.truncate(0);
+          await file.writeFile(params.content, "utf8");
+        } finally {
+          await file.close();
+        }
         return {};
       },
     };
@@ -66,7 +77,12 @@ function splitLinesPreservingTerminators(content: string): string[] {
 }
 
 async function resolveWorkspacePath(targetPath: string, workspaceRoot: string): Promise<string> {
-  const resolvedPath = await resolveInsideWorkspace(targetPath, workspaceRoot);
+  let resolvedPath: string | null;
+  try {
+    resolvedPath = await resolveInsideWorkspace(path.resolve(workspaceRoot, targetPath), workspaceRoot);
+  } catch {
+    throw RequestError.invalidParams({ path: targetPath }, `unsafe workspace path: ${targetPath}`);
+  }
   if (!resolvedPath) {
     throw RequestError.invalidParams(
       { path: targetPath },
@@ -74,4 +90,12 @@ async function resolveWorkspacePath(targetPath: string, workspaceRoot: string): 
     );
   }
   return resolvedPath;
+}
+
+async function openFile(target: string, root: string, write: boolean) {
+  try {
+    return await openWorkspaceFile(target, root, write);
+  } catch (error) {
+    throw RequestError.invalidParams({ path: target }, (error as Error).message);
+  }
 }

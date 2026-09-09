@@ -138,6 +138,7 @@ test("cancel terminates a live worker process after broker cancel succeeds", asy
     status: "running",
     profile: "codex",
     workerPid: 12345,
+    workerStartTime: "fixture",
   });
   const client = new FakeBrokerClient({ ok: true });
   const terminated: number[] = [];
@@ -148,6 +149,7 @@ test("cancel terminates a live worker process after broker cancel succeeds", asy
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
       connectBrokerSession: async () => ({ client: client as never, alreadyRunning: true }),
+      pidMatchesStartTime: async (_pid, expected) => expected === "fixture",
       pidIsAlive: (pid) => pid === 12345,
       terminateProcessTree: async (pid) => {
         terminated.push(pid);
@@ -169,6 +171,7 @@ test("cancel ignores a stale worker pid after broker cancel succeeds", async (t)
     status: "running",
     profile: "codex",
     workerPid: 12345,
+    workerStartTime: "fixture",
   });
   const client = new FakeBrokerClient({ ok: true });
   const terminated: number[] = [];
@@ -237,6 +240,7 @@ test("cancel signals a live inline runner instead of dialing a broker", async (t
     profile: "codex",
     runner: "inline",
     runnerPid: 4242,
+    runnerStartTime: "fixture",
   });
   const signalled: Array<[number, string]> = [];
 
@@ -248,6 +252,7 @@ test("cancel signals a live inline runner instead of dialing a broker", async (t
       connectBrokerSession: async () => {
         throw new Error("broker should not be touched for an inline job");
       },
+      pidMatchesStartTime: async (_pid, expected) => expected === "fixture",
       pidIsAlive: (pid) => pid === 4242,
       signalPid: (pid, signal) => {
         signalled.push([pid, signal]);
@@ -274,6 +279,7 @@ test("cancel marks an inline job cancelled when the runner pid is dead", async (
     profile: "codex",
     runner: "inline",
     runnerPid: 4242,
+    runnerStartTime: "fixture",
   });
 
   const result = await runCancel({
@@ -313,6 +319,7 @@ test("cancel settles an inline job when the runner dies between check and signal
     profile: "codex",
     runner: "inline",
     runnerPid: 4242,
+    runnerStartTime: "fixture",
   });
 
   const result = await runCancel({
@@ -321,6 +328,7 @@ test("cancel settles an inline job when the runner dies between check and signal
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
       pidIsAlive: () => true,
+      pidMatchesStartTime: async (_pid, expected) => expected === "fixture",
       signalPid: () => {
         const error = new Error("kill ESRCH") as NodeJS.ErrnoException;
         error.code = "ESRCH";
@@ -346,6 +354,7 @@ test("cancel reports a permission error instead of crashing on EPERM", async (t)
     profile: "codex",
     runner: "inline",
     runnerPid: 4242,
+    runnerStartTime: "fixture",
   });
 
   const result = await runCancel({
@@ -354,6 +363,7 @@ test("cancel reports a permission error instead of crashing on EPERM", async (t)
     deps: {
       resolveWorkspaceRoot: async () => workspaceRoot,
       pidIsAlive: () => true,
+      pidMatchesStartTime: async (_pid, expected) => expected === "fixture",
       signalPid: () => {
         const error = new Error("kill EPERM") as NodeJS.ErrnoException;
         error.code = "EPERM";
@@ -464,12 +474,14 @@ test("cancel re-reads before writing and preserves a concurrently stamped worker
           profile: "codex",
           submittedAt: "2026-05-14T10:00:00.000Z",
           workerPid: 24680,
+          workerStartTime: "fixture",
           runnerStartTime: "12345",
         });
         const error = new Error("unreachable") as NodeJS.ErrnoException;
         error.code = "BROKER_UNREACHABLE";
         throw error;
       },
+      pidMatchesStartTime: async (_pid, expected) => expected === "fixture",
       pidIsAlive: (pid) => pid === 24680,
       terminateProcessTree: async (pid) => { terminated.push(pid); },
     },
@@ -613,5 +625,34 @@ class FakeBrokerClient {
   async request(method: string, params: unknown) {
     this.requests.push({ method, params });
     return this.response;
+  }
+}
+
+for (const runner of ["inline", "worker"] as const) {
+  for (const identity of [undefined, "previous-process"]) {
+    test(`cancel does not signal ${runner} with ${identity ?? "missing"} identity`, async (t) => {
+      const { workspaceRoot, dataDir } = await makeWorkspace();
+      withDataDir(t, dataDir);
+      await writeJob(workspaceRoot, {
+        jobId: "job-identity", status: "running", profile: "codex",
+        ...(runner === "inline"
+          ? { runner, runnerPid: process.pid, runnerStartTime: identity }
+          : { workerPid: process.pid, workerStartTime: identity }),
+      });
+      const client = new FakeBrokerClient({ ok: true });
+      const result = await runCancel({
+        args: { positional: ["job-identity"], flags: {} },
+        deps: {
+          resolveWorkspaceRoot: async () => workspaceRoot,
+          connectBrokerSession: async () => ({ client: client as never }),
+          // Exercise the real identity check against a live process, without
+          // ever sending a signal if this regression fails.
+          signalPid: () => assert.fail("must not signal an unrelated process"),
+          terminateProcessTree: async () => assert.fail("must not terminate an unrelated process"),
+        },
+      });
+      assert.equal(result.exitCode, 0);
+      assert.match(result.stdout, runner === "inline" ? /record marked cancelled/ : /identity is missing or changed/);
+    });
   }
 }

@@ -143,8 +143,8 @@ export async function ensureBrokerSession({
         profileEntry.binary,
         "--args",
         JSON.stringify(profileEntry.args ?? []),
-        "--env",
-        JSON.stringify(profileEntry.env ?? {}),
+        "--env-stdin",
+        "true",
         "--registry-id",
         profileEntry.registryId ?? profile,
         "--codex-path",
@@ -160,9 +160,11 @@ export async function ensureBrokerSession({
       ] as string[],
       {
         detached: true,
-        stdio: ["ignore", "ignore", stderrHandle.fd],
+        stdio: ["pipe", "ignore", stderrHandle.fd],
       },
     );
+    child.stdin!.on("error", () => {}); // Startup failure is reported via stderr below.
+    child.stdin!.end(JSON.stringify(profileEntry.env ?? {}));
   } finally {
     await stderrHandle.close();
   }

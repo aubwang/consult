@@ -1,7 +1,7 @@
 # Consult Glossary
 
 Consult is a host-neutral delegation layer. A coding environment starts a
-self-contained Job and delegates one prompt turn to a configured ACP Profile.
+self-contained Job and delegates it to a configured ACP Profile.
 
 ## Language
 
@@ -64,8 +64,9 @@ One `session/prompt` request-response cycle inside a Session. It streams
 _Avoid_: call, exchange
 
 **Job**
-The Consult tracking record for exactly one `delegate` or `review` prompt turn.
-A Job records request metadata, lifecycle, outcome, artifacts, and lineage.
+The Consult tracking record for one `delegate` or `review` invocation. Steering
+may cancel and restart a prompt turn within the same Job. A Job records request
+metadata, lifecycle, outcome, artifacts, and lineage.
 _Avoid_: task, native session
 
 **Job Label**

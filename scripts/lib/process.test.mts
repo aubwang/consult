@@ -252,3 +252,22 @@ async function waitForChildExit(child: ChildProcess): Promise<void> {
     child.unref();
   }
 }
+
+test("recorded group cancellation kills a stubborn child after its leader exits", async (t) => {
+  const { processStartTime, pidMatchesStartTime } = await import("./process-identity.mts");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-group-identity-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const readyPath = path.join(root, "ready");
+  const childSource = `process.on('SIGTERM', () => {}); require('fs').writeFileSync(${JSON.stringify(readyPath)}, String(process.pid)); setInterval(() => {}, 1000);`;
+  const leader = await spawnNodeChild(t, `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(childSource)}], {stdio:'ignore'}); setInterval(() => {}, 1000);`);
+  if (!leader) return;
+  await waitForFile(readyPath);
+  const childPid = Number(await fs.readFile(readyPath, "utf8"));
+  t.after(() => { try { process.kill(childPid, "SIGKILL"); } catch {} });
+  const identity = await processStartTime(leader.pid);
+  await terminateProcessTree(leader.pid, {
+    timeoutMs: 100,
+    beforeSignal: () => pidMatchesStartTime(leader.pid, identity),
+  });
+  assert.equal(pidIsAlive(childPid), false);
+});

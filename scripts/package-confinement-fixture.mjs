@@ -83,6 +83,16 @@ async function runScenario(scenario) {
   if (scenario === "resume" || scenario === "background") return;
   if (scenario === "write") {
     await assertHostReadDenied();
+    const gitConfig = path.join(process.cwd(), ".git", "config");
+    let gitWriteAllowed = false;
+    try {
+      // Opening for write is sufficient to test the boundary; keep the config
+      // content intact even if the candidate policy regresses.
+      const handle = await fs.open(gitConfig, "r+");
+      await handle.close();
+      gitWriteAllowed = true;
+    } catch {}
+    if (gitWriteAllowed) throw new Error("delegated write access to .git/config was allowed");
     await fs.writeFile(path.join(process.cwd(), "write-ok.txt"), "write-ok\n");
     await tryWrite(config.hostWriteCanary, "forbidden\n");
     await fs.writeFile(
@@ -164,6 +174,9 @@ async function assertCredentialBoundary() {
 }
 
 async function assertHostReadDenied() {
+  if (process.platform === "linux" && (await fs.readdir("/sys")).length !== 0) {
+    throw new Error("host /sys remained visible despite the read allowlist");
+  }
   try {
     await fs.readFile(config.hostReadCanary);
   } catch {

@@ -190,6 +190,7 @@ export async function runReview({
   };
   const preflight = await preflightWithClaudeHostRefresh(preflightInput, {
     allowHostRefresh: !env.CONSULT_PARENT_JOB,
+    onRefresh: () => output.stderr("Refreshing Claude Host login in a private session before creating the Job...\n"),
     preflight:
       deps.preflightAuthority ??
       ((input: JobAuthorityPreflightInput) =>

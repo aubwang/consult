@@ -233,6 +233,7 @@ export async function runDelegate({
   };
   const preflight = await preflightWithClaudeHostRefresh(preflightInput, {
     allowHostRefresh: chain.parent == null,
+    onRefresh: () => output.stderr("Refreshing Claude Host login in a private session before creating the Job...\n"),
     preflight:
       deps.preflightAuthority ??
       ((input: JobAuthorityPreflightInput) =>

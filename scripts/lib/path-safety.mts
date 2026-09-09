@@ -45,6 +45,14 @@ async function resolveTargetPath(targetPath: string): Promise<string> {
       throw error;
     }
 
+    // realpath also returns ENOENT for a dangling link. It is not a new file:
+    // following it during a subsequent Host write would escape the boundary.
+    const entry = await fs.lstat(targetPath).catch((cause: NodeJS.ErrnoException) => {
+      if (cause.code !== "ENOENT") throw cause;
+      return null;
+    });
+    if (entry?.isSymbolicLink()) throw error;
+
     // A missing parent is a real I/O error; callers need that distinction.
     const parentDir = await fs.realpath(path.dirname(targetPath));
     return path.join(parentDir, path.basename(targetPath));
@@ -57,6 +65,12 @@ function resolveTargetPathSync(targetPath: string): string {
   } catch (error) {
     if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
       throw error;
+    }
+
+    try {
+      if (syncFs.lstatSync(targetPath).isSymbolicLink()) throw error;
+    } catch (cause) {
+      if (cause === error || (cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
     }
 
     // A missing parent is a real I/O error; callers need that distinction.

@@ -20,6 +20,7 @@ const PATH_BEARING_KINDS = new Set([
   "delete",
   "move",
   "other",
+  "execute",
 ]);
 const READ_ONLY_DENIED_KINDS = new Set([
   "edit",
@@ -72,6 +73,11 @@ const PATH_FIELD_NAMES = new Set(
     "from",
     "oldPath",
     "newPath",
+    "oldFile",
+    "newFile",
+    "oldFilePath",
+    "newFilePath",
+    "filePaths",
   ].map(normalizeFieldName),
 );
 
@@ -137,10 +143,14 @@ export async function decidePermission(
     // Some ACP tool calls do not expose a path at all; there is nothing to confine.
     for (const targetPath of scan.paths) {
       if (!(await isConfined(targetPath, workspaceRoot))) {
-        return { allowed: false, reason: `path outside workspace: ${targetPath}` };
+        const label = kind === "execute" && targetPath === (request.toolCall.rawInput as { cwd?: string })?.cwd ? "cwd" : "path";
+        return { allowed: false, reason: `${label} outside workspace: ${targetPath}` };
       }
     }
   }
+
+  if (kind === "other") return { allowed: false, reason: mode === "read-only"
+    ? "other denied in read-only mode" : "unknown or other tool kind requires an explicit supported operation" };
 
   if (kind === "execute") {
     const cwd = (request.toolCall.rawInput as { cwd?: string } | undefined)?.cwd ?? workspaceRoot;

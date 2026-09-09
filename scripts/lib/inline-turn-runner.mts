@@ -74,6 +74,7 @@ export function createInlineClient({
   profile,
   authority: expectedAuthority,
   profileEntry,
+  beforeTerminal,
   cancelAckTimeoutMs = INLINE_CANCEL_ACK_TIMEOUT_MS,
   maxWallClockMs,
   maxPersistedLogBytes,
@@ -122,7 +123,10 @@ export function createInlineClient({
       }
       handlers.get(method)?.(params);
     },
-    beforeTerminal: async (terminalJob) => await disposeAgent(terminalJob),
+    beforeTerminal: async (terminalJob) => {
+      await disposeAgent(terminalJob);
+      await beforeTerminal?.();
+    },
     maxWallClockMs,
     maxPersistedLogBytes,
     scheduleWallClock,

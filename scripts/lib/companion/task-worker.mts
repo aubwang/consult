@@ -103,6 +103,8 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
   const isolatedWorkspace = jobRecord.isolatedWorkspace;
   const invalidReason = validateJobRecord(jobRecord);
   if (invalidReason) {
+    failJobRecord(jobRecord, { now: deps.now, errorMessage: `invalid job record: ${invalidReason}` });
+    await (deps.writeJobRecord ?? defaultWriteJobRecord)(workspaceRoot, jobId, jobRecord);
     await cleanupPreparedWorkspace(isolatedWorkspace, deps);
     output.stderr(`invalid job record ${jobId}: ${invalidReason}\n`);
     return output.result(2);
@@ -122,13 +124,15 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
   Object.assign(jobRecord, pickupRecord);
 
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
+  const workerStartTime = (await processStartTime(process.pid).catch(() => null)) ?? undefined;
   Object.assign(jobRecord, {
     workerPid: process.pid,
+    workerStartTime,
     ...(jobRecord.isolated === true
       ? {
           runner: "inline",
           runnerPid: process.pid,
-          runnerStartTime: (await processStartTime(process.pid).catch(() => null)) ?? undefined,
+          runnerStartTime: workerStartTime,
         }
       : {}),
   });
@@ -182,7 +186,8 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
     }
     Object.assign(jobRecord, postWaitRecord);
     const unsuccessful = prerequisites.filter(
-      (prerequisite) => prerequisite.status !== "completed",
+      (prerequisite) => prerequisite.status !== "completed" ||
+        (prerequisite.stopReason !== undefined && prerequisite.stopReason !== "end_turn"),
     );
     if (unsuccessful.length > 0) {
       const dependencySummary = unsuccessful
@@ -206,6 +211,8 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
   try {
     profiles = await loadProfiles(profilesPath());
   } catch (error) {
+    failJobRecord(jobRecord, { now: deps.now, errorMessage: (error as Error).message });
+    await writeJobRecord(workspaceRoot, jobId, jobRecord);
     const profileResult = profileErrorResult(error);
     if (profileResult) {
       await cleanupPreparedWorkspace(isolatedWorkspace, deps);
@@ -217,6 +224,8 @@ export async function runTaskWorker({ args, deps = {} }: TaskWorkerOptions): Pro
   }
   const profileEntry = profiles.profiles?.[jobRecord.profile as string];
   if (!profileEntry) {
+    failJobRecord(jobRecord, { now: deps.now, errorMessage: `unknown profile '${jobRecord.profile}'` });
+    await writeJobRecord(workspaceRoot, jobId, jobRecord);
     await cleanupPreparedWorkspace(isolatedWorkspace, deps);
     output.stderr(`invalid job record ${jobId}: unknown profile '${jobRecord.profile}'\n`);
     return output.result(2);

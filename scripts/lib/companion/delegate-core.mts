@@ -98,9 +98,18 @@ export async function runDelegateOnce({
   const effectiveDeps = inline
     ? { ...deps, ensureBrokerSession: deps.ensureBrokerSession ?? ensureInlineSession }
     : deps;
+  let settlement: Promise<Error | null> | undefined;
+  const settle = () => settlement ??= isolatedWorkspace
+    ? settleIsolatedWorkspace({ workspaceRoot, jobRecord, prepared: isolatedWorkspace, deps, output })
+    : Promise.resolve(null);
+  const beforeTerminal = isolatedWorkspace ? async () => {
+    const error = await settle();
+    if (error) throw error;
+  } : undefined;
   let result;
   try {
     result = await runPromptTurn({
+      beforeTerminal,
       workspaceRoot,
       executionRoot,
       profileEntry,
@@ -121,26 +130,12 @@ export async function runDelegateOnce({
       markFailedOnBrokerError,
     });
   } catch (error) {
-    if (isolatedWorkspace) {
-      await settleIsolatedWorkspace({
-        workspaceRoot,
-        jobRecord,
-        prepared: isolatedWorkspace,
-        deps,
-        output,
-      });
-    }
+    failJobRecord(jobRecord, { now: deps.now, errorMessage: (error as Error).message });
+    await settle();
+    await (deps.writeJobRecord ?? defaultWriteJobRecord)(workspaceRoot, jobRecord.jobId!, jobRecord);
     throw error;
   }
-  const isolationError = isolatedWorkspace
-    ? await settleIsolatedWorkspace({
-        workspaceRoot,
-        jobRecord,
-        prepared: isolatedWorkspace,
-        deps,
-        output,
-      })
-    : null;
+  const isolationError = await settle();
   if (isolationError) {
     return output.result(6);
   }
@@ -205,10 +200,15 @@ async function settleIsolatedWorkspace({
   } catch (error) {
     errors.push(error as Error);
   }
-  try {
-    await cleanup(prepared);
-  } catch (error) {
-    errors.push(error as Error);
+  if (errors.length === 0) {
+    try {
+      await cleanup(prepared);
+    } catch (error) {
+      errors.push(error as Error);
+    }
+  } else {
+    jobRecord.recoveryWorkspace = prepared.executionRoot;
+    output.stderr(`Work preserved for recovery at ${prepared.executionRoot}\n`);
   }
 
   if (errors.length > 0) {

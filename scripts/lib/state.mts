@@ -21,7 +21,9 @@ export async function readJobRecord(
   return record;
 }
 
-export async function listJobRecords(jobsDir: string): Promise<Record<string, unknown>[]> {
+export async function listJobRecords(jobsDir: string, {
+  onMalformed,
+}: { onMalformed?: (error: JobRecordError) => void } = {}): Promise<Record<string, unknown>[]> {
   let entries: string[];
   try {
     entries = await fs.readdir(jobsDir);
@@ -33,11 +35,16 @@ export async function listJobRecords(jobsDir: string): Promise<Record<string, un
   }
 
   const records: Record<string, unknown>[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".json")) {
-      continue;
-    }
-    records.push(await readJsonFile(path.join(jobsDir, entry)));
+  const files = entries.filter((entry) => entry.endsWith(".json"));
+  // Bound open files while overlapping independent reads on large histories.
+  for (let offset = 0; offset < files.length; offset += 32) {
+    const batch = await Promise.all(files.slice(offset, offset + 32).map((entry) =>
+      readJsonFile(path.join(jobsDir, entry)).catch((error) => {
+        if (error.code === "JOB_RECORD_MALFORMED" && onMalformed) { onMalformed(error); return null; }
+        if (error.code === "ENOENT") return null; // Concurrent explicit cleanup.
+        throw error;
+      })));
+    records.push(...batch.filter((record) => record !== null));
   }
   records.sort((left, right) =>
     String(right.submittedAt ?? "").localeCompare(String(left.submittedAt ?? "")),

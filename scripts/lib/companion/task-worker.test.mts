@@ -51,6 +51,7 @@ test("task-worker runs a queued delegate job and finalizes its record", async (t
   assert.equal(request.params.prompt, "background prompt");
   const record = await readJob(workspaceRoot, "job-worker");
   assert.equal(record.workerPid, process.pid);
+  assert.equal(typeof record.workerStartTime, "string");
   assert.equal(record.status, "completed");
   assert.equal(record.sessionId, "session-worker");
   assert.equal(record.finalText, "done");
@@ -127,6 +128,7 @@ test("task-worker observes cancellation while stamping its worker pid", async (t
   assert.equal(result.exitCode, 0);
   assert.equal(record.status, "cancelled");
   assert.equal(record.workerPid, process.pid);
+  assert.equal(typeof record.workerStartTime, "string");
 });
 
 test("task-worker forwards completed prerequisite results to the dependent prompt", async (t) => {

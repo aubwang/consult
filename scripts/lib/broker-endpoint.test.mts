@@ -158,3 +158,22 @@ test("overrideFilePath is under the per-workspace directory", async () => {
 
   assert.equal(overrideFilePath(workspace), path.join(workspaceDir(workspace), "override.json"));
 });
+
+test("brokerSocketPath compacts labels for canonical macOS temp roots and counts UTF-8 bytes", async () => {
+  const workspace = await makeWorkspace();
+  const oldTmp = process.env.TMPDIR;
+  const oldRuntime = process.env.XDG_RUNTIME_DIR;
+  try {
+    delete process.env.XDG_RUNTIME_DIR;
+    for (const temp of ["/private/var/folders/ab/" + "x".repeat(30) + "/T", "/tmp/" + "é".repeat(24)]) {
+      process.env.TMPDIR = temp;
+      const first = brokerSocketPath({ workspaceRoot: workspace, jobId: "job-one" });
+      const second = brokerSocketPath({ workspaceRoot: workspace, jobId: "job-two" });
+      assert.ok(Buffer.byteLength(first) <= 100);
+      assert.notEqual(first, second);
+    }
+  } finally {
+    if (oldTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = oldTmp;
+    if (oldRuntime === undefined) delete process.env.XDG_RUNTIME_DIR; else process.env.XDG_RUNTIME_DIR = oldRuntime;
+  }
+});

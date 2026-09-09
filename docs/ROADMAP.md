@@ -64,7 +64,8 @@ The release-hardening gates for the default boundary are complete:
 
 - Add an explicit, safe patch-application command only if real use shows that
   surfacing the patch path is insufficient. Keep application user-controlled.
-- Add retention and cleanup policy for old Job logs and isolated artifacts.
+- Measure history and log performance against larger real workloads. Explicit
+  retention cleanup is available through `consult clean`.
 - Add process-count, CPU, memory, and disk containment only after a portable
   resource-authority design is proven; wall-clock and log-size limits already
   ship.

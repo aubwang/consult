@@ -984,7 +984,24 @@ export function parseArgs(argv: string[]): ServeBrokerOptions {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const broker = await serveBroker(parseArgs(process.argv.slice(2)));
+    const options = parseArgs(process.argv.slice(2));
+    if (process.argv.includes("--env-stdin")) {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      for await (const chunk of process.stdin) {
+        const buffer = Buffer.from(chunk);
+        bytes += buffer.length;
+        if (bytes > 1024 * 1024) throw new Error("Profile environment exceeds 1 MiB");
+        chunks.push(buffer);
+      }
+      const env = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      if (!env || Array.isArray(env) || typeof env !== "object" ||
+          Object.values(env).some((value) => typeof value !== "string")) {
+        throw new Error("Profile environment must be an object of strings");
+      }
+      options.env = env;
+    }
+    const broker = await serveBroker(options);
     process.once("SIGTERM", () => { void broker.shutdown(0).catch(() => {}); });
     process.once("SIGINT", () => { void broker.shutdown(0).catch(() => {}); });
     const { code } = await broker.closed;

@@ -189,3 +189,9 @@ test("closestName only suggests names within a proportional edit distance", () =
   assert.equal(closestName("logs", commands), "logs");
   assert.equal(closestName("anything", []), null);
 });
+
+test("short help is an alias and unknown short flags require explicit positional escaping", () => {
+  assert.deepEqual(parseArgs(["-h"]), { positional: [], flags: { help: true } });
+  assert.throws(() => parseArgs(["-x"]), /unknown short option -x/);
+  assert.deepEqual(parseArgs(["--", "-x"]), { positional: ["-x"], flags: {} });
+});

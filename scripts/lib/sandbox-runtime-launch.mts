@@ -32,6 +32,7 @@ import {
   assertSandboxRuntimeLiteralPath,
   snapshotSandboxRuntimeSharedWritePaths,
   transformSandboxRuntimeLaunch,
+  PROXY_ENV_NAME,
 } from "./sandbox-runtime-policy.mts";
 
 const JOB_ROOT_PREFIX = "/tmp/consult-srt-job-";
@@ -464,10 +465,10 @@ export async function acquireConfinedSandboxRuntimeLaunch(
         allowAllUnixSockets: false,
       },
       filesystem: {
-        denyRead: ["/"],
+        denyRead: platform === "linux" ? ["/", "/sys"] : ["/"],
         allowRead: readPaths,
         allowWrite: [home, temp, ...(input.authority.mode === "write" ? [workspaceRoot] : [])],
-        denyWrite: existingPaths(hostDefaultWritePaths),
+        denyWrite: existingPaths([...hostDefaultWritePaths, path.join(cwd, ".git")]),
         allowGitConfig: false,
       },
       enableWeakerNestedSandbox: false,
@@ -514,6 +515,11 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       requestedModel: input.requestedModel,
       codexPath: pinnedCodex?.realPath,
     });
+    // Only the transform's verified proxy variables may cross from the runtime
+    // artifact into the sanitized Profile environment.
+    for (const [name, value] of Object.entries(transformed.env)) {
+      if (PROXY_ENV_NAME.test(name) && value?.includes(proxy.token)) childEnv[name] = value;
+    }
     Object.assign(childEnv, runtimeEnvironment);
 
     return {

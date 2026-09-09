@@ -16,8 +16,8 @@ const overview = `Usage:
 
 Delegate one cold, self-contained prompt turn from the current Host to a
 configured Claude, Codex, opencode, or Copilot Profile. The Host keeps
-decomposition, judgment, and integration; each Job carries exactly one prompt
-turn under one explicit Job Authority.
+decomposition, judgment, and integration. Each Job has one explicit Job
+Authority; steering may restart its prompt turn.
 
 Commands:
   setup         Install or verify Profiles.
@@ -35,6 +35,7 @@ Commands:
   chain         Show a Job's delegation lineage.
   cancel        Cancel an active Job and descendants.
   brokers       Inspect or clean Broker state.
+  clean         Preview removal of expired Job history; --apply removes it.
   capabilities  Report what this build supports, for feature detection.
   help          Show this help, one command's flags, or one topic.
 
@@ -398,8 +399,8 @@ See also: consult help contracts, consult help chains, consult review --help
 
 const jobsTopic = `Topic: jobs
 
-A Job is the tracking record for exactly one delegate or review prompt turn,
-scoped to the Workspace it was started in.
+A Job tracks one delegate or review invocation in its original Workspace.
+Steering may restart a prompt turn while keeping the same Job.
 
 ## Foreground and background
 
@@ -441,8 +442,13 @@ process-count, or global fan-out quota.
   window then streams. Read logs only when necessary, with a small window such
   as consult logs <job-id> --tail 10.
 - result prints a finished Job's answer; outcome.finalText holds agent-message
-  text while tool activity stays in logs.
+  text while tool activity stays in logs. Summary output previews the end of
+  that text; it is not a separately verified final report.
 - Do not inspect private Job or Broker files directly.
+
+Only end_turn completes a new Job successfully. Refusals, token limits, and
+unknown stop reasons fail the Job; the Host still verifies correctness.
+Isolated patch failures preserve a recovery worktree.
 
 ## Dependencies
 
@@ -471,6 +477,8 @@ Host decide.
 Each normal background Job has a Job-scoped Broker that exits when the Job
 finalizes; an isolated background worker may host the same runtime inline.
 consult brokers lists them and --cleanup removes stale or malformed state.
+consult clean --older-than 30d previews expired history; --apply removes it.
+Recovery worktrees and dependencies of retained Jobs are kept.
 
 ## Cancellation
 

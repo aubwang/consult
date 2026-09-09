@@ -218,3 +218,11 @@ function profileFixture(overrides: Record<string, unknown> = {}): Record<string,
     ...overrides,
   };
 }
+
+test("agents emits an empty JSON array before setup", async () => {
+  const result = await runAgents({ args: { positional: [], flags: { json: true } }, deps: {
+    loadProfiles: async () => ({ schemaVersion: 1, default: null, profiles: {} }),
+  } });
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(JSON.parse(result.stdout), []);
+});

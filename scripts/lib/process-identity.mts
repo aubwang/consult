@@ -27,7 +27,10 @@ export async function processStartTime(pid: number = process.pid): Promise<strin
     return null;
   }
   const fieldsAfterCommand = stat.slice(commandEnd + 2).trim().split(/\s+/);
-  return fieldsAfterCommand[19] ?? null;
+  const ticks = fieldsAfterCommand[19];
+  if (!ticks) return null;
+  const bootId = (await fsp.readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+  return `${bootId}:${ticks}`;
 }
 
 export async function pidMatchesStartTime(
@@ -48,4 +51,24 @@ export async function pidMatchesStartTime(
     }
     throw error;
   }
+}
+
+export async function captureProcessGroupIdentity(groupId: number): Promise<() => Promise<boolean>> {
+  const members = async (): Promise<number[]> => {
+    const { stdout } = await execFileAsync("ps", ["-axo", "pid=,pgid="], { encoding: "utf8" });
+    return stdout.trim().split("\n").map((line) => line.trim().split(/\s+/).map(Number))
+      .filter(([, group]) => group === groupId).map(([pid]) => pid);
+  };
+  const identities = new Map<number, string>();
+  for (const pid of await members()) {
+    const start = await processStartTime(pid).catch(() => null);
+    if (start) identities.set(pid, start);
+  }
+  return async () => {
+    for (const pid of await members()) {
+      const expected = identities.get(pid);
+      if (expected && await pidMatchesStartTime(pid, expected)) return true;
+    }
+    return false;
+  };
 }

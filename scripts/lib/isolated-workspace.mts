@@ -7,6 +7,7 @@ import path from "node:path";
 import { workspaceDir } from "./broker-endpoint.mts";
 import { isRecord } from "./objects.mts";
 import { atomicWriteJson } from "./state.mts";
+import { gitEnvironment, GIT_STABLE_CONFIG } from "./git-environment.mts";
 
 export const ISOLATED_WORKSPACE_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_ISOLATED_GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
@@ -117,6 +118,7 @@ export async function prepareIsolatedWorkspace({
   try {
     const headCommit = await resolveHeadCommit(originalRoot, maxBufferBytes);
     await assertSubmodulesUnsupported(originalRoot);
+    await assertSupportedIndex(originalRoot, maxBufferBytes);
     const stagedPatch = (await runGit(originalRoot, [
       "diff",
       "--cached",
@@ -204,6 +206,7 @@ export async function finalizeIsolatedWorkspace(
   { now = defaultNow }: FinalizeIsolatedWorkspaceOptions = {},
 ): Promise<FinalizedIsolatedWorkspace> {
   await validatePreparedWorkspace(prepared);
+  await assertSupportedIndex(prepared.executionRoot, prepared.maxBufferBytes);
   await listSafeUntrackedFiles(prepared.executionRoot, prepared.maxBufferBytes);
 
   const finalIndexPath = temporaryIndexPath(prepared.artifactsDir, "final");
@@ -219,6 +222,7 @@ export async function finalizeIsolatedWorkspace(
       env: indexEnv,
       maxBufferBytes: prepared.maxBufferBytes,
     });
+    await assertSupportedIndex(prepared.executionRoot, prepared.maxBufferBytes, indexEnv);
     patch = (await runGit(prepared.executionRoot, [
       "diff",
       "--cached",
@@ -434,7 +438,24 @@ function temporaryIndexPath(artifactsDir: string, label: string): string {
 }
 
 function gitIndexEnvironment(indexPath: string): NodeJS.ProcessEnv {
-  return { ...process.env, GIT_INDEX_FILE: indexPath };
+  return { GIT_INDEX_FILE: indexPath };
+}
+
+async function assertSupportedIndex(
+  cwd: string, maxBufferBytes: number, env: NodeJS.ProcessEnv = {},
+): Promise<void> {
+  const entries = (await runGit(cwd, ["ls-files", "--stage", "-z"], { env, maxBufferBytes }))
+    .stdout.toString("utf8").split("\0");
+  for (const entry of entries) {
+    const match = /^(\d{6}) [0-9a-f]+ (\d)\t([\s\S]*)$/u.exec(entry);
+    if (!match) continue;
+    if (match[2] !== "0") {
+      throw isolatedWorkspaceError("ISOLATED_WORKSPACE_UNMERGED", `resolve merge conflicts before using isolation: ${match[3]}`);
+    }
+    if (match[1] === "160000") {
+      throw isolatedWorkspaceError("ISOLATED_WORKSPACE_GITLINK_UNSUPPORTED", `isolated workspaces cannot capture nested repository contents: ${match[3]}`);
+    }
+  }
 }
 
 async function listSafeUntrackedFiles(
@@ -692,9 +713,10 @@ interface GitCommandOutput {
 async function runGit(
   cwd: string,
   args: string[],
-  { env = process.env, maxBufferBytes }: RunGitOptions,
+  { env = {}, maxBufferBytes }: RunGitOptions,
 ): Promise<GitCommandOutput> {
   const isolatedArgs = [
+    ...GIT_STABLE_CONFIG,
     "-c",
     "diff.noprefix=false",
     "-c",
@@ -709,7 +731,7 @@ async function runGit(
       isolatedArgs,
       {
         cwd,
-        env,
+        env: gitEnvironment(env),
         encoding: "buffer",
         maxBuffer: maxBufferBytes,
         windowsHide: true,

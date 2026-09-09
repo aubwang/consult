@@ -309,3 +309,13 @@ test("loadProfiles defaults installedVia to registry when absent", async () => {
 
   assert.equal((await loadProfiles(profilesPath)).profiles.codex.installedVia, "registry");
 });
+
+test("loadProfiles rejects non-string launch arguments and environment values", async () => {
+  for (const overrides of [{ args: [42] }, { env: { TOKEN: 42 } }]) {
+    const file = path.join(makeRoot(), "profiles.json");
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, default: "custom", profiles: {
+      custom: { registryId: "custom", binary: "/agent", args: [], env: {}, installedAt: "now", ...overrides },
+    } }));
+    await assert.rejects(loadProfiles(file), { code: "PROFILES_MALFORMED" });
+  }
+});

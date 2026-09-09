@@ -30,6 +30,7 @@ const handlers: Record<string, () => Promise<CompanionHandler>> = {
   status: () => import("./lib/companion/status.mts"),
   result: () => import("./lib/companion/result.mts"),
   cancel: () => import("./lib/companion/cancel.mts"),
+  clean: () => import("./lib/companion/clean.mts"),
   wait: () => import("./lib/companion/wait.mts"),
   brokers: () => import("./lib/companion/brokers.mts"),
   "task-worker": () => import("./lib/companion/task-worker.mts"),

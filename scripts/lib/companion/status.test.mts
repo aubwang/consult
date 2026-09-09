@@ -298,7 +298,7 @@ test("status wait exits with final state after polling a job to completion", asy
   assert.equal(result.exitCode, 0);
   assert.equal(polls, 1);
   assert.match(result.stdout, /^status: completed$/mu);
-  assert.match(result.stdout, /^result: done$/mu);
+  assert.match(result.stdout, /^output preview: done$/mu);
 });
 
 test("status follow streams rendered logs until the job finalizes", async (t) => {
@@ -422,7 +422,7 @@ test("status exits 2 for a malformed job record", async (t) => {
   assert.equal(result.stderr, `job record malformed: ${recordPath}\n`);
 });
 
-test("status list exits 2 for a non-object job record", async (t) => {
+test("status list warns about a non-object job record", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   const recordPath = await writeRawJob(workspaceRoot, "job-bad", "null");
@@ -432,8 +432,8 @@ test("status list exits 2 for a non-object job record", async (t) => {
     deps: { resolveWorkspaceRoot: async () => workspaceRoot },
   });
 
-  assert.equal(result.exitCode, 2);
-  assert.equal(result.stderr, `job record malformed: ${recordPath}\n`);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stderr, `Skipped malformed history record: ${recordPath}; relationships may be incomplete\n`);
 });
 
 async function makeWorkspace(): Promise<{ workspaceRoot: string; dataDir: string }> {
