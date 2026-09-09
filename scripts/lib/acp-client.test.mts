@@ -24,6 +24,21 @@ const fixturePath = fileURLToPath(
   new URL("./__fixtures__/fake-acp-agent.mts", import.meta.url),
 );
 
+test("adapter auth-status notifications do not log account payloads or replace explicit handlers", async (t) => {
+  const errors = t.mock.method(console, "error", () => {});
+  for (const explicit of [false, true]) {
+    const notifications: string[] = [];
+    const agent = await startAgent({
+      binary: process.execPath, args: [fixturePath, "sessions", "auth-status-notification"],
+      cwd: path.dirname(fixturePath),
+      clientHandlers: explicit ? { extNotification: async (method) => { notifications.push(method); } } : {},
+    });
+    await agent.dispose();
+    assert.deepEqual(notifications, explicit ? ["_auth/status_update"] : []);
+  }
+  assert.equal(errors.mock.callCount(), 0);
+});
+
 test("startAgent initializes an ACP agent and disposes it cleanly", async () => {
   const agent = await startAgent({
     binary: process.execPath,

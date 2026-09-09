@@ -241,8 +241,10 @@ copilot; generic custom Profile configuration remains available.
   consult agents --set claude                # global default
   consult doctor --agent claude              # verify one Profile launches
 
-Report an unavailable Profile or a failed Doctor result instead of silently
-substituting another agent.
+Use the native Claude Profile for Claude models and the native Codex Profile
+for OpenAI models. Use opencode for other providers unless the user explicitly
+requests it. Report a native Profile or Doctor failure; do not route around it
+through opencode. Default model discovery follows this same preference.
 
 ## claude
 

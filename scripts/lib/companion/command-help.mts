@@ -493,7 +493,12 @@ Removed Jobs cannot be resumed. Nothing is cleaned automatically.
                  [--limit 20] [--offset 0] [--sandbox confined|inherit]
 
 Find exact advertised model IDs and the configured Profiles that serve them.
---match is a case-insensitive substring filter on model IDs. Results default
+Default discovery uses native Claude/Codex adapters for their model families.
+Claude/Anthropic and OpenAI/Codex family searches inspect only those adapters,
+including configured aliases. Native setup or auth failures are reported rather
+than replaced by opencode routes. Broad searches omit alternate Claude/OpenAI
+routes. Use --agent opencode explicitly when that is the route you want.
+--match otherwise uses a case-insensitive substring filter on model IDs. Results default
 to 20 rows; --limit accepts 1–200 and --offset selects the next page. --json
 includes the running Consult version, delegate/Doctor argument arrays, and
 per-Profile diagnostics. Recipes take the prompt on stdin and grant read-only

@@ -34,7 +34,10 @@ consult models --match grok --json
 
 The configured summary starts no agents. Model discovery may initialize a
 Profile or run its catalogue command, but sends no model prompt. Its JSON
-includes exact launch arguments and authority requirements. Advertised models
+includes exact launch arguments and authority requirements. Claude and OpenAI
+models use their native adapters by default; opencode serves other providers
+unless explicitly selected. Native auth failures are reported without rerouting.
+Advertised models
 still depend on your account access; see `consult models --help` for details.
 
 ## Prepare a change, then verify it
