@@ -547,6 +547,10 @@ function buildClient(clientHandlers: ClientHandlers, sessionUpdateState: Session
       if (clientHandlers.extNotification) {
         return clientHandlers.extNotification(method, params);
       }
+      // New adapters announce account status independently of initialization.
+      // This is informational, not an authorization request or readiness proof.
+      // Leaving it unhandled makes the SDK log the account payload as an error.
+      if (method === "_auth/status_update") return Promise.resolve();
       throw RequestError.methodNotFound(method);
     },
   };

@@ -712,8 +712,21 @@ and `agents --json` contracts retain their default behavior.
 
 `consult models --match grok --json` lists exact model IDs across configured
 Profiles. Narrow with `--agent`, use `--limit` (default 20, maximum 200), and
-follow `nextOffset` with `--offset`. Matching is a case-insensitive substring
-of the model ID. An empty match set is valid; it never causes substitution.
+follow `nextOffset` with `--offset`. Default discovery prefers native Claude
+Profiles for Claude models and native Codex Profiles for OpenAI models.
+Recognized family searches inspect only the native adapters, including
+configured aliases; `claude`/`anthropic` and `openai`/`codex` list that family's
+native catalogue. Other matches are case-insensitive substrings of the model
+ID. A missing or failing native adapter produces setup/Doctor guidance, not an
+opencode replacement. Broad discovery omits alternative Claude/OpenAI routes;
+select `--agent opencode` explicitly to inspect those. An empty match set is
+valid and never causes model substitution.
+
+The configured summary includes `routing.preferredProfiles`, `nativeFor` on
+native Profile rows, and a report-without-rerouting policy for native failures.
+Model results include the same policy and identify an explicit Profile choice.
+Defaults are guidance for the calling Host; they do not change an explicitly
+selected delegate Profile or automatically translate model IDs.
 
 Each route includes its Profile, model, confinement mode, explicit-inheritance
 requirement, and delegate/Doctor argument arrays. Arrays exclude the Consult

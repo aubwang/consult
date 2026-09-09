@@ -158,6 +158,11 @@ function handleMessage(message: FakeAgentMessage): void {
   logAgentMethod(message);
 
   if (message.method === "initialize") {
+    if (scenario === "auth-status-notification") {
+      writeMessage({ jsonrpc: "2.0", method: "_auth/status_update", params: {
+        authStatus: { kind: "account", label: "Synthetic account", account: { id: "synthetic-account" } },
+      } });
+    }
     writeMessage({
       jsonrpc: "2.0",
       id: message.id,

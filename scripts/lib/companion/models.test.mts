@@ -74,3 +74,75 @@ test("invalid discovery arguments fail before reading configuration", async () =
     assert.equal(result.exitCode, 2);
   }
 });
+
+test("Claude and OpenAI family searches inspect native adapters, including configured aliases", async () => {
+  const configured: ProfilesData = { schemaVersion: 1, default: "router", profiles: {
+    router: profile("opencode"), reviewer: profile("claude"), coder: profile("codex"),
+  } };
+  for (const [match, registryId, model, id] of [
+    ["claude", "claude", "sonnet", "reviewer"],
+    ["anthropic", "claude", "fable-5.1", "reviewer"],
+    ["fable", "claude", "fable-5.1", "reviewer"],
+    ["fable 5.1", "claude", "fable 5.1", "reviewer"],
+    ["opus[1m]", "claude", "opus[1m]", "reviewer"],
+    ["OpenAI", "codex", "gpt-test", "coder"],
+    ["gpt", "codex", "gpt-test", "coder"],
+  ]) {
+    const calls: string[] = [];
+    const result = await runModels({ args: { positional: [], flags: { match, json: true } }, deps: {
+      loadProfiles: async () => configured, workspace: async () => "/repo",
+      discover: async (entry) => { calls.push(entry.registryId); return { source: "acp-session", models: [model] }; },
+    } });
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(calls, [registryId]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(report.models[0].profile, id);
+    assert.equal(report.models[0].requiresExplicitInheritance, false);
+    assert.equal(report.routing.preferredNativeProfile, registryId);
+  }
+});
+
+test("a failed native probe does not offer opencode as a replacement", async () => {
+  const calls: string[] = [];
+  const result = await runModels({ args: { positional: [], flags: { match: "claude", json: true } }, deps: {
+    loadProfiles: async () => profiles, workspace: async () => "/repo",
+    discover: async (entry) => {
+      calls.push(entry.registryId);
+      if (entry.registryId === "claude") throw new Error("expired credential");
+      return { source: "opencode-catalogue", models: ["openrouter/anthropic/claude-fable-5.1"] };
+    },
+  } });
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(calls, ["claude"]);
+  assert.deepEqual(JSON.parse(result.stdout).models, []);
+  assert.equal(JSON.parse(result.stdout).diagnostics[0].code, "MODEL_DISCOVERY_FAILED");
+});
+
+test("missing native adapters produce setup guidance without launching another Profile", async () => {
+  for (const match of ["claude", "openai"]) {
+    const result = await runModels({ args: { positional: [], flags: { match, json: true } }, deps: {
+      loadProfiles: async () => ({ schemaVersion: 1, default: "router", profiles: { router: profile("opencode") } }),
+      workspace: async () => { throw new Error("must not resolve Workspace"); },
+      discover: async () => { throw new Error("must not launch"); },
+    } });
+    const report = JSON.parse(result.stdout);
+    assert.equal(result.exitCode, 1);
+    assert.deepEqual(report.models, []);
+    assert.equal(report.diagnostics[0].code, "NATIVE_PROFILE_NOT_CONFIGURED");
+  }
+});
+
+test("broad discovery hides alternate native-family routes while explicit Profile selection preserves them", async () => {
+  const catalogue = ["openrouter/anthropic/claude-fable-5.1", "openrouter/openai/gpt-test", "openrouter/x-ai/grok-4.6"];
+  const deps = {
+    loadProfiles: async (): Promise<ProfilesData> => ({ schemaVersion: 1, default: "router", profiles: { router: profile("opencode") } }),
+    workspace: async () => "/repo",
+    discover: async () => ({ source: "opencode-catalogue" as const, models: catalogue }),
+  };
+  const broad = JSON.parse((await runModels({ args: { positional: [], flags: { json: true } }, deps })).stdout);
+  assert.deepEqual(broad.models.map((row: any) => row.model), [catalogue[2]]);
+  assert.equal(broad.routing.omittedAlternateRoutes, 2);
+  const explicit = JSON.parse((await runModels({ args: { positional: [], flags: { agent: "router", json: true } }, deps })).stdout);
+  assert.deepEqual(explicit.models.map((row: any) => row.model), catalogue);
+  assert.equal(explicit.routing.explicitProfile, "router");
+});
