@@ -43,6 +43,7 @@ export interface JobResultArtifacts {
   patchBytes: number | null;
   touchedFilesPath: string | null;
   cleanupMetadataPath: string | null;
+  recoveryWorkspace?: string;
 }
 
 export interface JobResultLineage {
@@ -115,6 +116,7 @@ export function jobResultPayload(
       patchBytes: nonNegativeIntegerOrNull(record.patchBytes),
       touchedFilesPath: stringOrNull(record.touchedFilesPath),
       cleanupMetadataPath: stringOrNull(record.cleanupMetadataPath),
+      ...(typeof record.recoveryWorkspace === "string" ? { recoveryWorkspace: record.recoveryWorkspace } : {}),
     },
     lineage: {
       chainId: stringOrNull(record.chainId),

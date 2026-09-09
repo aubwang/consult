@@ -100,7 +100,7 @@ export async function runAgents({ args, deps = {} }: RunAgentsOptions): Promise<
   if (Object.keys(profiles.profiles).length === 0) {
     return {
       exitCode: 0,
-      stdout: "(no profiles configured; run 'consult setup')\n",
+      stdout: boolFlag(args.flags?.json) ? "[]\n" : "(no profiles configured; run 'consult setup')\n",
       stderr: "",
     };
   }

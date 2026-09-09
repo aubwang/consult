@@ -175,3 +175,23 @@ async function gitOutput(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", ["-C", cwd, ...args]);
   return stdout;
 }
+
+test("base review includes dirty changes after HEAD advances and ignores ambient Git routing", async () => {
+  const repo = await makeRepo("dirty-base");
+  await fs.writeFile(path.join(repo, "note.txt"), "base\n");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+  const base = (await gitOutput(repo, "rev-parse", "HEAD")).trim();
+  await fs.writeFile(path.join(repo, "note.txt"), "committed change\n");
+  await git(repo, "commit", "-am", "advance");
+  await fs.writeFile(path.join(repo, "note.txt"), "dirty change\n");
+  const previous = process.env.GIT_DIR;
+  process.env.GIT_DIR = "/nonexistent/foreign-repo";
+  try {
+    const diff = await getDiff({ cwd: repo, baseRef: base });
+    assert.match(diff, /-base/);
+    assert.match(diff, /\+dirty change/);
+  } finally {
+    if (previous === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = previous;
+  }
+});

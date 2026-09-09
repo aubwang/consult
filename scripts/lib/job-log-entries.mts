@@ -39,7 +39,7 @@ export async function readJobLogEntries(
 export function parseJobLog(
   contents: string,
   path: string,
-  { dropPartialTail = false }: { dropPartialTail?: boolean } = {},
+  { dropPartialTail = false, lineOffset = 0 }: { dropPartialTail?: boolean; lineOffset?: number } = {},
 ): ParsedJobLog {
   let text = contents;
   if (dropPartialTail && !text.endsWith("\n")) {
@@ -63,12 +63,57 @@ export function parseJobLog(
       }
       entries.push(entry);
     } catch {
-      const error = new Error(`job log malformed: ${path}:${index + 1}`) as NodeJS.ErrnoException;
+      const error = new Error(`job log malformed: ${path}:${lineOffset + index + 1}`) as NodeJS.ErrnoException;
       error.code = "JOB_LOG_MALFORMED";
       throw error;
     }
   }
   return { entries, lineCount: lines.length };
+}
+
+export function createJobLogCursor(filePath: string): { read: (final?: boolean) => Promise<ParsedJobLog> } {
+  let offset = 0;
+  let lineOffset = 0;
+  let identity: string | undefined;
+  let pending = Buffer.alloc(0);
+  return { async read(final = false) {
+    const file = await fs.open(filePath, "r").catch((error) => {
+      if (error.code === "ENOENT" && offset === 0) return null;
+      throw error;
+    });
+    if (!file) return { entries: [], lineCount: 0 };
+    const entries: unknown[] = [];
+    const startingLine = lineOffset;
+    try {
+      const stat = await file.stat();
+      const nextIdentity = `${stat.dev}:${stat.ino}`;
+      if ((identity && identity !== nextIdentity) || stat.size < offset) {
+        throw Object.assign(new Error(`job log replaced or truncated while following: ${filePath}`), { code: "JOB_LOG_MALFORMED" });
+      }
+      identity = nextIdentity;
+      while (offset < stat.size) {
+        const buffer = Buffer.alloc(Math.min(64 * 1024, stat.size - offset));
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, offset);
+        if (!bytesRead) break;
+        offset += bytesRead;
+        pending = Buffer.concat([pending, buffer.subarray(0, bytesRead)]);
+        const end = pending.lastIndexOf(10) + 1;
+        if (end > 0) {
+          const parsed = parseJobLog(pending.subarray(0, end).toString("utf8"), filePath, { lineOffset });
+          entries.push(...parsed.entries);
+          lineOffset += parsed.lineCount;
+          pending = Buffer.from(pending.subarray(end));
+        }
+        if (pending.length > 2 * 1024 * 1024) {
+          throw Object.assign(new Error(`job log frame exceeds 2 MiB: ${filePath}:${lineOffset + 1}`), { code: "JOB_LOG_MALFORMED" });
+        }
+      }
+      if (final && pending.length) {
+        throw Object.assign(new Error(`job log has an incomplete final line: ${filePath}:${lineOffset + 1}`), { code: "JOB_LOG_MALFORMED" });
+      }
+      return { entries, lineCount: lineOffset - startingLine };
+    } finally { await file.close(); }
+  } };
 }
 
 // A Job's derived event stream ends where its finalization line does. The log

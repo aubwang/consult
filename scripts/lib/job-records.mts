@@ -11,6 +11,7 @@ import { omitUndefined } from "./objects.mts";
 import { safeSegment } from "./path-segments.mts";
 import type { PreparedIsolatedWorkspace } from "./isolated-workspace.mts";
 import type { JobAuthority } from "./job-authority.mts";
+import { withFileMutex } from "./file-mutex.mts";
 
 export const JOB_STATUS = Object.freeze({
   QUEUED: "queued",
@@ -74,6 +75,8 @@ export interface JobRecord extends Record<string, unknown> {
   runner?: string;
   runnerPid?: number;
   runnerStartTime?: string;
+  workerPid?: number;
+  workerStartTime?: string;
 }
 
 export interface JobClockOptions {
@@ -181,7 +184,7 @@ export function statusFromStopReason(stopReason: unknown): JobStatus {
   if (stopReason === "skipped") {
     return JOB_STATUS.SKIPPED;
   }
-  return JOB_STATUS.COMPLETED;
+  return stopReason === "end_turn" ? JOB_STATUS.COMPLETED : JOB_STATUS.FAILED;
 }
 
 export function isFinalStatus(status: unknown): boolean {
@@ -195,8 +198,10 @@ export async function readWorkspaceJobRecord(
   return (await readJobRecordFromDir(jobsDir(workspaceRoot), jobId)) as JobRecord;
 }
 
-export async function listWorkspaceJobRecords(workspaceRoot: string): Promise<JobRecord[]> {
-  return (await listJobRecordsFromDir(jobsDir(workspaceRoot))) as JobRecord[];
+export async function listWorkspaceJobRecords(
+  workspaceRoot: string, options: Parameters<typeof listJobRecordsFromDir>[1] = {},
+): Promise<JobRecord[]> {
+  return (await listJobRecordsFromDir(jobsDir(workspaceRoot), options)) as JobRecord[];
 }
 
 export function jobRecordPath(workspaceRoot: string, jobId: string): string {
@@ -214,16 +219,34 @@ export async function writeJobRecord(
 ): Promise<void> {
   const dir = jobsDir(workspaceRoot);
   await fs.mkdir(dir, { recursive: true });
-  let selected = record;
-  if (record.status !== JOB_STATUS.CANCELLED) {
-    const existing = await readWorkspaceJobRecord(workspaceRoot, jobId).catch(() => null);
-    if (existing?.status === JOB_STATUS.CANCELLED) {
-      // Cross-process cancellation is terminal. Preserve the cancellation fields
-      // while retaining any runtime identity the stale writer just discovered.
-      selected = { ...record, ...existing };
+  await withFileMutex(path.join(dir, ".locks", "history"), async () => {
+    for (const id of [jobId, record.parentJobId, record.resumeJobId, record.reviewOfJobId, ...(record.afterJobIds ?? [])]) {
+      if (!id) continue;
+      try {
+        await fs.access(path.join(dir, ".pruned", safeSegment(id)));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      throw new Error(`Job ${id} was removed by retention cleanup; create a fresh Job`);
     }
-  }
-  await atomicWriteJson(jobRecordPath(workspaceRoot, jobId), selected);
+    const existing = await readWorkspaceJobRecord(workspaceRoot, jobId).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    // Cancellation wins a concurrent completion; no stale queued/running write
+    // may reopen a terminal Job. Keep runtime/artifact fields learned later.
+    let selected = { ...existing, ...record };
+    if (existing && isFinalStatus(existing.status) && record.status !== JOB_STATUS.CANCELLED) {
+      for (const key of ["status", "stopReason", "completedAt", "errorMessage"] as const) {
+        if (Object.hasOwn(existing, key)) selected[key] = existing[key];
+        else delete selected[key];
+      }
+    } else if (existing?.status === JOB_STATUS.RUNNING && record.status === JOB_STATUS.QUEUED) {
+      selected.status = JOB_STATUS.RUNNING;
+    }
+    await atomicWriteJson(jobRecordPath(workspaceRoot, jobId), selected);
+  });
 }
 
 export async function appendJobLogLine(
@@ -233,7 +256,9 @@ export async function appendJobLogLine(
 ): Promise<void> {
   const dir = logsDir(workspaceRoot);
   await fs.mkdir(dir, { recursive: true });
-  await fs.appendFile(jobLogPath(workspaceRoot, jobId), `${JSON.stringify(notification)}\n`);
+  await withFileMutex(path.join(dir, ".locks", safeSegment(jobId)), async () => {
+    await fs.appendFile(jobLogPath(workspaceRoot, jobId), `${JSON.stringify(notification)}\n`, { mode: 0o600 });
+  });
 }
 
 export interface BrokerJobMetadataFields {

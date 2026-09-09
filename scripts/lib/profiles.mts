@@ -132,7 +132,9 @@ function validateProfiles(profiles: Record<string, unknown>, profilesPath: strin
       typeof profile.registryId !== "string" ||
       typeof profile.binary !== "string" ||
       !Array.isArray(profile.args) ||
+      !profile.args.every((argument) => typeof argument === "string") ||
       !isRecord(profile.env) ||
+      Object.values(profile.env).some((value) => typeof value !== "string") ||
       typeof profile.installedAt !== "string" ||
       !isOptionalString(profile.codexPath) ||
       !isOptionalString(profile.codexVersion)

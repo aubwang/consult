@@ -171,3 +171,58 @@ test("writeTextFile applies workspace confinement before read-only denial", asyn
     },
   );
 });
+
+test("a dangling link cannot create a file outside the Workspace through ACP", async () => {
+  const workspaceRoot = await makeRoot();
+  const outsideRoot = await makeRoot();
+  const target = path.join(outsideRoot, "absent");
+  const link = path.join(workspaceRoot, "link");
+  await fs.symlink(target, link);
+  await assert.rejects(createFsHandlers({ workspaceRoot, mode: "write" }).writeTextFile({
+    sessionId: "session", path: link, content: "must not escape",
+  }), /unsafe workspace path/);
+  await assert.rejects(fs.stat(target), { code: "ENOENT" });
+});
+
+test("relative paths and existing internal symlinks address the Workspace", async () => {
+  const workspaceRoot = await makeRoot();
+  await fs.writeFile(path.join(workspaceRoot, "file"), "before");
+  await fs.symlink("file", path.join(workspaceRoot, "link"));
+  const handlers = createFsHandlers({ workspaceRoot, mode: "write" });
+  await handlers.writeTextFile({ sessionId: "session", path: "link", content: "after" });
+  assert.deepEqual(await handlers.readTextFile({ sessionId: "session", path: "file" }), { content: "after" });
+});
+
+test("Host writes reject Git metadata and multiply linked files", async () => {
+  const workspaceRoot = await makeRoot();
+  await fs.mkdir(path.join(workspaceRoot, ".git"));
+  await fs.writeFile(path.join(workspaceRoot, "file"), "before");
+  await fs.link(path.join(workspaceRoot, "file"), path.join(workspaceRoot, "alias"));
+  const handlers = createFsHandlers({ workspaceRoot, mode: "write" });
+  await assert.rejects(handlers.writeTextFile({ sessionId: "session", path: ".git/config", content: "bad" }), /Git metadata/);
+  await assert.rejects(handlers.writeTextFile({ sessionId: "session", path: "alias", content: "bad" }), /multiply linked/);
+  assert.equal(await fs.readFile(path.join(workspaceRoot, "file"), "utf8"), "before");
+});
+
+test("replacing a parent with a symlink between validation and open cannot redirect a Host write", async (t) => {
+  const workspaceRoot = await makeRoot();
+  const outsideRoot = await makeRoot();
+  const parent = path.join(workspaceRoot, "parent");
+  await fs.mkdir(parent);
+  const originalOpen = fs.open.bind(fs);
+  let swapped = false;
+  t.mock.method(fs, "open", async (...args: Parameters<typeof fs.open>) => {
+    const name = String(args[0]);
+    if (!swapped && (process.platform === "linux" ? name.endsWith("/parent") : name.endsWith("/parent/new"))) {
+      swapped = true;
+      await fs.rename(parent, `${parent}-original`);
+      await fs.symlink(outsideRoot, parent);
+    }
+    return originalOpen(...args);
+  });
+  await assert.rejects(createFsHandlers({ workspaceRoot, mode: "write" }).writeTextFile({
+    sessionId: "session", path: "parent/new", content: "must not escape",
+  }));
+  assert.equal(swapped, true);
+  await assert.rejects(fs.stat(path.join(outsideRoot, "new")), { code: "ENOENT" });
+});

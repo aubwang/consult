@@ -55,6 +55,10 @@ try {
   if (stderr) process.stderr.write(stderr);
   process.exitCode = exitCode;
 } catch (error) {
+  if (error?.code === "INVALID_ARGUMENT") {
+    process.stderr.write(`consult: ${error.message}\n`);
+    process.exit(2);
+  }
   // An unexpected throw reaching here is a Consult bug, not user error. Print a
   // single actionable line and keep the stack behind CONSULT_DEBUG so the
   // normal failure mode is readable.

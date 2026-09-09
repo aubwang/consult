@@ -476,6 +476,14 @@ Examples:
 // resolves against this set too, so a Host that guesses `consult help delegate`
 // lands on the flags instead of an error.
 const commandUsages: Record<string, string> = {
+  clean: `Usage:
+  consult clean [--older-than 30d] [--apply] [--json]
+
+Preview removal of expired terminal Jobs, logs, patches, and saved sessions in
+this Workspace. Pass --apply to remove them. Retention must be at least one day.
+Jobs with live processes, recovery worktrees, or retained dependents are kept.
+Removed Jobs cannot be resumed. Nothing is cleaned automatically.
+`,
   agents: agentsUsage,
   brokers: brokersUsage,
   capabilities: capabilitiesUsage,

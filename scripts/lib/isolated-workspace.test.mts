@@ -435,3 +435,35 @@ async function gitText(cwd: string, ...args: string[]): Promise<string> {
 async function gitPathList(cwd: string, ...args: string[]): Promise<string[]> {
   return (await gitText(cwd, ...args)).split("\0").filter(Boolean);
 }
+
+test("prepare rejects an unmerged index even when other staged and unstaged hunks are valid", async (t) => {
+  const fixture = await makeRepository(t);
+  const root = fixture.workspaceRoot;
+  await fs.writeFile(path.join(root, "conflict.txt"), "base\n");
+  await git(root, "add", ".");
+  await git(root, "commit", "-m", "base");
+  const base = (await gitText(root, "rev-parse", "HEAD")).trim();
+  await git(root, "checkout", "-b", "other");
+  await fs.writeFile(path.join(root, "conflict.txt"), "other\n");
+  await git(root, "commit", "-am", "other");
+  await git(root, "checkout", "--detach", base);
+  await fs.writeFile(path.join(root, "conflict.txt"), "ours\n");
+  await git(root, "commit", "-am", "ours");
+  await assert.rejects(git(root, "merge", "other"));
+  await fs.writeFile(path.join(root, "staged.txt"), "valid staged\n");
+  await git(root, "add", "staged.txt");
+  await fs.writeFile(path.join(root, "unstaged.txt"), "valid unstaged\n");
+  await assert.rejects(prepareIsolatedWorkspace({ workspaceRoot: root, jobId: "job-conflict" }), /resolve merge conflicts/);
+});
+
+for (const phase of ["prepare", "finalize"] as const) {
+  test(`${phase} rejects staged gitlinks without .gitmodules`, async (t) => {
+    const fixture = await makeRepository(t);
+    const prepared = phase === "finalize" ? await prepareIsolatedWorkspace({ workspaceRoot: fixture.workspaceRoot, jobId: "job-link" }) : null;
+    if (prepared) fixture.prepared.push(prepared);
+    const root = prepared?.executionRoot ?? fixture.workspaceRoot;
+    const head = (await gitText(root, "rev-parse", "HEAD")).trim();
+    await git(root, "update-index", "--add", "--cacheinfo", `160000,${head},nested`);
+    await assert.rejects(prepared ? finalizeIsolatedWorkspace(prepared) : prepareIsolatedWorkspace({ workspaceRoot: root, jobId: "job-link" }), /nested repository contents/);
+  });
+}

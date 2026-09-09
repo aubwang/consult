@@ -150,7 +150,8 @@ export async function startJobAgent(
       sessionUpdate: async ({ sessionId, update }) =>
         await runtime.handleSessionUpdate({ sessionId, update }),
       requestPermission: async ({ sessionId, ...request }) => {
-        const sessionAuthority = runtime.getSessionAuthority(sessionId) ?? LEGACY_SAFE_AUTHORITY;
+        const sessionAuthority = runtime.getSessionAuthority(sessionId);
+        if (!sessionAuthority) return { outcome: { outcome: "cancelled" } };
         const decision = await decidePermission({
           request,
           mode: sessionAuthority.mode as PermissionMode,
@@ -163,12 +164,15 @@ export async function startJobAgent(
           confinement: sessionAuthority.confinement,
           reportExec: { consultBinPath: () => consultBin },
         });
-        runtime.notePermissionDecision({ sessionId, decision, request });
-        return permissionResponse(decision, request.options);
+        const response = permissionResponse(decision, request.options);
+        runtime.notePermissionDecision({ sessionId, decision: response.outcome.outcome === "cancelled"
+          ? { allowed: false, reason: "Profile did not offer a compatible permission option" } : decision, request });
+        return response;
       },
       readTextFile: async (request) => {
         const sessionAuthority =
-          runtime.getSessionAuthority(request.sessionId) ?? LEGACY_SAFE_AUTHORITY;
+          runtime.getSessionAuthority(request.sessionId);
+        if (!sessionAuthority) throw new Error("unknown ACP session: no filesystem authority");
         const handlers = createFsHandlers({
           workspaceRoot: cwd,
           mode: sessionAuthority.mode as FsHandlerMode,
@@ -177,7 +181,8 @@ export async function startJobAgent(
       },
       writeTextFile: async (request) => {
         const sessionAuthority =
-          runtime.getSessionAuthority(request.sessionId) ?? LEGACY_SAFE_AUTHORITY;
+          runtime.getSessionAuthority(request.sessionId);
+        if (!sessionAuthority) throw new Error("unknown ACP session: no filesystem authority");
         const handlers = createFsHandlers({
           workspaceRoot: cwd,
           mode: sessionAuthority.mode as FsHandlerMode,
@@ -580,14 +585,6 @@ function runPayloadAuthority(
   return canonicalRunAuthority(params);
 }
 
-const LEGACY_SAFE_AUTHORITY: JobAuthority = Object.freeze({
-  schemaVersion: 1,
-  mode: "read-only",
-  confinement: "inherit",
-  allowFetch: false,
-  allowExecute: false,
-});
-
 function authorityMismatchError(field: "mode" | "allowExecute"): CodedAgentError {
   return authorityDiagnosticError({
     code: "AUTHORITY_MISMATCH",
@@ -627,11 +624,17 @@ export function permissionResponse(
   decision: { allowed: boolean; reason?: string },
   options: PermissionOption[] | undefined,
 ): RequestPermissionResponse {
+  const option = decision.allowed
+    ? options?.find((option) => option.kind === "allow_once")
+    : options?.find((option) => option.kind === "reject_once") ?? options?.find((option) => option.kind === "reject_always");
+  if (!option) {
+    return { outcome: { outcome: "cancelled" }, _meta: { reason: decision.reason ?? "Profile did not offer a one-call permission grant" } };
+  }
   if (decision.allowed) {
     return {
       outcome: {
         outcome: "selected",
-        optionId: optionIdFor(options, "allow") ?? "allow",
+        optionId: option.optionId,
       },
     };
   }
@@ -642,12 +645,7 @@ export function permissionResponse(
     },
     outcome: {
       outcome: "selected",
-      optionId: optionIdFor(options, "reject") ?? "reject",
+      optionId: option.optionId,
     },
   };
-}
-
-function optionIdFor(options: PermissionOption[] | undefined, action: string): string | undefined {
-  const prefix = action === "allow" ? "allow" : "reject";
-  return options?.find((option) => option.kind?.startsWith(prefix))?.optionId;
 }

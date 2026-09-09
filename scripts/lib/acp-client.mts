@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
 import { Readable, Writable } from "node:stream";
+import { boundedJsonlStream } from "./jsonl-framing.mts";
 
 import {
   ClientSideConnection,
@@ -44,6 +45,7 @@ export type ClientHandlers = Partial<Client>;
 export interface NewSessionParams {
   cwd: string;
   mcpServers?: McpServer[];
+  _meta?: Record<string, unknown>;
 }
 
 export interface ResumeSessionParams extends NewSessionParams {
@@ -124,9 +126,9 @@ const DISPOSE_SIGTERM_TIMEOUT_MS = 500;
 
 export async function newSession(
   connection: AcpConnection,
-  { cwd, mcpServers = [] }: NewSessionParams,
+  { cwd, mcpServers = [], _meta }: NewSessionParams,
 ): Promise<NewSessionResponse> {
-  return await connection.newSession({ cwd, mcpServers });
+  return await connection.newSession({ cwd, mcpServers, ...(_meta ? { _meta } : {}) });
 }
 
 export async function resumeSession(
@@ -334,7 +336,7 @@ export async function startAgent(
   try {
     const stream = ndJsonStream(
       Writable.toWeb(agentChild.stdin),
-      Readable.toWeb(agentChild.stdout) as ReadableStream<Uint8Array>,
+      (Readable.toWeb(agentChild.stdout) as ReadableStream<Uint8Array>).pipeThrough(boundedJsonlStream()),
     );
     const connection = new ClientSideConnection(
       () => buildClient(clientHandlers, sessionUpdateState),

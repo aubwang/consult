@@ -1,4 +1,6 @@
 export const BOOLEAN_FLAGS = new Set([
+  "help",
+  "apply",
   "read-only",
   "write",
   "background",
@@ -45,6 +47,7 @@ export function invalidBooleanFlagValueError(
   for (const [name, value] of Object.entries(flags ?? {})) {
     if (!BOOLEAN_FLAGS.has(name)) continue;
     const last = Array.isArray(value) ? value.at(-1) : value;
+    if (name === "help" && last === "") continue;
     if (![true, false, "true", "false"].includes(last as string | boolean)) {
       return `--${name} must be true or false`;
     }
@@ -128,6 +131,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (token === "--") {
       positional.push(...argv.slice(index + 1));
       break;
+    }
+    if (token === "-h") {
+      addFlag(flags, "help", true);
+      continue;
+    }
+    if (token.startsWith("-") && !token.startsWith("--") && token !== "-") {
+      throw Object.assign(new Error(`unknown short option ${token}; use --help for supported options`), { code: "INVALID_ARGUMENT" });
     }
     if (token.startsWith("--")) {
       const equalsIndex = token.indexOf("=");

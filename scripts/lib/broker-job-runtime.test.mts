@@ -881,11 +881,10 @@ test("normal finalization clears the wall-clock guard", async (t: TestContext) =
 });
 
 test("policy violation with an unsettled turn releases and taints after the cancel-ack timeout", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
   const runtime = createBrokerJobRuntime({
-    // The ack timeout must comfortably exceed the awaited record write inside
-    // the violation path so the held-busy state is observable first.
     config: { cwd: workspaceRoot, host: "terminal", hostSessionId: "default", cancelAckTimeoutMs: 250 },
     ensureAgent: async () => ({ connection: { cancel: async () => {} } } as unknown as BrokerAgentHandle),
     hashRunPayload: () => "payload-hash",
@@ -909,7 +908,8 @@ test("policy violation with an unsettled turn releases and taints after the canc
   assert.equal(runtime.isBusy(), true);
   assert.equal(runtime.isTainted(), false);
 
-  await waitFor(() => runtime.isTainted());
+  t.mock.timers.tick(250);
+  assert.equal(runtime.isTainted(), true);
   assert.equal(runtime.isBusy(), false);
   assert.equal((await readWorkspaceJobRecord(workspaceRoot, job.jobId)).status, "failed");
 });

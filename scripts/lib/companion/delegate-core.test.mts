@@ -51,8 +51,8 @@ test("statusFromStopReason maps broker stop reasons to job statuses", () => {
   assert.equal(statusFromStopReason("end_turn"), "completed");
   assert.equal(statusFromStopReason("cancelled"), "cancelled");
   assert.equal(statusFromStopReason("failed"), "failed");
-  // Unknown stop reasons intentionally fall through to completed status.
-  assert.equal(statusFromStopReason("anything-unknown"), "completed");
+  // Refusals and unknown protocol results cannot satisfy a dependency.
+  assert.equal(statusFromStopReason("anything-unknown"), "failed");
 });
 
 test("runDelegateOnce can identify a non-delegate job kind", async () => {
@@ -97,7 +97,7 @@ test("runDelegateOnce can identify a non-delegate job kind", async () => {
   assert.equal(stdout, "consult review job-review completed\n");
 });
 
-test("runDelegateOnce cleans isolation and fails the job when artifact finalization fails", async () => {
+test("runDelegateOnce preserves isolation and fails the job when artifact finalization fails", async () => {
   const client = new FakeBrokerClient();
   const prepared = isolatedFixture();
   const records: Array<Record<string, unknown>> = [];
@@ -144,7 +144,8 @@ test("runDelegateOnce cleans isolation and fails the job when artifact finalizat
   const result = await resultPromise;
 
   assert.equal(result.exitCode, 6);
-  assert.equal(cleanupCalls, 1);
+  assert.equal(cleanupCalls, 0);
+  assert.equal(records.at(-1)?.recoveryWorkspace, prepared.executionRoot);
   assert.equal(records.at(-1)?.status, "failed");
   assert.match(String(records.at(-1)?.errorMessage), /cannot create patch/);
 });
@@ -304,3 +305,42 @@ function isolatedFixture(): PreparedIsolatedWorkspace {
     seeded: { stagedPatchBytes: 0, unstagedPatchBytes: 0, untrackedFiles: [] },
   };
 }
+
+test("isolated completion and finalized log publication wait for patch capture", async () => {
+  const client = new FakeBrokerClient();
+  const prepared = isolatedFixture();
+  const records: Array<Record<string, unknown>> = [];
+  const logs: Array<{ method?: string }> = [];
+  let releaseCapture!: () => void;
+  let noteCapture!: () => void;
+  const captureStarted = new Promise<void>((resolve) => { noteCapture = resolve; });
+  const captureHeld = new Promise<void>((resolve) => { releaseCapture = resolve; });
+  const jobRecord = {
+    jobId: prepared.jobId, kind: "delegate", mode: "write", status: "running",
+    host: "terminal", hostSessionId: "session", profile: "codex", prompt: "edit",
+    isolated: true, isolatedWorkspace: prepared,
+  };
+  const completion = runDelegateOnce({
+    workspaceRoot: prepared.workspaceRoot, executionRoot: prepared.executionRoot,
+    profileEntry: {}, jobRecord, isolatedWorkspace: prepared, renderSummary: false,
+    deps: {
+      ensureBrokerSession: async () => ({ client }),
+      writeJobRecord: async (_root, _id, record) => { records.push(structuredClone(record)); },
+      appendLogLine: async (_root, _id, line) => { logs.push(line as { method?: string }); },
+      finalizeIsolatedWorkspace: async () => {
+        noteCapture(); await captureHeld;
+        return { ...prepared, patchPath: "/ready.patch", patchBytes: 10, touchedFilesPath: "/ready.json", touchedFiles: ["file"], finalizedAt: "2026-09-09T00:00:00.000Z" };
+      },
+      cleanupIsolatedWorkspace: async () => {},
+    },
+  });
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", { jobId: prepared.jobId, stopReason: "end_turn", sessionId: "session" });
+  await captureStarted;
+  assert.ok(records.every((record) => record.status !== "completed"));
+  assert.ok(logs.every((line) => line.method !== "consult/finalized"));
+  releaseCapture();
+  assert.equal((await completion).exitCode, 0);
+  assert.equal(records.at(-1)?.status, "completed");
+  assert.equal(records.at(-1)?.patchPath, "/ready.patch");
+});

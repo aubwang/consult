@@ -603,7 +603,7 @@ test("write-mode confines paths on unrecognized tool kinds", async () => {
   }
 });
 
-test("write-mode still allows unrecognized tool kinds inside the workspace", async () => {
+test("write-mode denies unrecognized tool kinds even inside the workspace", async () => {
   const workspaceRoot = makeRoot();
   const targetPath = path.join(workspaceRoot, "notes.txt");
   fs.writeFileSync(targetPath, "hello", "utf8");
@@ -614,15 +614,15 @@ test("write-mode still allows unrecognized tool kinds inside the workspace", asy
       mode: "write",
       workspaceRoot,
     }),
-    { allowed: true },
+    { allowed: false, reason: "unknown or other tool kind requires an explicit supported operation" },
   );
-  // No path at all remains allowed in write mode; there is nothing to confine.
+  // Missing paths do not make an unclassified operation safe.
   assert.deepEqual(
     await decidePermission({
       request: request("custom_write" as unknown as ToolKind, { note: "no path here" }),
       mode: "write",
       workspaceRoot,
     }),
-    { allowed: true },
+    { allowed: false, reason: "unknown or other tool kind requires an explicit supported operation" },
   );
 });

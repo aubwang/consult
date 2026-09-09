@@ -1,4 +1,4 @@
-import { addJobRelationships } from "../delegation-chain.mts";
+import { addJobRelationships, indexJobRelationships } from "../delegation-chain.mts";
 import {
   jobLogPath,
   listWorkspaceJobRecords,
@@ -11,7 +11,7 @@ import {
   jobResultPayload,
 } from "../job-result-contract.mts";
 import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspace.mts";
-import { briefText } from "./brief-text.mts";
+import { briefText, outputPreview } from "./brief-text.mts";
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 import { pollUntilFinalRecord } from "./job-poll.mts";
 import { runLogs } from "./logs.mts";
@@ -58,6 +58,10 @@ export async function runStatus({
     return runLogs({ args: { ...args, flags: { ...args.flags, follow: true } }, deps });
   }
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
+  const warnings: string[] = [];
+  const listRecords = () => listWorkspaceJobRecords(workspaceRoot, {
+    onMalformed: (error) => warnings.push(`Skipped malformed history record: ${error.path}; relationships may be incomplete\n`),
+  });
   const jobId = args.positional?.[0];
   if (jobId) {
     let record: JobRecord;
@@ -73,7 +77,7 @@ export async function runStatus({
     }
     let records: JobRecord[];
     try {
-      records = await listWorkspaceJobRecords(workspaceRoot);
+      records = await listRecords();
     } catch (error) {
       const malformedResult = jobRecordErrorResult(error);
       if (malformedResult) {
@@ -91,19 +95,19 @@ export async function runStatus({
             logPath: jobLogPath(workspaceRoot, jobId),
           }),
         })}\n`,
-        stderr: "",
+        stderr: warnings.join(""),
       };
     }
     return {
       exitCode: 0,
       stdout: renderJobSummary(enrichedRecord),
-      stderr: "",
+      stderr: warnings.join(""),
     };
   }
 
   let records: JobRecord[];
   try {
-    records = await listWorkspaceJobRecords(workspaceRoot);
+    records = await listRecords();
   } catch (error) {
     const malformedResult = jobRecordErrorResult(error);
     if (malformedResult) {
@@ -111,10 +115,9 @@ export async function runStatus({
     }
     throw error;
   }
-  const enrichedRecords = records.map((record) => addJobRelationships(record, records));
-  const visibleRecords = boolFlag(args.flags?.all)
-    ? enrichedRecords
-    : enrichedRecords.slice(0, DEFAULT_STATUS_JOB_LIMIT);
+  const children = indexJobRelationships(records);
+  const visibleRecords = (boolFlag(args.flags?.all) ? records : records.slice(0, DEFAULT_STATUS_JOB_LIMIT))
+    .map((record) => ({ ...record, childJobIds: children.get(record.jobId ?? "") ?? [] }));
   return {
     exitCode: 0,
     stdout: json
@@ -131,7 +134,7 @@ export async function runStatus({
           ),
         })}\n`
       : renderJobTable(visibleRecords),
-    stderr: "",
+    stderr: warnings.join(""),
   };
 }
 
@@ -191,7 +194,8 @@ function renderJobSummary(record: JobRecord & { childJobIds: string[] }): string
   }
   if (record.prompt) lines.push(`prompt: ${briefText(record.prompt)}`);
   if (record.errorMessage) lines.push(`error: ${briefText(record.errorMessage)}`);
-  if (record.finalText) lines.push(`result: ${briefText(record.finalText)}`);
+  if (record.finalText) lines.push(`output preview: ${outputPreview(record.finalText)}`);
+  if (record.recoveryWorkspace) lines.push(`recovery workspace: ${record.recoveryWorkspace}`);
   lines.push(`children: ${record.childJobIds.length ? record.childJobIds.join(",") : "-"}`);
   return `${lines.join("\n")}\n`;
 }
