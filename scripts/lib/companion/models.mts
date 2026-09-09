@@ -1,7 +1,7 @@
 import { boolFlag, invalidBooleanFlagValueError, missingFlagValueError, stringFlag, unsupportedFlagError, type ParsedArgs } from "../args.mts";
 import { profilesPath } from "../broker-endpoint.mts";
 import { loadProfiles, type ProfilesData, type ProfileRecord } from "../profiles.mts";
-import { profileRoute, hasNativeModelCatalogue } from "../profile-discovery.mts";
+import { profileRoute, hasNativeModelCatalogue, nativeProfileForModel, nativeRouting } from "../profile-discovery.mts";
 import { MODELS_SCHEMA_VERSION, discoverProfileModels, type ModelCatalogue } from "../model-discovery.mts";
 import { resolveWorkspaceRoot } from "../workspace.mts";
 import type { JobConfinement } from "../job-authority.mts";
@@ -42,10 +42,20 @@ export async function runModels({ args, deps = {} }: { args: ParsedArgs; deps?: 
     throw error;
   }
   if (selected && !Object.hasOwn(profiles.profiles, selected)) return usage(`no such profile: ${selected}`);
-  const entries = Object.entries(profiles.profiles).filter(([id]) => !selected || selected === id).sort(([a], [b]) => a.localeCompare(b));
+  const match = stringFlag(args.flags.match)?.toLowerCase().trim() ?? "";
+  const preferredNative = selected ? null : nativeProfileForModel(match);
+  const entries = Object.entries(profiles.profiles)
+    .filter(([id, profile]) => selected ? selected === id : !preferredNative || profile.registryId === preferredNative)
+    .sort(([a], [b]) => a.localeCompare(b));
   const workspace = entries.length ? await (deps.workspace ?? resolveWorkspaceRoot)() : "";
   const diagnostics: Array<{ profile: string; code: string; message: string; nextArgs: string[] }> = [];
+  if (preferredNative && entries.length === 0) diagnostics.push({
+    profile: preferredNative, code: "NATIVE_PROFILE_NOT_CONFIGURED",
+    message: `Configure the native ${preferredNative} Profile for this model family. Alternative Profiles require an explicit --agent selection.`,
+    nextArgs: ["setup", "--install", preferredNative],
+  });
   const routes: Array<{ profile: string; model: string; source: string; confinement: string; requiresExplicitInheritance: boolean; delegateArgs: string[]; doctorArgs: string[] }> = [];
+  let omittedAlternateRoutes = 0;
   // The pinned sandbox runtime owns process-global state. Confined probes must
   // finish and dispose before another Profile is initialized in this process.
   for (const [id, profile] of entries) {
@@ -64,6 +74,11 @@ export async function runModels({ args, deps = {} }: { args: ParsedArgs; deps?: 
       const catalogue = await (deps.discover ?? discoverProfileModels)(profile, workspace, confinement);
       if (catalogue.models.length === 0) diagnostics.push({ profile: id, code: "NO_ADVERTISED_MODELS", message: "The Profile returned no model catalogue; this does not establish that it cannot delegate.", nextArgs: route.doctorArgs });
       for (const model of catalogue.models) {
+        const native = nativeProfileForModel(model);
+        if (!selected && native && profile.registryId !== native) {
+          omittedAlternateRoutes++;
+          continue;
+        }
         routes.push({ profile: id, model, source: catalogue.source, confinement,
           requiresExplicitInheritance: confinement === "inherit",
           delegateArgs: ["delegate", "--agent", id, "--model", model, "--read-only", "--sandbox", confinement, "--json", "--prompt", "-"],
@@ -76,12 +91,15 @@ export async function runModels({ args, deps = {} }: { args: ParsedArgs; deps?: 
       diagnostics.push({ profile: id, code: "MODEL_DISCOVERY_FAILED", message: "Could not inspect this Profile's advertised models. Run Doctor for setup, authentication, or launch diagnostics.", nextArgs: ["doctor", "--agent", id, "--read-only", "--sandbox", confinement, "--json"] });
     }
   }
-  const match = stringFlag(args.flags.match)?.toLowerCase() ?? "";
-  const matching = routes.filter((route) => route.model.toLowerCase().includes(match));
+  // A family query must find the native adapter even when its IDs are short
+  // names such as "sonnet" and never contain the word "claude" or "anthropic".
+  const familyQuery = !selected && ["claude", "anthropic", "openai", "codex"].includes(match);
+  const matching = routes.filter((route) => familyQuery || route.model.toLowerCase().includes(match));
   const report = {
     schemaVersion: MODELS_SCHEMA_VERSION,
     version: (deps.version ?? resolvePackageVersion)(),
     readiness: "advertised-only",
+    routing: { ...nativeRouting(profiles), preferredNativeProfile: preferredNative, explicitProfile: selected ?? null, omittedAlternateRoutes },
     complete: diagnostics.length === 0,
     total: matching.length,
     offset,
@@ -90,12 +108,13 @@ export async function runModels({ args, deps = {} }: { args: ParsedArgs; deps?: 
     diagnostics,
   };
   return {
-    exitCode: diagnostics.some((item) => item.code === "MODEL_DISCOVERY_FAILED") ? 1 : 0,
+    exitCode: diagnostics.some((item) => ["MODEL_DISCOVERY_FAILED", "NATIVE_PROFILE_NOT_CONFIGURED"].includes(item.code)) ? 1 : 0,
     stdout: boolFlag(args.flags.json) ? `${JSON.stringify(report)}\n` : [
       `consult ${report.version} — ${report.total} matching advertised model(s); readiness unchecked`,
       "profile\tmodel\tconfinement",
       ...report.models.map((row) => `${row.profile}\t${row.model}\t${row.confinement}`),
       ...diagnostics.map((item) => `${item.profile}: ${item.code}: ${item.message}`),
+      ...(!selected ? ["Claude/OpenAI use native adapters. Select --agent explicitly to inspect alternate routes."] : []),
       ...(report.nextOffset === null ? [] : [`More results: repeat with --offset ${report.nextOffset}`]),
       "Use --json for exact delegate argument arrays. Supply the prompt on stdin.", "",
     ].join("\n"),
