@@ -22,6 +22,7 @@ Authority; steering may restart its prompt turn.
 Commands:
   setup         Install or verify Profiles.
   agents        List Profiles or set the default Profile.
+  models        Discover exact model IDs and launch recipes.
   delegate      Send one self-contained prompt turn to a Profile.
   review        Run a pinned, read-only Git review.
   doctor        Check Profile and Job Authority readiness.
@@ -60,6 +61,8 @@ Profile selection:
   those set, commands report "No profile selected".
 
 Start here:
+  consult capabilities --configured --json    # compact Host discovery
+  consult models --match <name> --json          # exact models and launch args
   consult setup                                # install and verify a Profile
   consult agents --set claude                  # pick the default Profile
   consult doctor                               # diagnose the current selection
@@ -233,6 +236,7 @@ copilot; generic custom Profile configuration remains available.
   consult setup                              # what is installed and configured
   consult setup --install codex
   consult agents                             # Profiles, defaults, and Hosts
+  consult models --match grok --json          # discover exact model routes
   consult agents --set claude --host codex   # default for one Host
   consult agents --set claude                # global default
   consult doctor --agent claude              # verify one Profile launches

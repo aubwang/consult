@@ -56,7 +56,7 @@ Examples:
 `;
 
 const capabilitiesUsage = `Usage:
-  consult capabilities [--json]
+  consult capabilities [--configured] [--json]
 
 Print what this Consult build supports: its version, the schema version of each
 machine-readable contract, which optional commands exist, and the bounds they
@@ -65,15 +65,19 @@ running a command and reading its exit code cannot tell a missing command apart
 from a bad argument, and older builds did not report a distinguishing version.
 
 Options:
+  --configured  Include configured Profiles, launch recipes, and restrictions.
   --json   Emit the schema-version-1 capabilities report.
   --help   Print this help instead of reporting capabilities.
 
-Capabilities is a static self-description, like help and version: it reads no
-Workspace, Job, or Profile state and works outside a Git repository.
+Without --configured this is a static build description. --configured reads
+Profile configuration but starts no agents, reads no Job state, and does not
+verify authentication or readiness. Both forms work outside a Git repository.
+Argument arrays exclude the executable; delegate recipes read prompts on stdin.
 
 Examples:
   consult capabilities
   consult capabilities --json
+  consult capabilities --configured --json
 
 Builds before 1.2.0 have no capabilities command and exit 2; treat that as
 "report, events, and steer are unavailable".
@@ -483,6 +487,38 @@ Preview removal of expired terminal Jobs, logs, patches, and saved sessions in
 this Workspace. Pass --apply to remove them. Retention must be at least one day.
 Jobs with live processes, recovery worktrees, or retained dependents are kept.
 Removed Jobs cannot be resumed. Nothing is cleaned automatically.
+`,
+  models: `Usage:
+  consult models [--agent <profile>] [--match <text>] [--json]
+                 [--limit 20] [--offset 0] [--sandbox confined|inherit]
+
+Find exact advertised model IDs and the configured Profiles that serve them.
+--match is a case-insensitive substring filter on model IDs. Results default
+to 20 rows; --limit accepts 1–200 and --offset selects the next page. --json
+includes the running Consult version, delegate/Doctor argument arrays, and
+per-Profile diagnostics. Recipes take the prompt on stdin and grant read-only
+behavior. They are recommendations, not authorization to run a Job.
+
+Discovery uses the current Workspace and creates no Consult Job or model turn.
+Codex and Claude use a confined ACP session by default. Other ACP Profiles need
+--agent <profile> --sandbox inherit to permit ambient initialization. Standard
+opencode Profiles use their configured executable's native models catalogue
+command with Host authority; custom launch arguments need explicit ACP
+inheritance. No authentication refresh, installation, or fallback is performed.
+
+An advertised model is not proof of account access, readiness, or successful
+inference. Run the returned Doctor command when launch diagnosis is needed.
+Partial results carry complete:false and diagnostics. A failed probe exits 1
+while keeping useful results; invalid arguments/configuration exit 2. Zero
+matches is valid and never selects a different model automatically.
+
+Examples:
+  consult models --match grok --json
+  consult models --agent opencode --match grok-4.6 --json
+  consult models --agent claude --json
+  consult models --agent copilot --sandbox inherit --json
+
+For configuration-only discovery: consult capabilities --configured --json
 `,
   agents: agentsUsage,
   brokers: brokersUsage,

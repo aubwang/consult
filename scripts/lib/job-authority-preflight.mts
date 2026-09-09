@@ -4,6 +4,7 @@ import {
   type JobAuthority,
   type JobAuthorityDiagnostic,
 } from "./job-authority.mts";
+import { discoverSessionModels } from "./session-models.mts";
 import { newSession, startAgent } from "./acp-client.mts";
 import {
   copilotAgentVersionDiagnostic,
@@ -32,10 +33,12 @@ export interface JobAuthorityPreflightInput {
    * callers set `0` so a still-valid credential is not treated as expired.
    */
   oauthRefreshSkewMs?: number;
+  /** Inspect advertised models without a prompt; used only by model discovery. */
+  discoverModels?: boolean;
 }
 
 export type JobAuthorityPreflightResult =
-  | { ok: true; authority: JobAuthority }
+  | { ok: true; authority: JobAuthority; models?: string[] }
   | { ok: false; diagnostic: JobAuthorityDiagnostic };
 
 export interface JobAuthorityPreflightDeps {
@@ -163,6 +166,7 @@ export async function probeInheritedProfileLaunch(
   }
   let agent: Awaited<ReturnType<typeof startAgent>> | undefined;
   let launchFailure: unknown;
+  let models: string[] | undefined;
   try {
     agent = await startAgent({
       binary: input.profileLaunch.binary,
@@ -182,7 +186,9 @@ export async function probeInheritedProfileLaunch(
     if (versionDiagnostic !== null) {
       throw new Error(versionDiagnostic);
     }
-    if (profilePreflightsSession(input.profileRegistryId)) {
+    if (input.discoverModels) {
+      models = await discoverSessionModels(agent.connection, input.workspaceRoot);
+    } else if (profilePreflightsSession(input.profileRegistryId)) {
       await newSession(agent.connection, { cwd: input.workspaceRoot });
     }
   } catch (error) {
@@ -203,7 +209,7 @@ export async function probeInheritedProfileLaunch(
       "Run consult doctor for the inherited Profile launch and fix its ACP initialization; no Job was created.",
     );
   }
-  return { ok: true, authority: input.authority };
+  return { ok: true, authority: input.authority, ...(models ? { models } : {}) };
 }
 
 function failure(
