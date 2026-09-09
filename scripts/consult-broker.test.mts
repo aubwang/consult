@@ -2435,7 +2435,7 @@ test("originator disconnect mid-prompt taints the broker when the agent does not
   const runClient = await connectBroker(harness.endpoint);
   const workClient = await connectBroker(harness.endpoint);
   const pingClient = await connectBroker(harness.endpoint);
-  const updates = collectNotifications(runClient, "consult/update");
+  const firstUpdate = nextNotification(runClient, "consult/update");
 
   try {
     await runClient.request("consult/run", {
@@ -2444,7 +2444,7 @@ test("originator disconnect mid-prompt taints the broker when the agent does not
       profile: "codex",
       mode: "write",
     });
-    await waitFor(() => updates.length === 1);
+    await withTimeout(firstUpdate, 2000);
 
     await runClient.close();
 

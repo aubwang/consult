@@ -47,7 +47,9 @@ export async function openWorkspaceFile(
       await directory.close();
     }
   } else if (process.platform === "darwin") {
-    file = await fs.open(resolved, flags | DARWIN_O_NOFOLLOW_ANY, 0o600);
+    // Darwin rejects O_NOFOLLOW combined with O_NOFOLLOW_ANY (EINVAL).
+    // The latter already covers the final component as well as ancestors.
+    file = await fs.open(resolved, (flags & ~constants.O_NOFOLLOW) | DARWIN_O_NOFOLLOW_ANY, 0o600);
   } else {
     throw new Error("workspace filesystem requests require Linux or macOS");
   }
