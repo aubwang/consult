@@ -139,9 +139,17 @@ edits. Untracked files appear in status but their contents are not part of this
 review diff. The base has the same meaning whether or not HEAD has advanced.
 
 Pass `--model` and `--effort` for optional Profile-specific tuning. Consult
-resolves family aliases only from models advertised by the Profile at Session
-start. Omitting `--model` uses the confined Profile runtime's default; Host
-configuration files are not copied into confinement.
+resolves family aliases against models advertised by the Profile at Session
+start, with built-in shorthand for Claude and Codex. Omitting `--model` uses
+the confined Profile runtime's default; Host configuration files are not
+copied into confinement.
+
+For Claude, versioned shorthand such as `--model 'fable 5.1'` or
+`--model fable-5.1` expands to `claude-fable-5-1`. Explicit native IDs are
+passed to the confined adapter at startup even when its default catalogue
+omits them. Version pins never select a newer version. A catalogue omission
+does not establish that a model is unavailable; the native adapter and provider
+still need to accept the requested model.
 
 The built-in Codex tier aliases expand to full model IDs: `sol` to
 `gpt-5.6-sol`, `terra` to `gpt-5.6-terra`, and `luna` to `gpt-5.6-luna`.

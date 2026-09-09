@@ -265,7 +265,7 @@ function versionSegments(id: string): number[] {
 export function normalizeModelControl(profile: string, model: string): string {
   const normalized = model.toLowerCase().replaceAll("_", "-");
   if (profile === "claude") {
-    return CLAUDE_MODEL_ALIASES[normalized] ?? model;
+    return knownClaudeModelControl(model) ?? model;
   }
   if (profile === "codex") {
     return CODEX_MODEL_ALIASES[normalized] ?? model;
@@ -274,8 +274,18 @@ export function normalizeModelControl(profile: string, model: string): string {
 }
 
 export function knownClaudeModelControl(model: string): string | null {
-  const normalized = model.toLowerCase().replaceAll("_", "-");
-  return CLAUDE_MODEL_ALIASES[normalized] ?? null;
+  const normalized = model.trim().toLowerCase().replaceAll("_", "-");
+  const alias = CLAUDE_MODEL_ALIASES[normalized];
+  if (alias) return alias;
+  // Explicit native IDs must reach the adapter at startup, even when its
+  // default picker omits them. Preserve their spelling; this is not a catalogue.
+  if (/^claude-[a-z0-9][a-z0-9._-]*(?:\[[a-z0-9]+\])?$/iu.test(model)) return model;
+  // Versioned family shorthand uses the native hyphenated version convention.
+  // Unlike bare aliases, an explicit version must never select a newer model.
+  const versioned = /^(opus|sonnet|haiku|fable)[-\s]+(\d+(?:[.-]\d+)*)(\[[a-z0-9]+\])?$/u.exec(normalized);
+  return versioned
+    ? `claude-${versioned[1]}-${versioned[2].replaceAll(".", "-")}${versioned[3] ?? ""}`
+    : null;
 }
 
 const CLAUDE_MODEL_ALIASES: Record<string, string> = {

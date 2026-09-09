@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { AcpConnection } from "./acp-client.mts";
 import {
   applySessionControls,
+  knownClaudeModelControl,
   normalizeModelControl,
   openResumedSession,
   resolveFamilyLatest,
@@ -137,6 +138,21 @@ test("normalizeModelControl maps built-in Profile shorthand", () => {
   assert.equal(normalizeModelControl("codex", "terra"), "gpt-5.6-terra");
   assert.equal(normalizeModelControl("codex", "luna"), "gpt-5.6-luna");
   assert.equal(normalizeModelControl("opencode", "opus"), "opus");
+});
+
+test("Claude version pins reach startup without requiring a built-in catalogue entry", () => {
+  for (const name of ["fable 5.1", "fable-5.1", "fable-5-1"]) {
+    assert.equal(knownClaudeModelControl(name), "claude-fable-5-1");
+    assert.equal(normalizeModelControl("claude", name), "claude-fable-5-1");
+  }
+  for (const id of ["claude-fable-5-1", "claude-fable-5.1", "claude-future-99[1m]"]) {
+    assert.equal(knownClaudeModelControl(id), id);
+    assert.equal(normalizeModelControl("claude", id), id);
+  }
+  assert.equal(knownClaudeModelControl("default"), null);
+  assert.equal(knownClaudeModelControl("unknown model"), null);
+  assert.equal(knownClaudeModelControl("fable 5.1 or opus"), null);
+  assert.equal(normalizeModelControl("opencode", "fable 5.1"), "fable 5.1");
 });
 
 test("applySessionControls resolves family aliases to the newest advertised model", async () => {

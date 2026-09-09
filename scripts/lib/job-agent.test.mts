@@ -204,7 +204,7 @@ test("startJobAgent acquires the confined runtime lease only for confined author
     cwd: "/workspace",
     authority: authority(),
     profileRegistryId: "claude",
-    model: "fable",
+    model: "fable 5.1",
     runtime: runtimeHooks(authority()),
   }, {
     startAgent: fakeStartAgent,
@@ -228,7 +228,7 @@ test("startJobAgent acquires the confined runtime lease only for confined author
   });
   assert.equal(confinedInput?.authority.confinement, "confined");
   assert.equal(confinedInput?.profileRegistryId, "claude");
-  assert.equal(confinedInput?.requestedModel, "claude-fable-5");
+  assert.equal(confinedInput?.requestedModel, "claude-fable-5-1");
 
   capturedDeps = undefined;
   const inherited = authority({ confinement: "inherit" });

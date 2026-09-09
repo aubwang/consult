@@ -253,6 +253,9 @@ through opencode. Default model discovery follows this same preference.
 - Model aliases opus, sonnet, haiku, and fable resolve to the newest advertised
   id. Prefer a mid-tier alias when the question does not need the strongest
   model.
+- Versioned shorthand such as --model 'fable 5.1' expands to claude-fable-5-1.
+  Explicit claude-* IDs reach the confined adapter at startup even if omitted
+  from its default catalogue. An explicit version never selects a newer one.
 - Host settings.json is not copied into confinement, so pass --model when Host
   configuration controls the intended choice.
 - A trusted root Job makes one automatic no-prompt OAuth refresh when the
