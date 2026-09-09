@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/aubwang/consult/compare/v1.3.0...v1.4.0) (2026-09-09)
+
+
+### Features
+
+* harden delegation boundaries and add safe history cleanup ([7a5f396](https://github.com/aubwang/consult/commit/7a5f396bbab299961f0dc1525fdd32997480a8c7))
+* read a delegate prompt from stdin or a file ([#52](https://github.com/aubwang/consult/issues/52)) ([76a32fd](https://github.com/aubwang/consult/commit/76a32fdf4587bf63892c422c16e6107843d8568e))
+
 ## [1.3.0](https://github.com/aubwang/consult/compare/v1.2.0...v1.3.0) (2026-08-18)
 
 
