@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/aubwang/consult/compare/v1.5.1...v1.5.2) (2026-09-09)
+
+
+### Bug Fixes
+
+* pass versioned Claude model pins at startup ([#59](https://github.com/aubwang/consult/issues/59)) ([26e8726](https://github.com/aubwang/consult/commit/26e872641562adeed2988723ca208d16ba7065c2))
+
 ## [1.5.1](https://github.com/aubwang/consult/compare/v1.5.0...v1.5.1) (2026-09-09)
 
 
