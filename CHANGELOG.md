@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/aubwang/consult/compare/v1.5.0...v1.5.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* prefer native model routes and accept adapter auth status ([#57](https://github.com/aubwang/consult/issues/57)) ([612db08](https://github.com/aubwang/consult/commit/612db08b78e391598059f2b194229f1862a321d9))
+
 ## [1.5.0](https://github.com/aubwang/consult/compare/v1.4.0...v1.5.0) (2026-09-09)
 
 
