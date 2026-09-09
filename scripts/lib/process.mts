@@ -1,6 +1,9 @@
+import { captureProcessGroupIdentity } from "./process-identity.mts";
+
 export interface TerminateProcessTreeOptions {
   signal?: NodeJS.Signals;
   timeoutMs?: number;
+  beforeSignal?: () => Promise<boolean>;
 }
 
 // A SIGKILLed process group is not gone until every member has been reaped, and
@@ -57,22 +60,25 @@ function processTargetIsAlive(target: number): boolean {
 
 export async function terminateProcessTree(
   pid: number,
-  { signal = "SIGTERM", timeoutMs = 2000 }: TerminateProcessTreeOptions = {},
+  { signal = "SIGTERM", timeoutMs = 2000, beforeSignal }: TerminateProcessTreeOptions = {},
 ): Promise<void> {
   if (processGroupIsAlive(pid)) {
-    await terminateProcessGroup(pid, { signal, timeoutMs });
+    await terminateProcessGroup(pid, { signal, timeoutMs, beforeSignal });
     return;
   }
   if (!pidIsAlive(pid)) {
     return;
   }
+  if (beforeSignal && !await beforeSignal()) return;
   signalPid(pid, signal);
-  await waitForTargetExit(() => pidIsAlive(pid), () => signalPid(pid, "SIGKILL"), timeoutMs);
+  await waitForTargetExit(() => pidIsAlive(pid), async () => {
+    if (!beforeSignal || await beforeSignal()) signalPid(pid, "SIGKILL");
+  }, timeoutMs);
 }
 
 export async function terminateProcessGroup(
   processGroupId: number,
-  { signal = "SIGTERM", timeoutMs = 2000 }: TerminateProcessTreeOptions = {},
+  { signal = "SIGTERM", timeoutMs = 2000, beforeSignal }: TerminateProcessTreeOptions = {},
 ): Promise<void> {
   if (process.platform === "win32") {
     return;
@@ -80,10 +86,16 @@ export async function terminateProcessGroup(
   if (!processGroupIsAlive(processGroupId)) {
     return;
   }
+  const groupIdentity = beforeSignal ? await captureProcessGroupIdentity(processGroupId) : undefined;
+  if (beforeSignal && !await beforeSignal()) return;
   signalProcessGroup(processGroupId, signal);
   await waitForTargetExit(
     () => processGroupIsAlive(processGroupId),
-    () => signalProcessGroup(processGroupId, "SIGKILL"),
+    async () => {
+      // A surviving original member keeps this process-group ID allocated even
+      // after its leader exits. Rechecking only the leader strands children.
+      if (!groupIdentity || await groupIdentity()) signalProcessGroup(processGroupId, "SIGKILL");
+    },
     timeoutMs,
   );
 }
@@ -96,7 +108,7 @@ interface WaitForTargetExitDependencies {
 
 export async function waitForTargetExit(
   isAlive: () => boolean,
-  forceKill: () => void,
+  forceKill: () => void | Promise<void>,
   timeoutMs: number,
   dependencies: WaitForTargetExitDependencies = {},
 ): Promise<void> {
@@ -106,7 +118,7 @@ export async function waitForTargetExit(
   const deadline = now() + timeoutMs;
   while (isAlive()) {
     if (now() >= deadline) {
-      forceKill();
+      await forceKill();
       break;
     }
     await sleep(25);

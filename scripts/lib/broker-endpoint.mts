@@ -88,13 +88,18 @@ export function brokerSocketPath({
 
   for (const [basePath, filenamePrefix] of candidates) {
     const socketPath = socketPathWithinBudget(basePath, filenamePrefix, identity);
-    if (socketPath !== null && socketPath.length <= SOCKET_PATH_MAX_LENGTH) {
+    if (socketPath !== null && Buffer.byteLength(socketPath) <= SOCKET_PATH_MAX_LENGTH) {
       return socketPath;
     }
+    // Human-readable labels are optional; identity entropy is not. Typical
+    // canonical macOS temp directories fit once the redundant labels go.
+    const compactId = identityHash(workspaceHash(workspaceRoot), JSON.stringify([jobId, host, hostSessionId, profile]));
+    const compact = path.join(basePath, `c-${compactId.slice(0, 32)}.sock`);
+    if (Buffer.byteLength(compact) <= SOCKET_PATH_MAX_LENGTH) return compact;
   }
 
   throw new Error(
-    `broker socket path exceeds ${SOCKET_PATH_MAX_LENGTH} characters; set XDG_RUNTIME_DIR or TMPDIR to a shorter path`,
+    `broker socket path exceeds ${SOCKET_PATH_MAX_LENGTH} bytes; set XDG_RUNTIME_DIR or TMPDIR to a shorter path`,
   );
 }
 
@@ -102,7 +107,7 @@ function socketPathWithinBudget(basePath: string, filenamePrefix: string, identi
   const suffix = ".sock";
   const availableIdLength =
     SOCKET_PATH_MAX_LENGTH -
-    path.join(basePath, `${filenamePrefix}${suffix}`).length;
+    Buffer.byteLength(path.join(basePath, `${filenamePrefix}${suffix}`));
   if (availableIdLength < MIN_SOCKET_IDENTITY_LENGTH) {
     return null;
   }

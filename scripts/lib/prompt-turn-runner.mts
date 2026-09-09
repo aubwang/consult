@@ -23,6 +23,7 @@ export interface PromptTurnBrokerClient {
 }
 
 export interface EnsureBrokerSessionInput {
+  beforeTerminal?: () => Promise<void>;
   /** Original Workspace identity used for Job/Broker state. */
   workspaceRoot: string;
   /** Optional detached worktree used as the Profile's cwd and confinement root. */
@@ -84,6 +85,7 @@ export interface PromptTurnSuccess {
 }
 
 export interface RunPromptTurnOptions {
+  beforeTerminal?: () => Promise<void>;
   workspaceRoot: string;
   executionRoot?: string;
   profileEntry: unknown;
@@ -107,6 +109,7 @@ interface BrokerErrorLike {
 }
 
 export async function runPromptTurn({
+  beforeTerminal,
   workspaceRoot,
   executionRoot,
   profileEntry,
@@ -145,6 +148,7 @@ export async function runPromptTurn({
     profile: jobRecord.profile,
     authority,
     profileEntry,
+    beforeTerminal,
   });
 
   let sawUpdate = false;
@@ -179,6 +183,10 @@ export async function runPromptTurn({
     output.stderr(`job record write failed: ${(error as Error).message}\n`);
   };
   const persistJobRecord = async (): Promise<void> => {
+    if (["completed", "failed", "cancelled", "skipped"].includes(jobRecord.status ?? "")) {
+      try { await beforeTerminal?.(); }
+      catch (error) { failJobRecord(jobRecord, { now, errorMessage: (error as Error).message }); }
+    }
     const existing = await readJobRecord(workspaceRoot, jobRecord.jobId!).catch(() => null);
     if (existing?.status === "cancelled" && jobRecord.status !== "cancelled") {
       Object.assign(jobRecord, existing);
@@ -227,6 +235,11 @@ export async function runPromptTurn({
     finalizedSeen = true;
     const finalizedNotification = notification as FinalizedNotification;
     notificationChain = notificationChain.then(async () => {
+      try { await beforeTerminal?.(); }
+      catch (error) {
+        finalizedNotification.stopReason = "failed";
+        finalizedNotification.errorMessage = (error as Error).message;
+      }
       await appendLogLine(workspaceRoot, jobRecord.jobId!, {
         method: "consult/finalized",
         params: notification,
@@ -242,7 +255,14 @@ export async function runPromptTurn({
       if (finalizedNotification.sessionStateArchived) {
         jobRecord.sessionStateArchived = true;
       }
-      await persistJobRecord().catch(reportWriteFailure);
+      try {
+        await persistJobRecord();
+      } catch (error) {
+        finalizedNotification.stopReason = "failed";
+        finalizedNotification.errorMessage = `could not persist terminal Job record: ${(error as Error).message}`;
+        failJobRecord(jobRecord, { now, errorMessage: finalizedNotification.errorMessage, finalText });
+        reportWriteFailure(error);
+      }
       finalizedResolve(finalizedNotification);
     });
   });

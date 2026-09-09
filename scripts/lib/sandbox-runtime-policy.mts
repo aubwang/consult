@@ -5,6 +5,7 @@ export const SANDBOX_RUNTIME_POLICY_ERROR =
 
 const PROXY_USERNAME = "consult";
 const PROXY_LOOPBACK_HOST = "127.0.0.1";
+export const PROXY_ENV_NAME = /^(?:(?:docker_)?(?:http|https)|all|ftp|grpc)_proxy$/iu;
 const LINUX_HTTP_PROXY_PORT = 3128;
 const LINUX_SOCKS_PROXY_PORT = 1080;
 const DEFAULT_NO_PROXY =
@@ -95,7 +96,7 @@ export function transformSandboxRuntimeLaunch({
     throw policyShapeError("runtime launch argv does not use the expected shell wrapper");
   }
 
-  const command =
+  const transformed =
     platform === "linux"
       ? transformLinuxPolicy(
           launch.argv[2],
@@ -116,7 +117,18 @@ export function transformSandboxRuntimeLaunch({
           allowedWritePaths,
           literalReadPaths,
         );
-  return { argv: [launch.argv[0], "-c", command], env: { ...launch.env } };
+  if (transformed.command.includes(proxyToken)) {
+    throw policyShapeError("proxy credential remained in launch arguments");
+  }
+  return {
+    argv: [launch.argv[0], "-c", transformed.command],
+    env: { ...launch.env, ...transformed.env },
+  };
+}
+
+interface TransformedPolicy {
+  command: string;
+  env: NodeJS.ProcessEnv;
 }
 
 function transformLinuxPolicy(
@@ -127,7 +139,7 @@ function transformLinuxPolicy(
   externalSocksPort: number,
   sharedDefaultWritePaths: readonly string[],
   allowedWritePaths: readonly string[],
-): string {
+): TransformedPolicy {
   const words = parseShellWords(source);
   if (words[0] !== "bwrap") {
     throw policyShapeError("Linux policy does not start with bwrap");
@@ -142,7 +154,7 @@ function transformLinuxPolicy(
       throw policyShapeError(`Linux policy is missing ${required.join(" ")}`);
     }
   }
-  for (const masked of ["/home", "/root", "/var", "/etc"]) {
+  for (const masked of ["/home", "/root", "/var", "/etc", "/sys"]) {
     if (!hasSequence(words, ["--tmpfs", masked])) {
       throw policyShapeError(`Linux policy is missing the ${masked} read mask`);
     }
@@ -196,7 +208,7 @@ function transformLinuxPolicy(
       throw policyShapeError(`shared write grant remained for ${authenticated[index + 1]}`);
     }
   }
-  return quoteShellWords(authenticated);
+  return extractProxyEnvironment(authenticated, "linux", proxyToken);
 }
 
 function assertLinuxWriteBinds(words: readonly string[], allowedWrites: ReadonlySet<string>): void {
@@ -260,7 +272,7 @@ function transformMacosPolicy(
   sharedDefaultWritePaths: readonly string[],
   allowedWritePaths: readonly string[],
   literalReadPaths: readonly string[],
-): string {
+): TransformedPolicy {
   const words = parseShellWords(source);
   const sandboxIndex = words.indexOf("/usr/bin/sandbox-exec");
   if (
@@ -310,7 +322,41 @@ function transformMacosPolicy(
     proxyToken,
   );
   assertNoUnauthenticatedProxyWords(authenticated, externalHttpPort, externalSocksPort);
-  return quoteShellWords(authenticated);
+  return extractProxyEnvironment(authenticated, "darwin", proxyToken);
+}
+
+// bwrap and sandbox-exec inherit their launch environment. Remove credential
+// assignments from the wrapper itself so neither the shell nor env/bwrap argv
+// exposes the per-Job bearer token to process listings.
+function extractProxyEnvironment(
+  words: string[], platform: "linux" | "darwin", token: string,
+): TransformedPolicy {
+  const env: NodeJS.ProcessEnv = {};
+  const retained: string[] = [];
+  const boundary = platform === "linux" ? words.indexOf("--") : words.indexOf("/usr/bin/sandbox-exec");
+  for (let index = 0; index < words.length; index += 1) {
+    let name: string | undefined;
+    let value: string | undefined;
+    let consumed = 0;
+    if (index < boundary && platform === "linux" && words[index] === "--setenv") {
+      name = words[index + 1]; value = words[index + 2]; consumed = 2;
+    } else if (index > 0 && index < boundary && platform === "darwin") {
+      const equal = words[index].indexOf("=");
+      if (equal > 0) {
+        name = words[index].slice(0, equal); value = words[index].slice(equal + 1);
+      }
+    }
+    if (name && value?.includes(token)) {
+      if (!PROXY_ENV_NAME.test(name) || Object.hasOwn(env, name)) {
+        throw policyShapeError("unexpected credential-bearing environment assignment");
+      }
+      env[name] = value;
+      index += consumed;
+    } else {
+      retained.push(words[index]);
+    }
+  }
+  return { command: quoteShellWords(retained), env };
 }
 
 function injectMacosLiteralReadPaths(

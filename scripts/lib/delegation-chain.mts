@@ -196,6 +196,18 @@ export function addJobRelationships(
   };
 }
 
+export function indexJobRelationships(records: readonly JobRecord[]): Map<string, string[]> {
+  const children = new Map<string, string[]>();
+  for (const record of records) {
+    if (!record.parentJobId || !record.jobId) continue;
+    const ids = children.get(record.parentJobId) ?? [];
+    ids.push(record.jobId);
+    children.set(record.parentJobId, ids);
+  }
+  for (const ids of children.values()) ids.sort();
+  return children;
+}
+
 export function directChildJobIds(jobId: string | undefined, records: JobRecord[]): string[] {
   return records
     .filter((candidate) => candidate.parentJobId === jobId)

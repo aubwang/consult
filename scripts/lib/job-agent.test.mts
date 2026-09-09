@@ -342,7 +342,7 @@ test("startJobAgent exposes the fetch grant to ACP permission decisions", async 
   assert.ok(requestPermission);
   const request: RequestPermissionRequest = {
     sessionId: "session-1",
-    options: [],
+    options: [{ kind: "allow_once", optionId: "allow", name: "Allow once" }],
     toolCall: {
       toolCallId: "fetch-1",
       kind: "fetch",
@@ -384,3 +384,14 @@ function lease(input: ConfinedSandboxRuntimeLaunchInput): AgentLaunchLease {
     release: async () => {},
   };
 }
+
+test("permission responses select only one-call grants and never invent option IDs", async () => {
+  const { permissionResponse } = await import("./job-agent.mts");
+  const options = [
+    { kind: "allow_always" as const, optionId: "forever", name: "Always" },
+    { kind: "allow_once" as const, optionId: "once", name: "Once" },
+  ];
+  assert.deepEqual(permissionResponse({ allowed: true }, options).outcome, { outcome: "selected", optionId: "once" });
+  assert.deepEqual(permissionResponse({ allowed: true }, options.slice(0, 1)).outcome, { outcome: "cancelled" });
+  assert.deepEqual(permissionResponse({ allowed: true }, []).outcome, { outcome: "cancelled" });
+});

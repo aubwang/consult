@@ -32,7 +32,7 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
     "--setenv CLAUDE_CODE_HOST_HTTP_PROXY_PORT 41001",
     "--setenv CLAUDE_CODE_HOST_SOCKS_PROXY_PORT 41002",
     "--ro-bind / /",
-    "--tmpfs /home --tmpfs /root --tmpfs /var --tmpfs /etc",
+    "--tmpfs /home --tmpfs /root --tmpfs /var --tmpfs /etc --tmpfs /sys",
     "--bind /tmp/claude-http-0123456789abcdef.sock /tmp/claude-http-0123456789abcdef.sock",
     "--bind /tmp/claude-socks-fedcba9876543210.sock /tmp/claude-socks-fedcba9876543210.sock",
     "--bind /tmp/claude /tmp/claude",
@@ -57,14 +57,15 @@ test("tightens the pinned Linux artifact without changing its outer launch", () 
     allowedWritePaths: ["/tmp/consult-job/home", "/tmp/consult-job/temporary"],
   };
   const transformed = transformSandboxRuntimeLaunch(input);
+  assert.ok(transformed.argv.every((argument) => !argument.includes(TOKEN)));
 
   assert.equal(transformed.argv[0], "/bin/bash");
   assert.equal(transformed.argv[1], "-c");
   assert.equal(transformed.env.SAFE, "1");
   assert.match(transformed.argv[2], /--setenv TMPDIR \/tmp\/consult-job\/temporary/u);
   assert.match(transformed.argv[2], /--setenv NO_PROXY ''/u);
-  assert.match(transformed.argv[2], new RegExp(`http://consult:${TOKEN}@127\\.0\\.0\\.1:3128`, "u"));
-  assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@127\\.0\\.0\\.1:1080`, "u"));
+  assert.equal(transformed.env.HTTP_PROXY, `http://consult:${TOKEN}@127.0.0.1:3128`);
+  assert.equal(transformed.env.FTP_PROXY, `socks5h://consult:${TOKEN}@127.0.0.1:1080`);
   assert.doesNotMatch(transformed.argv[2], /--bind \/tmp\/claude \/tmp\/claude/u);
   assert.doesNotMatch(transformed.argv[2], /--bind \/var\/tmp\/shared-target/u);
   assert.ok(
@@ -165,11 +166,12 @@ test("tightens the pinned macOS profile rules and proxy environment", () => {
     literalReadPaths: ["/opt/homebrew/opt/libuv/lib"],
   };
   const transformed = transformSandboxRuntimeLaunch(input);
+  assert.ok(transformed.argv.every((argument) => !argument.includes(TOKEN)));
 
   assert.match(transformed.argv[2], /TMPDIR=\/private\/tmp\/consult-job\/temporary/u);
   assert.match(transformed.argv[2], /NO_PROXY= /u);
-  assert.match(transformed.argv[2], new RegExp(`http://consult:${TOKEN}@127\\.0\\.0\\.1:41001`, "u"));
-  assert.match(transformed.argv[2], new RegExp(`socks5h://consult:${TOKEN}@127\\.0\\.0\\.1:41002`, "u"));
+  assert.equal(transformed.env.HTTP_PROXY, `http://consult:${TOKEN}@127.0.0.1:41001`);
+  assert.equal(transformed.env.FTP_PROXY, `socks5h://consult:${TOKEN}@127.0.0.1:41002`);
   assert.doesNotMatch(transformed.argv[2], /subpath "\/tmp\/claude"/u);
   assert.doesNotMatch(transformed.argv[2], /subpath "\/private\/tmp\/claude"/u);
   assert.match(

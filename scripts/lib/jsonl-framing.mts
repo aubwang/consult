@@ -1,5 +1,25 @@
 export const DEFAULT_MAX_JSONL_MESSAGE_BYTES = 1024 * 1024;
 
+// Bound each frame before the ACP SDK buffers/decodes it. Forward chunks with
+// normal stream backpressure; a newline resets the budget, not the transport.
+export function boundedJsonlStream(maxBytes = DEFAULT_MAX_JSONL_MESSAGE_BYTES): TransformStream<Uint8Array, Uint8Array> {
+  let pendingBytes = 0;
+  return new TransformStream({
+    transform(chunk, controller) {
+      let start = 0;
+      for (let index = 0; index < chunk.byteLength; index++) {
+        if (chunk[index] !== 10) continue;
+        if (pendingBytes + index - start > maxBytes) throw messageTooLarge(maxBytes);
+        pendingBytes = 0;
+        start = index + 1;
+      }
+      pendingBytes += chunk.byteLength - start;
+      if (pendingBytes > maxBytes) throw messageTooLarge(maxBytes);
+      controller.enqueue(chunk);
+    },
+  });
+}
+
 export interface JsonlFramingError extends Error {
   code: "MESSAGE_TOO_LARGE";
 }

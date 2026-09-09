@@ -275,3 +275,24 @@ function withDataDir(t: TestContext, dataDir: string) {
     }
   });
 }
+
+test("concurrent completion and cancellation cannot lose cancellation", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  for (let attempt = 0; attempt < 25; attempt++) {
+    const jobId = `job-race-${attempt}`;
+    await writeJobRecord(workspaceRoot, jobId, { jobId, status: "running" });
+    await Promise.all([
+      writeJobRecord(workspaceRoot, jobId, { jobId, status: "cancelled", stopReason: "cancelled" }),
+      writeJobRecord(workspaceRoot, jobId, { jobId, status: "completed", stopReason: "end_turn" }),
+    ]);
+    assert.equal((await readWorkspaceJobRecord(workspaceRoot, jobId)).status, "cancelled");
+  }
+});
+
+test("only an explicit end_turn stop is eligible for successful completion", () => {
+  for (const reason of [undefined, "refusal", "max_tokens", "max_turn_requests", "future-protocol-value"]) {
+    assert.equal(statusFromStopReason(reason), "failed");
+  }
+  assert.equal(statusFromStopReason("end_turn"), "completed");
+});

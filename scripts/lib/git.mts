@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { gitEnvironment, GIT_STABLE_CONFIG } from "./git-environment.mts";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,23 +43,10 @@ async function baseRangeOrWorkingTreeDiff(
   cwd: string,
   resolvedBaseRef: string,
 ): Promise<string> {
-  // `<ref>...HEAD` is empty when the base resolves to HEAD itself (e.g.
-  // `--base HEAD`): the symmetric-difference range of a commit with itself has
-  // no hunks. Left as-is, the pinned block silently degrades to a bare status
-  // listing and the reviewer receives no diff to review. Treat base-equals-HEAD
-  // as the working-tree review the caller intended instead.
-  let headCommit: string | null = null;
-  try {
-    headCommit = (
-      await git(cwd, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
-    ).trim();
-  } catch {
-    headCommit = null;
-  }
-  if (headCommit !== null && headCommit === resolvedBaseRef) {
-    return await trackedWorkingTreeDiff(cwd);
-  }
-  return await git(cwd, "diff", "--end-of-options", `${resolvedBaseRef}...HEAD`);
+  // A base always compares the merge base to current tracked content, including
+  // staged and unstaged edits. Its meaning does not change when HEAD advances.
+  const mergeBase = (await git(cwd, "merge-base", resolvedBaseRef, "HEAD")).trim();
+  return await git(cwd, "diff", "--end-of-options", mergeBase);
 }
 
 async function trackedWorkingTreeDiff(cwd: string): Promise<string> {
@@ -106,7 +94,9 @@ export async function gitRoot(cwd: string): Promise<string> {
 }
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
+  if (args[0] === "diff") args.splice(1, 0, "--no-ext-diff", "--no-textconv", "--no-color");
+  const { stdout } = await execFileAsync("git", [...GIT_STABLE_CONFIG, "-C", cwd, ...args], {
+    env: gitEnvironment(),
     maxBuffer: 20 * 1024 * 1024,
   });
   return stdout;

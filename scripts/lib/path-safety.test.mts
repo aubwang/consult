@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 
-import { isInsideWorkspace, resolveInsideWorkspace } from "./path-safety.mts";
+import { isInsideWorkspace, isInsideWorkspaceSync, resolveInsideWorkspace } from "./path-safety.mts";
 
 const roots: string[] = [];
 
@@ -40,6 +40,15 @@ test("isInsideWorkspace returns false for a workspace symlink that resolves outs
   await fs.symlink("/etc/passwd", targetPath);
 
   assert.equal(await isInsideWorkspace(targetPath, workspace), false);
+});
+
+test("dangling links are never treated as new workspace files by either resolver", async () => {
+  const workspace = await makeRoot();
+  const outside = await makeRoot();
+  const link = path.join(workspace, "link");
+  await fs.symlink(path.join(outside, "absent"), link);
+  await assert.rejects(isInsideWorkspace(link, workspace), { code: "ENOENT" });
+  assert.throws(() => isInsideWorkspaceSync(link, workspace), { code: "ENOENT" });
 });
 
 test("resolveInsideWorkspace returns the resolved in-workspace target path", async () => {

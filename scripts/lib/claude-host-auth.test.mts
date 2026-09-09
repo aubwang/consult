@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -14,20 +15,28 @@ test("refreshClaudeHostOauth initializes one Host session without a prompt", asy
     startAgent: async (options) => {
       assert.equal(options.binary, "/configured/claude-agent-acp");
       assert.deepEqual(options.args, ["serve"]);
-      assert.deepEqual(options.env, { PROFILE_ONLY: "1" });
-      assert.equal(options.cwd, "/workspace");
+      assert.equal(options.env?.PROFILE_ONLY, "1");
+      assert.equal(options.env?.NODE_OPTIONS, undefined);
+      assert.match(options.cwd, /^\/tmp\/consult-auth-/);
+      assert.equal(options.workspaceRoot, options.cwd);
+      assert.equal((await fs.stat(options.cwd)).mode & 0o777, 0o700);
       assert.equal(options.sandbox, "off");
       assert.equal(options.profileRegistryId, "claude");
       calls.push("start");
       return {
         connection: {} as StartedAgent["connection"],
+        capabilities: { agentInfo: { name: "@agentclientprotocol/claude-agent-acp", version: "0.59.0" } },
         dispose: async () => {
           calls.push("dispose");
         },
       } as StartedAgent;
     },
     newSession: async (_connection, params) => {
-      assert.deepEqual(params, { cwd: "/workspace" });
+      assert.match(params.cwd, /^\/tmp\/consult-auth-/);
+      assert.deepEqual(params._meta, { claudeCode: { options: {
+        settingSources: [], settings: { disableAllHooks: true }, strictMcpConfig: true,
+        tools: [], plugins: [], persistSession: false,
+      } } });
       calls.push("new-session");
       return { sessionId: "auth-refresh-probe" } as never;
     },
@@ -42,6 +51,7 @@ test("refreshClaudeHostOauth disposes the Profile when initialization fails", as
     refreshClaudeHostOauth(input(), {
       startAgent: async () => ({
         connection: {} as StartedAgent["connection"],
+        capabilities: { agentInfo: { name: "@agentclientprotocol/claude-agent-acp", version: "0.59.0" } },
         dispose: async () => {
           disposed = true;
         },
@@ -62,6 +72,7 @@ test("refreshClaudeHostOauth times out and disposes a stalled Host probe", async
       timeoutMs: 5,
       startAgent: async () => ({
         connection: {} as StartedAgent["connection"],
+        capabilities: { agentInfo: { name: "@agentclientprotocol/claude-agent-acp", version: "0.59.0" } },
         dispose: async () => {
           disposed = true;
         },
@@ -208,3 +219,57 @@ function unrelatedFailure() {
     },
   };
 }
+
+test("refresh avoids a synthetic project initialization hook and removes its private cwd", async (t) => {
+  const { default: path } = await import("node:path");
+  const { default: os } = await import("node:os");
+  const { startAgent, newSession } = await import("./acp-client.mts");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "consult-auth-regression-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const workspace = path.join(root, "workspace");
+  await fs.mkdir(path.join(workspace, ".claude"), { recursive: true });
+  const marker = path.join(root, "hook-ran");
+  const transcript = path.join(root, "session.json");
+  await fs.writeFile(path.join(workspace, ".claude", "test-hook"), marker);
+  const adapter = path.join(root, "adapter.mjs");
+  await fs.writeFile(adapter, `
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import readline from 'node:readline';
+    const hook = cwd => {
+      const file = path.join(cwd, '.claude', 'test-hook');
+      if (fs.existsSync(file)) fs.writeFileSync(fs.readFileSync(file, 'utf8'), 'executed');
+    };
+    hook(process.cwd());
+    for await (const line of readline.createInterface({input: process.stdin})) {
+      const request = JSON.parse(line);
+      let result = {};
+      if (request.method === 'initialize') result = {
+        protocolVersion: request.params.protocolVersion,
+        agentCapabilities: {}, agentInfo: {name:'@agentclientprotocol/claude-agent-acp', version:'0.59.0'}
+      };
+      if (request.method === 'session/new') {
+        hook(request.params.cwd);
+        fs.writeFileSync(${JSON.stringify(transcript)}, JSON.stringify(request.params));
+        result = {sessionId:'probe'};
+      }
+      if (request.id !== undefined) process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\\n');
+    }
+  `);
+  // Positive control: the old launch context actually reaches the hook sink.
+  const control = await startAgent({ binary: process.execPath, args: [adapter], cwd: workspace, sandbox: "off" });
+  try { await newSession(control.connection, { cwd: workspace }); } finally { await control.dispose(); }
+  assert.equal(await fs.readFile(marker, "utf8"), "executed");
+  await fs.unlink(marker);
+  await refreshClaudeHostOauth(input({
+    workspaceRoot: workspace,
+    profileLaunch: { binary: process.execPath, args: [adapter], env: {} },
+  }));
+  await assert.rejects(fs.access(marker), { code: "ENOENT" });
+  const session = JSON.parse(await fs.readFile(transcript, "utf8"));
+  assert.deepEqual(session._meta.claudeCode.options.settingSources, []);
+  assert.equal(session._meta.claudeCode.options.settings.disableAllHooks, true);
+  assert.equal(session._meta.claudeCode.options.strictMcpConfig, true);
+  assert.notEqual(session.cwd, workspace);
+  await assert.rejects(fs.access(session.cwd), { code: "ENOENT" });
+});

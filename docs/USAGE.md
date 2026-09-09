@@ -133,10 +133,10 @@ stored on the Job. The Profile sees that pinned snapshot rather than a moving
 working tree.
 
 Without `--base`, Consult pins the working-tree diff (staged and unstaged
-tracked changes against HEAD). With `--base <ref>` it pins the `<ref>...HEAD`
-commit range. `--base HEAD` is treated as the working-tree diff, since a commit
-compared with itself has no hunks; to review uncommitted changes, prefer
-omitting `--base`.
+tracked changes against HEAD). With `--base <ref>`, it compares the merge base
+of `<ref>` and HEAD with current tracked content, including staged and unstaged
+edits. Untracked files appear in status but their contents are not part of this
+review diff. The base has the same meaning whether or not HEAD has advanced.
 
 Pass `--model` and `--effort` for optional Profile-specific tuning. Consult
 resolves family aliases only from models advertised by the Profile at Session
@@ -675,3 +675,28 @@ preloaded rather than fetched on demand.
 An agent that only ever runs `consult help` is reading the same version it is
 about to invoke, which is the point: guidance shipped separately from the binary
 drifts from it.
+
+## History retention and recovery
+
+`consult clean --older-than 30d` previews expired terminal Jobs eligible for
+removal. Add `--apply` to remove their records, logs, patch artifacts, and saved
+sessions. Cleanup is explicit; there is no automatic expiry. Jobs with live
+processes, recovery worktrees, or references from retained Jobs are kept. Run
+`consult clean --help` for the command contract.
+
+If isolated patch capture fails, Consult keeps the worktree and reports
+`artifacts.recoveryWorkspace` in the JSON result. Inspect that directory and
+recover the files before removing the worktree yourself. A successful terminal
+record is published only after the patch and touched-files manifest are ready.
+
+`completed` means the Profile returned `end_turn`. Refusals, token-limit stops,
+and unknown stop reasons fail the Job and cannot release dependent work as a
+success. The Host still has to review the output and run checks. Stored
+`outcome.finalText` contains the available agent-message text, which can include
+progress narration; summary output labels its trailing excerpt as an output
+preview. No additional model call is made to generate that preview.
+
+Keep Consult state on a coherent local filesystem. History listing builds
+relationships in linear time and reads files with bounded concurrency. It still
+reads the retained records, so cleanup is useful for long-lived workspaces. Log
+follow reads appended bytes and reports corruption with a line number.

@@ -67,3 +67,13 @@ with a zero skew (`inspectClaudeHostOauth`) so a still-valid, soon-to-expire
 credential is reported as `expiring` without flipping `canDelegate`, and it
 never performs the refresh. The durable operator fix remains an explicit
 long-lived Consult credential variable, which bypasses the OAuth file entirely.
+
+## Amendment: isolate refresh initialization
+
+Refresh uses a private directory for both process startup and ACP Session
+creation. It disables filesystem settings sources, hooks, plugins, and
+configured MCP servers, while preserving the Host credential location. The
+adapter must identify as claude-agent-acp 0.59.0 or newer before Session creation.
+Startup from the Workspace is unsafe because SDK initialization can load project
+configuration before receiving a model prompt. The attempt is announced on
+stderr, including for commands that return JSON on stdout.

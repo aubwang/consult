@@ -1,5 +1,5 @@
 import { boolFlag, unsupportedFlagError, type ParsedArgs } from "../args.mts";
-import { addJobRelationships } from "../delegation-chain.mts";
+import { indexJobRelationships } from "../delegation-chain.mts";
 import {
   isFinalStatus,
   jobLogPath,
@@ -15,7 +15,7 @@ import { resolveWorkspaceRoot as defaultResolveWorkspaceRoot } from "../workspac
 import { runCancel } from "./cancel.mts";
 import { jobLookupErrorResult, jobRecordErrorResult } from "./job-record-errors.mts";
 import type { CommandResult } from "./output.mts";
-import { briefText } from "./brief-text.mts";
+import { briefText, outputPreview } from "./brief-text.mts";
 
 export interface WaitDeps {
   resolveWorkspaceRoot?: () => Promise<string>;
@@ -103,9 +103,12 @@ export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<Comm
     }
   }
 
+  const warnings: string[] = [];
   let allRecords: JobRecord[];
   try {
-    allRecords = await (deps.listJobRecords ?? listWorkspaceJobRecords)(workspaceRoot);
+    allRecords = await (deps.listJobRecords ?? ((root: string) => listWorkspaceJobRecords(root, {
+      onMalformed: (error) => warnings.push(`Skipped malformed history record: ${error.path}; relationships may be incomplete\n`),
+    })))(workspaceRoot);
   } catch (error) {
     const malformedResult = jobRecordErrorResult(error);
     if (malformedResult) {
@@ -113,10 +116,10 @@ export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<Comm
     }
     throw error;
   }
+  const children = indexJobRelationships(allRecords);
   const payloads = records.map((record, index) => {
-    const enriched = addJobRelationships(record, allRecords);
-    return jobResultPayload(enriched, {
-      childJobIds: enriched.childJobIds,
+    return jobResultPayload(record, {
+      childJobIds: children.get(record.jobId ?? "") ?? [],
       logPath: jobLogPath(workspaceRoot, jobIds[index]),
     });
   });
@@ -125,7 +128,7 @@ export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<Comm
     return {
       exitCode: 0,
       stdout: `${JSON.stringify({ schemaVersion: JOB_RESULT_SCHEMA_VERSION, jobs: payloads })}\n`,
-      stderr: "",
+      stderr: warnings.join(""),
     };
   }
   return {
@@ -133,7 +136,7 @@ export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<Comm
     stdout: boolFlag(args.flags?.summary)
       ? renderWaitSummaries(payloads)
       : renderWaitResults(payloads),
-    stderr: "",
+    stderr: warnings.join(""),
   };
 }
 
@@ -220,7 +223,7 @@ function renderWaitSummaries(payloads: ReturnType<typeof jobResultPayload>[]): s
   return `${payloads
     .map((payload) => {
       const detail = payload.outcome.finalText
-        ? `result: ${briefText(payload.outcome.finalText)}`
+        ? `output preview: ${outputPreview(payload.outcome.finalText)}`
         : payload.outcome.errorMessage
           ? `error: ${briefText(payload.outcome.errorMessage)}`
           : null;

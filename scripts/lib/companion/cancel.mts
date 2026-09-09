@@ -176,7 +176,7 @@ async function cancelInlineJob({
   const pidIsAlive = deps.pidIsAlive ?? defaultPidIsAlive;
   const pidMatchesStartTime = deps.pidMatchesStartTime ?? defaultPidMatchesStartTime;
   let runnerLive = Number.isInteger(runnerPid) && pidIsAlive(runnerPid as number);
-  if (runnerLive && record.runnerStartTime) {
+  if (runnerLive) {
     // A stale record can point at a reused pid; only signal the companion
     // process that actually stamped this record.
     runnerLive = await pidMatchesStartTime(runnerPid as number, record.runnerStartTime);
@@ -267,10 +267,20 @@ async function terminateWorkerIfAlive(record: JobRecord, deps: CancelDeps): Prom
   if (!pidIsAlive(workerPid as number)) {
     return "";
   }
+  const matches = () => (deps.pidMatchesStartTime ?? defaultPidMatchesStartTime)(
+    workerPid as number, record.workerStartTime,
+  );
+  if (!await matches()) {
+    return `worker pid ${workerPid} not signalled: process identity is missing or changed\n`;
+  }
   try {
-    await terminateProcessTree(workerPid as number);
+    if (deps.terminateProcessTree) {
+      await terminateProcessTree(workerPid as number);
+    } else {
+      await defaultTerminateProcessTree(workerPid as number, { beforeSignal: matches });
+    }
     return `worker pid ${workerPid} terminated\n`;
-  } catch {
-    return "";
+  } catch (error) {
+    return `worker pid ${workerPid} termination failed: ${(error as Error).message}\n`;
   }
 }
