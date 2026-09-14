@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   SANDBOX_HOME,
@@ -76,6 +77,15 @@ export function buildAgentLaunch({
   codexPath,
 }: AgentLaunchOptions): AgentLaunch {
   const sandboxMode = normalizeAgentSandbox(sandbox);
+  if (profileRegistryId === "pi") {
+    if (sandboxMode !== "off") throw new Error("Pi requires explicit inherited authority");
+    return {
+      binary: process.execPath,
+      args: [fileURLToPath(new URL(import.meta.url.endsWith(".mts") ? "../consult-pi.mts" : "../consult-pi.mjs", import.meta.url)), binary, mode ?? "read-only", JSON.stringify(args)],
+      cwd,
+      env,
+    };
+  }
   const sessionModeEnv = profileSessionModeEnv(profileRegistryId, mode);
   const launchArgs = [...args, ...profileModeArgs(profileRegistryId, mode)];
   // Computed last so the recorded Profile value always wins over an ambient

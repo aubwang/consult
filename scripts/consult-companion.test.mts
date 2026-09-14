@@ -103,7 +103,7 @@ test("dispatch prints the overview for the help subcommand", async () => {
     "capabilities",
     "models",
   ]) {
-    assert.match(result.stdout, new RegExp(`\\n  ${command} `, "u"), command);
+    assert.match(result.stdout, new RegExp(`\\b${command}\\b`, "u"), command);
   }
   for (const topic of HELP_TOPICS) {
     assert.match(result.stdout, new RegExp(`\\n  ${topic} `, "u"), topic);
@@ -113,7 +113,7 @@ test("dispatch prints the overview for the help subcommand", async () => {
   assert.match(result.stdout, /consult delegate --read-only -- "<prompt>"/u);
   // Progressive disclosure only works if the entry point stays short enough to
   // read, and if the topic bodies stay behind their own command.
-  assert.ok(result.stdout.split("\n").length < 70, "overview grew past one screenful");
+  assert.ok(result.stdout.split("\n").length < 40, "overview grew past one screenful");
   assert.doesNotMatch(result.stdout, /^Topic: /mu);
   assert.doesNotMatch(result.stdout, /## Exit codes/u);
 });
@@ -156,7 +156,7 @@ test("consult help rejects an unknown topic with a suggestion", async () => {
   assert.equal(typo.stderr, "unknown help topic: authorty\ndid you mean 'consult help authority'?\n");
   assert.equal(unrelated.exitCode, 2);
   assert.match(unrelated.stderr, /^unknown help topic: kubernetes\n/u);
-  assert.match(unrelated.stderr, /topics: delegation, authority/u);
+  assert.match(unrelated.stderr, /topics: delegation, workflows, authority/u);
 });
 
 test("help --all prints the overview and every topic in one dump", async () => {

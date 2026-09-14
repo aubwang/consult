@@ -1,3 +1,5 @@
+import { EXECUTION_LIMITS } from "../execution-limits.mts";
+import { MAX_BATCH_JOBS } from "../job-batch.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -44,6 +46,7 @@ test("capabilities --json reports the versioned envelope a Host branches on", as
     "events",
     "steer",
     "reportExec",
+    "batch", "waitAny", "waitWatch", "pi", "confinedExecution",
     "nativeReviewProfiles",
   ]);
   assert.deepEqual(Object.keys(report.bounds), [
@@ -51,6 +54,7 @@ test("capabilities --json reports the versioned envelope a Host branches on", as
     "reportDataBytes",
     "reportsPerJob",
     "steerGuidanceBytes",
+    "batchJobs", "execution",
   ]);
 });
 
@@ -74,6 +78,7 @@ test("capabilities reports the constants the commands are actually bounded by", 
     reportDataBytes: MAX_REPORT_DATA_BYTES,
     reportsPerJob: MAX_REPORTS_PER_JOB,
     steerGuidanceBytes: MAX_STEER_GUIDANCE_BYTES,
+    batchJobs: MAX_BATCH_JOBS, execution: EXECUTION_LIMITS,
   });
 });
 

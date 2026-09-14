@@ -349,7 +349,7 @@ export async function runDelegate({
     try {
       isolatedWorkspace = await (
         deps.prepareIsolatedWorkspace ?? defaultPrepareIsolatedWorkspace
-      )({ workspaceRoot, jobId });
+      )({ workspaceRoot, jobId, ...(authority.allowExecute ? { includeDependencies: true } : {}) });
     } catch (error) {
       output.stderr(`isolated workspace preparation failed: ${(error as Error).message}\n`);
       return output.result(1);
@@ -463,7 +463,7 @@ export async function runDelegate({
   });
 }
 
-function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
+export function validateArgs(args: ParsedArgs): ValidatedDelegateArgs {
   const flags = args.flags ?? {};
   const unsupported = unsupportedFlagError(flags, [
     "agent", "profile", "model", "effort", "host", "host-session",

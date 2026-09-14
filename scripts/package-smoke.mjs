@@ -31,6 +31,9 @@ try {
     "bin/consult",
     "dist/scripts/consult-broker.mjs",
     "dist/scripts/consult-companion.mjs",
+    "dist/scripts/consult-pi.mjs",
+    "dist/scripts/consult-exec.mjs",
+    "dist/scripts/lib/companion/batch.mjs",
     "dist/scripts/lib/registry.mjs",
     "dist/scripts/registry.json",
     "scripts/build-package.mjs",
@@ -63,6 +66,7 @@ try {
   await assertConsultHelp(binary);
   await assertInstalledDiscovery(binary, temporaryRoot, "npm");
   await assertInstalledBackgroundJob(binary, temporaryRoot);
+  await assertInstalledPiBatch(binary, temporaryRoot, "npm");
   if (process.env.CONSULT_PACKAGE_SMOKE_CONFINED === "1") {
     await assertInstalledConfinedMatrix(binary, temporaryRoot, "npm");
   }
@@ -91,6 +95,7 @@ try {
   );
   await assertConsultHelp(bunBinary);
   await assertInstalledDiscovery(bunBinary, temporaryRoot, "bun");
+  await assertInstalledPiBatch(bunBinary, temporaryRoot, "bun");
   if (process.env.CONSULT_PACKAGE_SMOKE_CONFINED === "1") {
     await assertInstalledConfinedDoctors(bunBinary, temporaryRoot, "bun");
   }
@@ -99,6 +104,42 @@ try {
   );
 } finally {
   await removePackageTemporaryRoot(temporaryRoot);
+}
+
+async function assertInstalledPiBatch(binary, temporaryRoot, installer) {
+  const workspace = path.join(temporaryRoot, `${installer}-pi-workspace`);
+  const data = path.join(temporaryRoot, `${installer}-pi-data`);
+  await fs.mkdir(workspace);
+  await fs.mkdir(data);
+  await run("git", ["init", "--quiet"], { cwd: workspace });
+  const fakePi = path.join(workspace, "pi");
+  await fs.writeFile(fakePi, `#!${process.execPath}
+if(process.argv.includes('--version')) { console.log('0.84.4'); process.exit(0); }
+let buffer='';
+const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
+process.stdin.on('data',chunk=>{buffer+=chunk;let at;while((at=buffer.indexOf('\\n'))>=0){
+ const m=JSON.parse(buffer.slice(0,at));buffer=buffer.slice(at+1);
+ let data;
+ if(m.type==='get_state') data={model:{provider:'fixture',id:'fixture'},thinkingLevel:'off'};
+ if(m.type==='get_available_models') data={models:[{provider:'fixture',id:'fixture'}]};
+ if(m.type==='get_available_thinking_levels') data={levels:['off']};
+ send({type:'response',id:m.id,command:m.type,success:true,data});
+ if(m.type==='prompt') {
+  send({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'packed Pi completed'}});
+  send({type:'message_end',message:{role:'assistant',stopReason:'stop'}});
+  send({type:'agent_end'});send({type:'agent_settled'});
+ }
+}});
+`, { mode: 0o755 });
+  const env = { ...process.env, CONSULT_DATA_DIR: data, PATH: `${workspace}${path.delimiter}${process.env.PATH}` };
+  await run(binary, ["setup", "--install", "pi"], { cwd: workspace, env });
+  const tasks = path.join(workspace, "tasks.json");
+  await fs.writeFile(tasks, JSON.stringify({ jobs: [{ label: "first", prompt: "First check" }, { label: "second", prompt: "Second check" }] }));
+  const batch = JSON.parse((await run(binary, ["batch", tasks, "--agent", "pi", "--sandbox", "inherit", "--json"], { cwd: workspace, env })).stdout);
+  assert.equal(batch.submitted, true);
+  assert.equal(batch.jobIds.length, 2);
+  const result = JSON.parse((await run(binary, ["wait", "--batch", batch.id, "--json", "--timeout", "10"], { cwd: workspace, env })).stdout);
+  assert.deepEqual(result.jobs.map((job) => [job.job.status, job.outcome.finalText]), [["completed", "packed Pi completed"], ["completed", "packed Pi completed"]]);
 }
 
 async function assertInstalledDiscovery(binary, temporaryRoot, installer) {

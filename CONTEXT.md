@@ -7,7 +7,7 @@ self-contained Job and delegates it to a configured ACP Profile.
 
 **Host**
 The coding environment where Consult is invoked and delegation starts. Shipped
-Host detection understands terminal, Codex, and opencode; an explicit custom
+Host detection understands terminal, Codex, Pi, and opencode; an explicit custom
 Host name is also valid.
 _Avoid_: caller, source agent, frontend
 
@@ -32,8 +32,8 @@ _Avoid_: plugin, wrapper, frontend
 
 **Profile**
 A configured ACP agent available to Consult regardless of the invoking Host.
-The shipped Profile registry contains `codex`, `claude`, `opencode`, and
-`copilot`. Generic custom Profile configuration remains possible.
+The shipped Profile registry contains `codex`, `claude`, `opencode`,
+`copilot`, and `pi`. Generic custom Profile configuration remains possible.
 _Avoid_: backend, agent-config
 
 **Profile Capability**
@@ -198,3 +198,5 @@ _Avoid_: marketplace, plugin manifest
   Claude Code CLI's authentication without making Consult a Claude plugin.
   `copilot` needs no shim: the GitHub Copilot CLI serves ACP itself via
   `copilot --acp`.
+
+A Job Batch is a bounded submission receipt containing ordinary background Job ids. It does not imply dependency edges, shared authority, or patch integration. Pi is both a detectable Host and a native-harness Profile bridged internally to ACP.

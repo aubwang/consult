@@ -81,11 +81,11 @@ export function validateJobAuthorityRuntimeBoundary(
     );
   }
 
-  if (authority.allowExecute) {
+  if (authority.allowExecute && platform !== "linux") {
     return failure(
       "AUTHORITY_EXECUTE_UNAVAILABLE",
-      "execute authority is unavailable at the runtime launch boundary",
-      "Recreate the Job without execute authority.",
+      "bounded execute authority requires Linux with cgroup v2 and a systemd user manager",
+      "Run on Linux or recreate the Job without --allow-exec.",
     );
   }
 

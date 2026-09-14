@@ -59,7 +59,7 @@ export function configuredDiscovery(profiles: ProfilesData) {
     platform: process.platform,
     arch: process.arch,
     platformSupported: process.platform === "linux" || (process.platform === "darwin" && process.arch === "arm64"),
-    limits: { generalExecution: false, inheritedReadOnly: "cooperative", confinedNestedJobs: false },
+    limits: { generalExecution: process.platform === "linux", executionRequires: "confined Codex/Claude, isolated write, systemd user scopes and cgroup v2", inheritedReadOnly: "cooperative", confinedNestedJobs: false },
     commands: {
       models: ["models", "--match", "<model-name>", "--json"],
       wait: ["wait", "<job-id>", "--summary"],

@@ -13,7 +13,7 @@ test("loadRegistry returns the shipped v1 registry entries", async () => {
   assert.equal(registry.schemaVersion, 1);
   assert.deepEqual(
     registry.agents.map((agent) => agent.id),
-    ["codex", "claude", "opencode", "copilot"],
+    ["codex", "claude", "opencode", "pi", "copilot"],
   );
   for (const agent of registry.agents) {
     assert.equal(typeof agent.id, "string");

@@ -2,6 +2,11 @@
 
 Live conformance status for the implemented Consult Profiles.
 
+The [worker validation and Pi report](worker-validation-and-pi.md) records the
+2026-09-14 Linux execution-limit checks, native Pi transport/tool/resume checks,
+and installed npm/Bun batch coverage. Its synthetic model and ACP fixtures do
+not establish live vendor-model conformance.
+
 Job Authority confinement is now implemented for the built-in Codex and Claude
 Profile identities on native Linux and native arm64 macOS, with exact live preflight deciding
 whether the current Host context is usable. The pinned runtime remains
@@ -131,7 +136,7 @@ Job Authority boundary. They document ACP permission/backstop behavior and the
 legacy `CONSULT_AGENT_SANDBOX=bwrap` path; statements there about missing hard
 filesystem enforcement, whole config mounts, or a Consult “plugin” are
 historical and do not describe the current Codex/Claude confined launch.
-OpenCode and Copilot remain inherit-only.
+OpenCode, Copilot, and Pi remain inherit-only.
 
 | Profile | Setup | Basic delegate | Read-only deny | Write in-ws | Write out-of-ws | Background+result | Cancel | Resume | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -187,7 +192,7 @@ an ambient `CODEX_PATH` never crosses the confinement boundary, and the pinned
 binary is read-scoped as a single file rather than by granting the directory
 that holds it. `--sandbox inherit` is an explicit
 ambient-authority escape hatch and is never an automatic retry. The opencode,
-copilot, and custom Profile paths currently require inheritance; native
+copilot, pi, and custom Profile paths currently require inheritance; native
 Windows, Intel macOS, and confined nesting are unsupported.
 
 On macOS, Claude conformance requires a supported token environment variable or

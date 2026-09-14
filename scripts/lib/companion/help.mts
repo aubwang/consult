@@ -9,68 +9,35 @@ import { commandUsage, COMMANDS_WITH_USAGE } from "./command-help.mts";
 
 const overview = `Usage:
   consult <command> [options]
-  consult help <command>            Flags and examples for one command.
-  consult <command> --help          The same thing, from the command itself.
-  consult help <topic>              How to use Consult well.
-  consult --version
-
-Delegate one cold, self-contained prompt turn from the current Host to a
-configured Claude, Codex, opencode, or Copilot Profile. The Host keeps
-decomposition, judgment, and integration. Each Job has one explicit Job
-Authority; steering may restart its prompt turn.
+  consult help <topic> | consult help <command>
+Delegate a cold, self-contained Job to a configured Profile. The Host keeps
+planning, judgment, and integration. Read-only confinement is the default.
 
 Commands:
-  setup         Install or verify Profiles.
-  agents        List Profiles or set the default Profile.
-  models        Discover exact model IDs and launch recipes.
-  delegate      Send one self-contained prompt turn to a Profile.
-  review        Run a pinned, read-only Git review.
-  doctor        Check Profile and Job Authority readiness.
-  status        List Jobs or inspect one Job.
-  wait          Wait once for one or more Jobs and return their Results.
-  logs          Print or follow Job updates.
-  result        Print a finished Job result.
-  report        Record an interim event on a running Job.
-  events        Print or follow a Job's typed event stream.
-  steer         Send guidance into a running Job.
-  chain         Show a Job's delegation lineage.
-  cancel        Cancel an active Job and descendants.
-  brokers       Inspect or clean Broker state.
-  clean         Preview removal of expired Job history; --apply removes it.
-  capabilities  Report what this build supports, for feature detection.
-  help          Show this help, one command's flags, or one topic.
+  setup  agents  models  doctor  capabilities     Configure and inspect routes.
+  delegate  batch  review                         Start Jobs and pinned reviews.
+  status  wait  result  logs  events  chain        Inspect work and collect it.
+  steer  report  cancel  brokers  clean           Guide work and manage state.
 
 Topics:
-  delegation   When to hand work off, and how to write a prompt that survives
-               having no conversation behind it.
+  delegation   When to delegate and how to write a self-contained prompt.
+  workflows    Worker/test/reviewer loops and parallel Jobs.
   authority    Read-only, write, isolated, fetch, and sandbox modes.
-  profiles     Claude, Codex, opencode, Copilot: models, auth, limits.
-  review       Pinned reviews, reviewing a Job's patch, and resolving findings
-               without spending the Host's context.
-  jobs         Background Jobs, waiting, dependencies, sessions, inspection.
-  reporting    Interim Job events: what a running Job can say, and how to read
-               it back.
-  steering     Guidance for a Job that is already running.
+  profiles     Claude, Codex, Pi, opencode, Copilot: models, auth, limits.
+  review       Pinned reviews and reviewing a Job's patch.
+  jobs         Background Jobs, waiting, dependencies, and resume.
+  reporting    Typed interim Job events and how to read them.
+  steering     Guidance for a Job already running.
   chains       Nested delegation and lineage.
-  contracts    Job Result JSON, the report contract, and exit codes.
-  guardrails   The rules that keep delegated work safe to act on.
+  contracts    Job Result JSON, reports, and exit codes.
+  guardrails   Rules for evaluating delegated work safely.
 
-Profile selection:
-  Commands pick a Profile in this order: --agent <profile> on the command, the
-  default recorded for the current Host, then the global default. With none of
-  those set, commands report "No profile selected".
-
-Start here:
-  consult capabilities --configured --json    # compact Host discovery
-  consult models --match <name> --json          # exact models and launch args
-  consult setup                                # install and verify a Profile
-  consult agents --set claude                  # pick the default Profile
-  consult doctor                               # diagnose the current selection
-  consult delegate --read-only -- "<prompt>"   # one cold turn, read-only
-  consult help delegation                      # what makes a good handoff
-
-Delegation defaults to read-only confinement. Use --write --isolated for
-transactional edits. Run consult help --all to print every topic at once.
+Profile selection: --agent, Workspace override, Host default, global default.
+No profile selected: set a default with consult agents --set <profile>.
+Start: consult setup | consult help delegation | consult help workflows
+  consult delegate --read-only -- "<prompt>"
+  consult capabilities --configured
+Use consult --version for the version; consult help --all prints every topic.
 `;
 
 const delegationTopic = `Topic: delegation
@@ -156,6 +123,89 @@ Examples:
 See also: consult help authority, consult help profiles, consult delegate --help
 `;
 
+const workflowsTopic = `Topic: workflows
+
+Keep decomposition, acceptance decisions, and integration in the Host. Consult
+supplies Jobs and evidence; it does not choose your workflow or apply patches.
+
+## Worker, test, fresh reviewer
+
+1. Scout when you do not yet know the relevant files. Ask for entry points,
+   constraints, and the smallest useful implementation scope.
+2. Give a worker a cold prompt with objective, exact files, acceptance checks,
+   authority, and expected evidence. On supported Linux Hosts:
+
+   consult delegate --agent codex --write --isolated --allow-exec --background \\
+     --label "retry fix" -- "Fix retries; add and run focused tests. Report
+     changed files, exact commands and outcomes, and remaining uncertainty."
+
+3. Wait, then ask a fresh reviewer to inspect the actual patch:
+
+   consult wait <worker-id> --watch --summary
+   consult review --agent claude --job <worker-id>
+
+4. Inspect evidence and apply the patch only when the Host accepts it. Run
+   integration checks in the target checkout. If repairs are needed, give a
+   new worker the relevant findings and updated source. Cap repeated review
+   rounds (for example three); escalate unresolved disagreement to the Host.
+
+The worker can iterate tests within its own turn. Completion alone does not
+prove tests passed: read command outcomes and check the final patch. Without
+--allow-exec the worker can write tests but the Host must run them. No package
+installation or automatic environment provisioning occurs. Tests that need
+external services require a separately prepared environment.
+
+## Parallel independent work
+
+Write tasks.json with a jobs array. Each entry has a prompt, optional label,
+agent/model/effort, and delegate authority flags expressed as JSON fields:
+
+   {
+     "jobs": [
+       {"label": "correctness", "prompt": "Review src/retry.mts for bugs."},
+       {"label": "tests", "prompt": "Review retry tests for missing cases."}
+     ]
+   }
+
+   consult batch tasks.json --agent claude --json
+   consult wait --batch <batch-id> --watch --summary
+
+A batch launches up to eight background Jobs and persists each returned id.
+All entries are validated before submission. A later readiness failure leaves
+an explicit partial receipt; submitted Jobs keep their individual lifecycle.
+Multiple writers must each specify "write": true and "isolated": true. Start
+small: two independent reviewers are often more useful than eight overlapping
+ones. Batch limits do not cap other simultaneously submitted Jobs.
+
+## React as work finishes
+
+   consult wait <job-a> <job-b> --any --json --timeout 60
+   consult result <finished-job> --json
+   consult steer <running-job> -- "Consider this newly discovered constraint."
+
+--any returns when at least one selected Job is terminal, including failures.
+Its result includes the current state of every selected Job. Remove finished
+ids from subsequent waits. --watch writes status changes to stderr, keeping
+JSON stdout parseable. A timeout leaves Jobs running. --active snapshots active
+Jobs for the current Host Session; it does not add later submissions.
+
+## Pi as a Profile or Host
+
+   consult setup --install pi
+   consult models --agent pi --sandbox inherit --json
+   consult delegate --agent pi --sandbox inherit -- "Inspect the retry logic."
+
+Pi 0.84.4+ runs through its native RPC harness. Configure authentication in Pi.
+Consult disables extensions, skills, and templates and selects tools from Job
+mode. Pi currently needs explicit inherited authority; execute grants require
+a confined Codex or Claude Profile. Pi can reopen its own persisted Sessions.
+When Pi invokes Consult, PI_CODING_AGENT=true identifies the Host. Supply
+CONSULT_HOST_SESSION_ID when separate Pi conversations need separate defaults
+and implicit resume lookup; Pi does not export a native Session id.
+
+See also: consult help authority, consult batch --help, consult wait --help
+`;
+
 const authorityTopic = `Topic: authority
 
 Job Authority is the bounded permission set the Host grants one Job alongside
@@ -167,16 +217,20 @@ implicitly, and never retries a failed preflight with weaker confinement.
 - Default, or --read-only: inspect only; edits, fetch, and execute are denied.
 - --write: permit Workspace-confined edits in the current checkout.
 - --write --isolated: seed a detached worktree from current staged, unstaged,
-  and safe nonignored untracked state. Gitignored files are neither seeded nor
-  captured. The original checkout stays unchanged and the Job's artifacts carry
+  and safe nonignored untracked state. Gitignored files are not captured.
+  The original checkout stays unchanged and the Job's artifacts carry
   the Profile-only binary patch and touched-files list.
 - --allow-fetch: additionally permit arbitrary public TCP/443 through the
   proxy. This is task-specific authority, not a harmless convenience: the Job
   also holds the selected model credential, so prompt-injected content could
   send readable data to a public host. Grant it only when the Job itself needs
   public-web research.
-- --allow-exec: currently fails preflight while execute-specific resource and
-  cross-Profile conformance work remains incomplete.
+- --write --isolated --allow-exec: permit tests, builds, and local commands.
+  Requires Linux, systemd user scopes, cgroup v2, and a confined Codex or Claude
+  Profile. Bounds: 4 GiB memory, 256 processes, 200% CPU, 64 MiB per file, and
+  30 minutes per launch. No arbitrary network access or dependency downloads.
+  Installed, ignored node_modules are copied independently (up to 1 GiB and
+  100000 entries); external or absolute dependency links are rejected.
 
 --write and --read-only are mutually exclusive. --isolated requires --write.
 --allow-fetch requires confinement; fetch and execute cannot be combined.
@@ -192,25 +246,25 @@ implicitly, and never retries a failed preflight with weaker confinement.
   cooperative and detective, not OS-preventive, and the Profile receives the
   ambient Host environment without confined credential translation.
 
-Custom, opencode, and copilot Profiles currently require explicit inheritance
+Custom, Pi, opencode, and copilot Profiles require explicit inheritance
 and are never OS-confined by Consult. Native Windows and macOS x64 processes,
 including Node under Rosetta, are unsupported even for inheritance. Confined
-Jobs cannot execute commands, so confined nesting is unsupported.
+Jobs cannot start nested Consult Jobs; confined nesting is unsupported.
 
-Confined Jobs have wall-clock and persisted-log limits but no process-count,
-CPU, memory, disk, or global fan-out quota. The trusted Host must bound its own
-concurrency.
+All confined Jobs have wall-clock and persisted-log limits. Execute Jobs add
+the resource limits above. Total disk usage and global fan-out are not capped;
+the trusted Host must bound its own concurrency.
 
 ## Picking a grant
 
 - Default investigations and reviews to --read-only confinement.
 - Use --write --isolated for implementation, so the Host receives a patch
   rather than a mutated checkout.
-- Consult denies command execution, so do not ask a confined Job to run tests
-  or builds; verify the patch Host-side. Phrase that constraint as "do not run
-  tests, builds, or verification commands - read files freely", never a blanket
-  "you cannot execute commands": some Profiles read files through a
-  shell-mediated tool and will refuse file reads under a blanket execution ban.
+- Grant --allow-exec when the worker must test and repair its own changes.
+  Without it, request code and test changes with an explicit report of checks
+  still needed. The Host runs those checks after applying the reviewed patch.
+  Without --allow-exec, say "do not run tests, builds, or verification commands;
+  read files freely" so shell-mediated file reads are not discouraged.
 - Use inheritance only when the trusted Host deliberately accepts its ambient
   boundary, and say so in the prompt.
 
@@ -230,7 +284,7 @@ See also: consult help guardrails, consult help review, consult doctor --help
 const profilesTopic = `Topic: profiles
 
 A Profile is a configured ACP agent available to Consult regardless of the
-invoking Host. The built-in registry contains claude, codex, opencode, and
+invoking Host. The built-in registry contains claude, codex, Pi, opencode, and
 copilot; generic custom Profile configuration remains available.
 
   consult setup                              # what is installed and configured
@@ -294,6 +348,21 @@ through opencode. Default model discovery follows this same preference.
   read-only is cooperative. State that limitation when it materially affects
   the task.
 - Do not pass --allow-fetch; fetch requires confinement.
+
+## Pi
+
+  consult setup --install pi
+  consult delegate --agent pi --sandbox inherit -- "<prompt>"
+
+- Requires native Pi 0.84.4+; Consult bridges its RPC protocol internally.
+- Configure provider authentication in Pi. Model ids use provider/model;
+  --effort selects thinking levels advertised by the selected model.
+- Read-only Jobs expose read, grep, find, and ls. --write adds edit and write.
+  Bash, extensions, skills, and prompt templates are disabled.
+- Confinement and execute grants are unavailable for Pi. Its own Sessions can
+  be reopened with --resume; the Host conversation is never transferred.
+- A Pi Host is detected automatically. Set CONSULT_HOST_SESSION_ID for distinct
+  Pi conversations; otherwise they share the default Host Session scope.
 
 ## copilot
 
@@ -620,8 +689,9 @@ A Delegation Chain is the lineage of Jobs created when delegated work invokes
 Consult again. Every Job in one chain shares the root Job's Chain Id.
 
 A Job can run consult itself only when it was granted --sandbox inherit;
-confined Jobs cannot execute commands, so confined nested delegation is
-unsupported. Consult injects CONSULT_PARENT_JOB into every Job environment, and
+confined Jobs do not expose the Consult executable, so confined nested
+delegation is unsupported. Consult injects CONSULT_PARENT_JOB into every Job
+environment, and
 a nested consult delegate links itself into the parent's chain automatically -
 the Job passes nothing. An explicit --parent-job <job-id> overrides it.
 
@@ -758,6 +828,7 @@ See also: consult help authority, consult help review
 
 const topics: Record<string, string> = {
   delegation: delegationTopic,
+  workflows: workflowsTopic,
   authority: authorityTopic,
   profiles: profilesTopic,
   review: reviewTopic,

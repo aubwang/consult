@@ -236,7 +236,7 @@ test("write-mode denies opted-in execute until proxy-confined networking is avai
     }),
     {
       allowed: false,
-      reason: "execute denied: proxy-confined network enforcement is unavailable",
+      reason: "execute denied: resource-confined launch is required",
     },
   );
 });
@@ -282,7 +282,7 @@ test("write-mode denies explicitly opted-in execute under filesystem-only bwrap"
     }),
     {
       allowed: false,
-      reason: "execute denied: proxy-confined network enforcement is unavailable",
+      reason: "execute denied: resource-confined launch is required",
     },
   );
 });
@@ -298,7 +298,7 @@ test("write-mode treats an omitted execute cwd as the confined workspace root", 
     }),
     {
       allowed: false,
-      reason: "execute denied: proxy-confined network enforcement is unavailable",
+      reason: "execute denied: resource-confined launch is required",
     },
   );
 });
@@ -625,4 +625,13 @@ test("write-mode denies unrecognized tool kinds even inside the workspace", asyn
     }),
     { allowed: false, reason: "unknown or other tool kind requires an explicit supported operation" },
   );
+});
+
+test("execute requires the Core launch proof as well as explicit confined write authority", async () => {
+  const workspaceRoot = makeRoot();
+  const base = { request: request("execute", { command: "node --test", cwd: workspaceRoot }), mode: "write" as const, workspaceRoot, allowExecute: true, executionReady: true };
+  assert.deepEqual(await decidePermission(base), { allowed: true });
+  assert.equal((await decidePermission({ ...base, confinement: "inherit" })).allowed, false);
+  assert.equal((await decidePermission({ ...base, allowFetch: true })).allowed, false);
+  assert.equal((await decidePermission({ ...base, executionReady: false })).allowed, false);
 });

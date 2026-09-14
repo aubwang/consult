@@ -12,7 +12,7 @@ Security fixes target the current release. There is no commitment to maintain ol
 
 ## Trust boundaries
 
-Confined Codex and Claude Jobs get a private credential snapshot and restricted filesystem and network access. Exact preflight must pass in the invoking Host. General command execution is denied. Workspace Git metadata is protected from delegated writes. Host filesystem callbacks reject paths outside the Workspace, unsafe symlinks, and writes through multiply-linked files.
+Confined Codex and Claude Jobs get a private credential snapshot and restricted filesystem and network access. Exact preflight must pass in the invoking Host. Command execution requires an explicit isolated-write grant on supported Linux Hosts. Execute Jobs verify cgroup v2 memory (4 GiB), tasks (256), and CPU (200%) limits, apply a 64 MiB per-file hard limit, and use a systemd scope with a 30-minute lifetime. Cgroup termination precedes artifact archival and workspace cleanup. Total disk consumption and global concurrency are not capped. Other Jobs continue to deny general execution. Workspace Git metadata is protected from delegated writes. Host filesystem callbacks reject paths outside the Workspace, unsafe symlinks, and writes through multiply-linked files.
 
 An inherited Job runs with the Host's ambient authority. ACP permission checks and violation detection remain useful, but they are not an OS sandbox. The agent, its startup hooks, and the local user are trusted in that mode. Same-user access to Consult state is not an isolation boundary.
 
@@ -29,3 +29,5 @@ A successful isolated Job has its artifacts ready before completion is published
 Prompts, logs, saved agent sessions, patches, and recovery worktrees can contain private project data. Nothing is uploaded by the history commands. `consult clean` previews eligible expired history; `--apply` removes it. Recovery worktrees and retained dependencies are excluded. Malformed history produces a diagnostic, and malformed log entries are never silently skipped.
 
 Resource controls are partial: Consult bounds transport frames, stored text, log growth, and Job wall time. It does not provide portable CPU, memory, process-count, or total disk quotas. The filesystem boundary also assumes the trusted Host does not move an open Workspace directory out of its boundary while a delegated file operation is in progress.
+
+Pi uses inherited authority only. Its tool allowlist disables mutation tools in read-only mode and disables bash in every mode. Extensions, skills, and prompt templates are disabled, but native configuration and provider credentials remain available to the Pi process. This is cooperative policy, not an OS security boundary.

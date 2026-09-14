@@ -81,6 +81,7 @@ export interface StartAgentOptions {
 export interface AgentLaunchLease {
   launch: AgentLaunch;
   archiveSessionState?(input: { sessionId: string; cwd: string }): Promise<void>;
+  terminate?(): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -431,6 +432,7 @@ export async function startAgent(
           }
         }
         await waitForConfirmedExit(agentChild);
+        await lease.terminate?.();
         processTerminated = true;
         if (options?.archiveSessionState) {
           if (!lease.archiveSessionState) {

@@ -45,6 +45,30 @@ confined preflight clearly when the Workspace path contains one of those
 characters. Rename or relocate that checkout before using confinement. Spaces
 and Unicode path characters are supported.
 
+## Worker command execution
+
+On Linux, `--write --isolated --allow-exec` additionally requires cgroup v2,
+a systemd user manager, and `/usr/bin/prlimit` (normally supplied by util-linux).
+Consult verifies memory, CPU, and task controllers before launch. Check the
+exact combination without a model prompt:
+
+```sh
+consult doctor --agent codex --write --isolated --allow-exec
+```
+
+An unavailable user manager or controller fails preflight. Consult does not
+change OS policy or silently switch to inherited authority. macOS execute
+grants are currently unsupported; its existing confined read/write Jobs remain
+available. Install project dependencies in the Host beforehand; execute Jobs
+can snapshot eligible local `node_modules` but perform no automatic installs.
+
+## Pi harness
+
+`consult setup --install pi` installs or adopts the native Pi executable. Pi
+0.84.4+ is required. Configure provider credentials through Pi, then use
+`consult doctor --agent pi --sandbox inherit`. The built-in bridge requires no
+separate pi-acp package or Host extension. Pi is currently inherit-only.
+
 ## Install From npm
 
 Install the supported package globally with one command:

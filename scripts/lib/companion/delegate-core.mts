@@ -187,6 +187,18 @@ async function settleIsolatedWorkspace({
   const finalize = deps.finalizeIsolatedWorkspace ?? defaultFinalizeIsolatedWorkspace;
   const cleanup = deps.cleanupIsolatedWorkspace ?? defaultCleanupIsolatedWorkspace;
   const writeJobRecord = deps.writeJobRecord ?? defaultWriteJobRecord;
+  if (jobRecord.errorMessage?.includes("PROFILE_CLEANUP_UNCONFIRMED:")) {
+    jobRecord.recoveryWorkspace = prepared.executionRoot;
+    failJobRecord(jobRecord, {
+      now: deps.now,
+      errorMessage: jobRecord.errorMessage,
+      finalText: jobRecord.finalText,
+      sessionId: jobRecord.sessionId,
+    });
+    output.stderr(`Worker cleanup unconfirmed; work preserved for recovery at ${prepared.executionRoot}\n`);
+    await writeJobRecord(workspaceRoot, jobRecord.jobId as string, jobRecord);
+    return new Error(jobRecord.errorMessage);
+  }
   const errors: Error[] = [];
   try {
     const artifacts = await finalize(prepared);

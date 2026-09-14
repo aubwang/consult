@@ -235,6 +235,11 @@ export async function runPromptTurn({
     finalizedSeen = true;
     const finalizedNotification = notification as FinalizedNotification;
     notificationChain = notificationChain.then(async () => {
+      // A failed process/scope teardown must reach workspace settlement before
+      // it captures artifacts or removes files a surviving worker could use.
+      if (finalizedNotification.errorMessage?.includes("PROFILE_CLEANUP_UNCONFIRMED:")) {
+        jobRecord.errorMessage = finalizedNotification.errorMessage;
+      }
       try { await beforeTerminal?.(); }
       catch (error) {
         finalizedNotification.stopReason = "failed";

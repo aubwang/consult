@@ -20,6 +20,7 @@ const handlers: Record<string, () => Promise<CompanionHandler>> = {
   models: () => import("./lib/companion/models.mts"),
   agents: () => import("./lib/companion/agents.mts"),
   capabilities: () => import("./lib/companion/capabilities.mts"),
+  batch: () => import("./lib/companion/batch.mts"),
   delegate: () => import("./lib/companion/delegate.mts"),
   doctor: () => import("./lib/companion/doctor.mts"),
   chain: () => import("./lib/companion/chain.mts"),

@@ -17,6 +17,7 @@ const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export interface PrepareIsolatedWorkspaceOptions {
   workspaceRoot: string;
   jobId: string;
+  includeDependencies?: boolean;
   maxBufferBytes?: number;
   now?: () => string;
 }
@@ -88,6 +89,7 @@ export interface CleanupIsolatedWorkspaceOptions {
 export async function prepareIsolatedWorkspace({
   workspaceRoot,
   jobId,
+  includeDependencies = false,
   maxBufferBytes = DEFAULT_ISOLATED_GIT_MAX_BUFFER_BYTES,
   now = defaultNow,
 }: PrepareIsolatedWorkspaceOptions): Promise<PreparedIsolatedWorkspace> {
@@ -166,6 +168,7 @@ export async function prepareIsolatedWorkspace({
       "baseline",
       maxBufferBytes,
     );
+    if (includeDependencies) await copyNodeDependencies(originalRoot, executionRoot);
     const cleanup: IsolatedCleanupMetadata = {
       schemaVersion: ISOLATED_WORKSPACE_SCHEMA_VERSION,
       jobId,
@@ -778,4 +781,33 @@ function isolatedWorkspaceError(
 
 function defaultNow(): string {
   return new Date().toISOString();
+}
+
+/** Seed installed JS dependencies without sharing mutable files with the Host.
+ * Only ignored, project-local node_modules are eligible; external links fail
+ * closed. No install scripts, package downloads, or credentials are involved. */
+async function copyNodeDependencies(workspaceRoot: string, executionRoot: string): Promise<void> {
+  const source = path.join(workspaceRoot, "node_modules");
+  try { if (!(await fs.lstat(source)).isDirectory()) return; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  try { await runGit(executionRoot, ["check-ignore", "node_modules/"], { maxBufferBytes: 4096 }); }
+  catch (error) { if ((error as IsolatedWorkspaceError).cause && ((error as IsolatedWorkspaceError).cause as { code?: unknown }).code === 1) return; throw error; }
+  let bytes = 0;
+  let count = 0;
+  await fs.cp(source, path.join(executionRoot, "node_modules"), {
+    recursive: true, verbatimSymlinks: true, mode: fsConstants.constants.COPYFILE_FICLONE,
+    filter: async (file) => {
+      if (++count > 100_000) throw new Error("dependency snapshot exceeds 100000 entries");
+      const stat = await fs.lstat(file);
+      if (stat.isSymbolicLink()) {
+        if (path.isAbsolute(await fs.readlink(file))) throw new Error("absolute dependency symlink cannot be copied safely");
+        const real = await fs.realpath(file);
+        if (real !== source && !real.startsWith(source + path.sep)) throw new Error("node_modules links outside its tree; prepare self-contained dependencies before using --allow-exec");
+      } else if (stat.isFile()) {
+        bytes += stat.size;
+        if (bytes > 1024 ** 3) throw new Error("dependency snapshot exceeds 1 GiB");
+      } else if (!stat.isDirectory()) throw new Error("unsupported special file in node_modules");
+      return true;
+    },
+  });
 }

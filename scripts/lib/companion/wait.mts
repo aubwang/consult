@@ -1,4 +1,6 @@
-import { boolFlag, unsupportedFlagError, type ParsedArgs } from "../args.mts";
+import { readBatch } from "../job-batch.mts";
+import { resolveHostIdentity } from "../host-identity.mts";
+import { boolFlag, stringFlag, missingFlagValueError, unsupportedFlagError, type ParsedArgs } from "../args.mts";
 import { indexJobRelationships } from "../delegation-chain.mts";
 import {
   isFinalStatus,
@@ -18,6 +20,7 @@ import type { CommandResult } from "./output.mts";
 import { briefText, outputPreview } from "./brief-text.mts";
 
 export interface WaitDeps {
+  stderrWrite?: (text: string) => void;
   resolveWorkspaceRoot?: () => Promise<string>;
   readJobRecord?: (workspaceRoot: string, jobId: string) => Promise<JobRecord>;
   listJobRecords?: (workspaceRoot: string) => Promise<JobRecord[]>;
@@ -59,24 +62,46 @@ export async function run(_subcommand: string, parsedArgs: ParsedArgs): Promise<
 }
 
 export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<CommandResult> {
-  const unsupported = unsupportedFlagError(args.flags, ["json", "summary", "keep-running"]);
+  const unsupported = unsupportedFlagError(args.flags, ["json", "summary", "keep-running", "batch", "any", "watch", "timeout", "active", "host", "host-session"]);
   if (unsupported) {
     return { exitCode: 2, stdout: "", stderr: `${unsupported}\n` };
   }
   if (boolFlag(args.flags?.summary) && boolFlag(args.flags?.json)) {
     return { exitCode: 2, stdout: "", stderr: "--summary is not supported with --json\n" };
   }
-  const jobIds = [...new Set(args.positional ?? [])];
-  if (jobIds.length === 0) {
+  const missing = missingFlagValueError(args.flags, ["batch", "timeout", "host", "host-session"]);
+  if (missing) return { exitCode: 2, stdout: "", stderr: `${missing}\n` };
+  const timeout = stringFlag(args.flags.timeout);
+  if (timeout !== undefined && (!/^\d+$/u.test(timeout) || Number(timeout) > 1800)) return { exitCode: 2, stdout: "", stderr: "--timeout must be 0-1800 seconds\n" };
+  const batchId = stringFlag(args.flags.batch);
+  const active = boolFlag(args.flags.active);
+  if ((batchId && active) || ((batchId || active) && args.positional.length)) return { exitCode: 2, stdout: "", stderr: "choose Job ids, --batch, or --active\n" };
+  let jobIds = [...new Set(args.positional ?? [])];
+  if (jobIds.length === 0 && !batchId && !active) {
     return { exitCode: 2, stdout: "", stderr: "at least one job id is required\n" };
   }
 
   const workspaceRoot = await (deps.resolveWorkspaceRoot ?? defaultResolveWorkspaceRoot)();
+  let batchWarning = "";
+  if (batchId) {
+    try {
+      const batch = await readBatch(workspaceRoot, batchId);
+      if (!batch.submitted) batchWarning = `batch submission incomplete: ${batch.error ?? "still submitting"}; waiting only for recorded Job ids\n`;
+      jobIds = batch.jobIds;
+    } catch (error) { return { exitCode: 2, stdout: "", stderr: `${error instanceof Error ? error.message : String(error)}\n` }; }
+  }
+  if (active) {
+    const host = resolveHostIdentity({ args });
+    jobIds = (await (deps.listJobRecords ?? listWorkspaceJobRecords)(workspaceRoot))
+      .filter((record) => record.host === host.host && record.hostSessionId === host.hostSessionId && !isFinalStatus(record.status))
+      .map((record) => record.jobId!).filter(Boolean);
+  }
   const readJobRecord = deps.readJobRecord ?? readWorkspaceJobRecord;
   const poll = deps.poll ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const nowMs = deps.nowMs ?? (() => Date.now());
-  const deadline = nowMs() + (deps.maxWaitMs ?? 30 * 60 * 1000);
+  const deadline = nowMs() + (timeout !== undefined ? Number(timeout) * 1000 : deps.maxWaitMs ?? 30 * 60 * 1000);
   let records: JobRecord[];
+  let previous = "";
 
   while (true) {
     const readResult = await readSelectedJobs(workspaceRoot, jobIds, readJobRecord);
@@ -84,7 +109,12 @@ export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<Comm
       return readResult.error;
     }
     records = readResult.records;
-    if (records.every((record) => isFinalStatus(record.status))) {
+    if (boolFlag(args.flags.watch)) {
+      const snapshot = records.map((record) => `${record.jobId} ${record.status}${record.label ? ` [${briefText(record.label)}]` : ""}`).join("\n");
+      if (snapshot !== previous) (deps.stderrWrite ?? ((text) => process.stderr.write(text)))(`${snapshot}\n`);
+      previous = snapshot;
+    }
+    if (records.every((record) => isFinalStatus(record.status)) || (boolFlag(args.flags.any) && records.some((record) => isFinalStatus(record.status)))) {
       break;
     }
     if (deps.signal?.aborted) {
@@ -103,7 +133,7 @@ export async function runWait({ args, deps = {} }: RunWaitOptions): Promise<Comm
     }
   }
 
-  const warnings: string[] = [];
+  const warnings: string[] = batchWarning ? [batchWarning] : [];
   let allRecords: JobRecord[];
   try {
     allRecords = await (deps.listJobRecords ?? ((root: string) => listWorkspaceJobRecords(root, {
