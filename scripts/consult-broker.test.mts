@@ -1891,14 +1891,15 @@ test("consult/attach reports dropped buffered updates after overflow", async (t)
       profile: "codex",
       mode: "write",
     });
-    await waitFor(() => runUpdates.length === updateCount);
+    // Hundreds of notifications can exceed the default short wait on CI.
+    await waitFor(() => runUpdates.length === updateCount, 5000);
 
     assert.deepEqual(await attachClient.request("consult/attach", { jobId: "job-1" }), {
       attached: true,
       jobId: "job-1",
     });
 
-    await waitFor(() => attachUpdates.length === 501);
+    await waitFor(() => attachUpdates.length === 501, 5000);
     assert.equal(attachUpdates.length, 501);
     assert.deepEqual(attachUpdates[0].update, {
       sessionUpdate: "consult_update_gap",
@@ -2453,6 +2454,8 @@ test("originator disconnect mid-prompt taints the broker when the agent does not
     });
     assert.equal(record.errorMessage, "agent did not acknowledge cancel");
     assert.equal(await cancelCount(harness.cancelLog), 1);
+    // Record publication precedes the runtime's final taint transition.
+    await waitFor(() => harness.broker.tainted, 5000);
     assert.equal(harness.broker.tainted, true);
 
     await assert.rejects(
