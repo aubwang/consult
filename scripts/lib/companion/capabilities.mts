@@ -1,3 +1,5 @@
+import { EXECUTION_LIMITS } from "../execution-limits.mts";
+import { MAX_BATCH_JOBS } from "../job-batch.mts";
 import { MODELS_SCHEMA_VERSION } from "../model-discovery.mts";
 import { profilesPath } from "../broker-endpoint.mts";
 import { configuredDiscovery } from "../profile-discovery.mts";
@@ -47,6 +49,11 @@ export interface CapabilitiesReport {
     events: boolean;
     steer: boolean;
     reportExec: boolean;
+    batch: boolean;
+    waitAny: boolean;
+    waitWatch: boolean;
+    pi: boolean;
+    confinedExecution: boolean;
     nativeReviewProfiles: string[];
   };
   bounds: {
@@ -54,6 +61,8 @@ export interface CapabilitiesReport {
     reportDataBytes: number;
     reportsPerJob: number;
     steerGuidanceBytes: number;
+    batchJobs: number;
+    execution: typeof EXECUTION_LIMITS;
   };
 }
 
@@ -144,6 +153,8 @@ export function capabilitiesReport(
       // An inherit-sandbox Job can run `consult report` itself: the permission
       // layer approves that one execute without an execute grant (ADR-0042).
       reportExec: true,
+      batch: true, waitAny: true, waitWatch: true, pi: true,
+      confinedExecution: process.platform === "linux",
       nativeReviewProfiles: registry.agents
         .filter((agent) => agent.advertisesReview === true)
         .map((agent) => agent.id),
@@ -153,6 +164,7 @@ export function capabilitiesReport(
       reportDataBytes: MAX_REPORT_DATA_BYTES,
       reportsPerJob: MAX_REPORTS_PER_JOB,
       steerGuidanceBytes: MAX_STEER_GUIDANCE_BYTES,
+      batchJobs: MAX_BATCH_JOBS, execution: EXECUTION_LIMITS,
     },
   };
 }
@@ -176,6 +188,10 @@ function renderReport(report: CapabilitiesReport): string {
     `events\t${yesNo(report.features.events)}`,
     `steer\t${yesNo(report.features.steer)}`,
     `reportExec\t${yesNo(report.features.reportExec)}`,
+    `batch\t${yesNo(report.features.batch)}`,
+    `waitAny/waitWatch\tyes`,
+    `pi\tyes`,
+    `confinedExecution\t${yesNo(report.features.confinedExecution)} (readiness unchecked)`,
     `nativeReview\t${nativeReview.length > 0 ? nativeReview.join(", ") : "(none)"}`,
     "",
     ...(report.configured ? ["configured Profiles (readiness unchecked):", ...report.configured.profiles.map((profile) => `${profile.id}\t${profile.confinement}`), "Use --configured --json for launch arguments and restrictions.", ""] : []),

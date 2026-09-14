@@ -14,10 +14,10 @@ See [`../CONTEXT.md`](../CONTEXT.md) for the normative domain language and
 - The public surface is the `consult` CLI and nothing else. Delegation
   judgment ships as `consult help` topics inside the binary, not as agent
   skills, plugins, or Host adapters.
-- Shipped Host autodetection covers terminal, Codex, and opencode. Explicit
+- Shipped Host autodetection covers terminal, Codex, Pi, and opencode. Explicit
   `CONSULT_HOST` values support custom Hosts without a Host-specific adapter.
 - The built-in Profile registry contains `claude`, `codex`, `opencode`, and
-  `copilot`.
+  `copilot`, and `pi`.
 - Claude is a delegated Profile, not a shipped Host plugin. GitHub Copilot is
   a delegated inherit-only preview Profile (ADR-0038); its model-turn
   conformance is still auth-deferred. Gemini is not a supported Profile.
@@ -457,7 +457,7 @@ launch. The launch path derives and validates the full policy again, so such a
 race can fail a created Job but cannot silently broaden its authority.
 
 The confined adapter targets native Linux and native arm64 macOS for built-in
-`codex` and `claude` Profile identities. Custom, `opencode`, and `copilot`
+`codex` and `claude` Profile identities. Custom, `pi`, `opencode`, and `copilot`
 Profiles remain inherit-only until they pass the same live conformance gates. A trusted Host
 may choose `--sandbox inherit`; that adds no Consult OS boundary and disables
 the legacy `CONSULT_AGENT_SANDBOX` launch layer. `consult doctor` reports the
@@ -570,15 +570,15 @@ version, and 0.59.0+ retains lifecycle ownership in the Profile.
 | read/search/think | allow, path-confined | allow, path-confined | allow, path-confined | allow, path-confined |
 | edit/delete/move | deny | allow, path-confined | allow, path-confined | allow, path-confined |
 | fetch | deny | deny | allow via public-TCP/443 proxy | deny |
-| execute | deny | deny | deny | preflight rejects the Job |
+| execute | deny | deny | deny | allow after verified Linux resource confinement |
 | switch_mode/other | deny | allow | allow | deny |
 
-Execute remains represented in canonical/persisted authority for compatibility,
-but `--allow-exec` is unavailable until execute-specific resource containment
-and cross-Profile conformance are complete. Wall-clock duration and persisted
-NDJSON size are bounded now. Process count, CPU, memory, disk, and global
-fan-out quotas remain documented residual risks rather than implied sandbox
-guarantees; the trusted Host must bound concurrent Jobs.
+Execute grants now require isolated write Jobs and the Linux systemd/cgroup-v2
+boundary defined in ADR-0043. Each execute launch has verified memory, CPU, and
+process limits, a per-file hard limit, and a scope lifetime. Cleanup terminates
+the entire cgroup before archival. Eligible local Node dependencies are copied
+independently into the worktree. Other Jobs retain their existing limits;
+aggregate concurrency and total disk consumption remain Host responsibilities.
 
 Conformance is deliberately two-layered. A deterministic fake ACP Profile is
 run through each built-in registry identity from the packed artifact to make
@@ -623,3 +623,19 @@ identities from the Bun install, without a model call.
 
 Behavior and architecture changes update this document and, when they make or
 supersede a durable decision, add an ADR.
+
+## Worker validation, batches, and Pi (ADR-0043)
+
+See [ADR-0043](adr/0043-worker-validation-batches-and-pi.md) for the execution
+bounds, native Pi bridge, and verification contract. `batch` validates bounded
+JSON submissions and journals returned ids under `workspaces/<hash>/batches`.
+`wait --batch`, `--active`, `--any`, `--watch`, and `--timeout` select and observe
+ordinary Jobs. A partial batch receipt remains usable for its recorded ids.
+There is no workflow scheduler or automatic patch integration.
+
+The internal Pi bridge keeps the Core ACP contract while launching `pi --mode
+rpc`. It supports model/thinking controls and resume, restricts tools by Job
+mode, and waits for `agent_settled` rather than a low-level `agent_end` event.
+Pi remains inherit-only; it does not receive Host-side extensions or conversation
+history through Consult. Its own configured native provider state is available
+under the explicitly inherited environment.

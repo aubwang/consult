@@ -99,6 +99,8 @@ export interface DecidePermissionOptions {
   workspaceRoot: string;
   allowFetch?: boolean;
   allowExecute?: boolean;
+  /** Set only by Core after selecting the resource-confined launch. */
+  executionReady?: boolean;
   sandbox?: AgentSandboxMode;
   /**
    * Job confinement (ADR-0042). Defaults to `confined`, which keeps execute
@@ -120,6 +122,7 @@ export async function decidePermission(
     workspaceRoot,
     allowFetch = false,
     allowExecute = false,
+    executionReady = false,
     sandbox = "off",
     confinement = "confined",
     reportExec,
@@ -179,10 +182,10 @@ export async function decidePermission(
     if (allowExecute !== true) {
       return { allowed: false, reason: "execute denied in write mode (explicit opt-in required)" };
     }
-    return {
-      allowed: false,
-      reason: "execute denied: proxy-confined network enforcement is unavailable",
-    };
+    if (!executionReady) return { allowed: false, reason: "execute denied: resource-confined launch is required" };
+    return confinement === "confined" && !allowFetch
+      ? { allowed: true }
+      : { allowed: false, reason: "execute requires confined authority without fetch" };
   }
 
   if (kind === "fetch") {

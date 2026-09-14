@@ -150,6 +150,45 @@ test("runDelegateOnce preserves isolation and fails the job when artifact finali
   assert.match(String(records.at(-1)?.errorMessage), /cannot create patch/);
 });
 
+test("unconfirmed worker cleanup preserves isolation without capturing unstable artifacts", async () => {
+  const client = new FakeBrokerClient();
+  const prepared = isolatedFixture();
+  const records: Array<Record<string, unknown>> = [];
+  let captureCalls = 0;
+  let cleanupCalls = 0;
+  const completion = runDelegateOnce({
+    workspaceRoot: prepared.workspaceRoot,
+    executionRoot: prepared.executionRoot,
+    profileEntry: {},
+    jobRecord: {
+      jobId: prepared.jobId, kind: "delegate", mode: "write", status: "running",
+      host: "terminal", hostSessionId: "session", profile: "codex", prompt: "edit",
+      isolated: true, isolatedWorkspace: prepared,
+    },
+    isolatedWorkspace: prepared,
+    renderSummary: false,
+    deps: {
+      ensureBrokerSession: async () => ({ client }),
+      writeJobRecord: async (_root, _id, record) => { records.push(structuredClone(record)); },
+      appendLogLine: async () => {},
+      finalizeIsolatedWorkspace: async () => { captureCalls++; throw new Error("must not capture"); },
+      cleanupIsolatedWorkspace: async () => { cleanupCalls++; },
+    },
+  });
+  await client.waitForRequest("consult/run");
+  client.notify("consult/finalized", {
+    jobId: prepared.jobId, stopReason: "failed", sessionId: "session",
+    errorMessage: "PROFILE_CLEANUP_UNCONFIRMED: execution scope could not be stopped",
+  });
+  assert.equal((await completion).exitCode, 6);
+  assert.equal(captureCalls, 0);
+  assert.equal(cleanupCalls, 0);
+  assert.equal(records.at(-1)?.recoveryWorkspace, prepared.executionRoot);
+  assert.equal(records.at(-1)?.status, "failed");
+  assert.equal(records.at(-1)?.patchPath, undefined);
+  assert.match(String(records.at(-1)?.errorMessage), /PROFILE_CLEANUP_UNCONFIRMED/);
+});
+
 test("runDelegateOnce persists finalized error messages for failed jobs", async () => {
   const client = new FakeBrokerClient();
   const persistedRecords: unknown[] = [];

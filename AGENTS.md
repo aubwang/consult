@@ -14,7 +14,7 @@ job-scoped Brokers.
   install. Keep the overview one screenful and put depth behind
   `consult help <topic>`.
 - Treat local agent workspace state as untracked. Do not commit `.cruise/`,
-  `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.tmp/`, `skills-lock.json`,
+  `.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `.tmp/`, `skills-lock.json`,
   or `HANDOFF.md`.
 - Keep Cruise policy and session state out of this repo. Consult may implement
   delegation mechanisms, but Cruise owns Cruise operating policy.

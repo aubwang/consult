@@ -243,3 +243,45 @@ async function writeJob(workspaceRoot: string, record: Record<string, unknown>) 
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, `${record.jobId}.json`), JSON.stringify(record));
 }
+
+test("wait --any watches changes and returns the current state of every selected Job", async () => {
+  let polls = 0;
+  const output: string[] = [];
+  const result = await runWait({ args: { positional: ["job-a", "job-b"], flags: { any: true, watch: true, json: true } }, deps: {
+    resolveWorkspaceRoot: async () => process.cwd(),
+    readJobRecord: async (_root, id) => ({ jobId: id, status: id === "job-a" && polls ? "completed" : "running" }),
+    listJobRecords: async () => [],
+    poll: async () => { polls++; }, stderrWrite: (text) => { output.push(text); },
+  } });
+  assert.equal(polls, 1); assert.equal(result.exitCode, 0);
+  assert.deepEqual(JSON.parse(result.stdout).jobs.map((item: any) => item.job.status), ["completed", "running"]);
+  assert.equal(output.length, 2);
+});
+
+test("wait --timeout 0 probes once and leaves a running Job untouched", async () => {
+  let polls = 0;
+  const result = await runWait({ args: { positional: ["job-running"], flags: { timeout: "0" } }, deps: {
+    resolveWorkspaceRoot: async () => process.cwd(), readJobRecord: async () => ({ jobId: "job-running", status: "running" }), poll: async () => { polls++; },
+  } });
+  assert.equal(result.exitCode, 4); assert.equal(polls, 0);
+});
+
+test("wait --active snapshots only the selected Host Session and does not add later Jobs", async () => {
+  let listing = 0;
+  const selected: string[] = [];
+  const result = await runWait({ args: { positional: [], flags: { active: true, host: "pi", "host-session": "this-session", json: true } }, deps: {
+    resolveWorkspaceRoot: async () => process.cwd(),
+    listJobRecords: async () => {
+      listing++;
+      return [
+        { jobId: "job-own", host: "pi", hostSessionId: "this-session", status: "running" },
+        { jobId: "job-other", host: "pi", hostSessionId: "another-session", status: "running" },
+        { jobId: "job-old", host: "pi", hostSessionId: "this-session", status: "completed" },
+        ...(listing > 1 ? [{ jobId: "job-later", host: "pi", hostSessionId: "this-session", status: "running" }] : []),
+      ];
+    },
+    readJobRecord: async (_root, id) => { selected.push(id); return { jobId: id, status: "completed" }; },
+  } });
+  assert.equal(result.exitCode, 0); assert.deepEqual(selected, ["job-own"]);
+  assert.deepEqual(JSON.parse(result.stdout).jobs.map((item: any) => item.job.id), ["job-own"]);
+});

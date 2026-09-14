@@ -1,3 +1,4 @@
+import { boundedExecutionLaunch, probeExecutionLimits } from "./execution-limits.mts";
 import { discoverSessionModels } from "./session-models.mts";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -249,6 +250,7 @@ export async function acquireConfinedSandboxRuntimeLaunch(
   let proxy: EgressProxy | undefined;
   let managerTouched = false;
   let wrapped = false;
+  let execution: ReturnType<typeof boundedExecutionLaunch> | undefined;
   let releasePromise: Promise<void> | undefined;
 
   const release = async (): Promise<void> => {
@@ -257,6 +259,8 @@ export async function acquireConfinedSandboxRuntimeLaunch(
   };
 
   const cleanup = async (): Promise<void> => {
+    // If cgroup termination cannot be proved, retain every launch resource.
+    await execution?.terminate();
     const errors: unknown[] = [];
     if (wrapped) {
       try {
@@ -379,6 +383,12 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     const runtimeExecutables = new Map<string, string>();
     for (const command of profile.requiredCommands) {
       runtimeExecutables.set(command, resolveExecutable(command, hostEnv));
+    }
+    if (input.authority.allowExecute) {
+      for (const command of ["node", "npm", "bun", "python3", "uv", "git"]) {
+        try { runtimeExecutables.set(command, resolveExecutable(command, hostEnv)); }
+        catch { /* Only already-installed development tools are exposed. */ }
+      }
     }
     if (await executableNeedsNode(resolvedBinary)) {
       runtimeExecutables.set("node", resolveExecutable("node", hostEnv));
@@ -523,13 +533,11 @@ export async function acquireConfinedSandboxRuntimeLaunch(
     }
     Object.assign(childEnv, runtimeEnvironment);
 
+    const launch = { binary: transformed.argv[0], args: transformed.argv.slice(1), cwd, env: childEnv };
+    if (input.authority.allowExecute) execution = boundedExecutionLaunch(launch, hostEnv);
     return {
-      launch: {
-        binary: transformed.argv[0],
-        args: transformed.argv.slice(1),
-        cwd,
-        env: childEnv,
-      },
+      launch: execution?.launch ?? launch,
+      terminate: execution?.terminate,
       archiveSessionState: async ({ sessionId, cwd: sessionCwd }) =>
         await archiveConfinedSessionState({
           workspaceRoot: input.stateWorkspaceRoot ?? input.workspaceRoot ?? input.cwd,
@@ -607,6 +615,7 @@ export async function probeConfinedSandboxRuntime(
   let failure: unknown;
   let models: string[] | undefined;
   try {
+    if (input.authority.allowExecute) await probeExecutionLimits();
     agent = await (deps.startAgent ?? startAgent)({
       binary: input.profileLaunch.binary,
       args: input.profileLaunch.args,

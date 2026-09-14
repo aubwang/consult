@@ -103,6 +103,7 @@ export interface InstallDeps {
     cwd: string;
     clientHandlers: Record<string, never>;
     initTimeoutMs: number;
+    profileRegistryId?: string;
     codexPath?: string;
   }) => Promise<InstallSmokeAgent>;
   spawnInstall?: (command: string) => Promise<SpawnInstallResult>;
@@ -184,6 +185,7 @@ export async function installAndVerify({
       cwd: process.cwd(),
       clientHandlers: {},
       initTimeoutMs: 10000,
+      ...(registryEntry.id === "pi" ? { profileRegistryId: "pi" } : {}),
       ...(codexRuntime ? { codexPath: codexRuntime.codexPath } : {}),
     });
     // The handshake reports the agent's own identity and version; a Copilot

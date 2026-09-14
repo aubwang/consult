@@ -1,6 +1,9 @@
 export const BOOLEAN_FLAGS = new Set([
   "help",
   "configured",
+  "any",
+  "watch",
+  "active",
   "apply",
   "read-only",
   "write",

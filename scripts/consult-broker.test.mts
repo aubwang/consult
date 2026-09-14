@@ -978,7 +978,7 @@ test("consult/run denies an edit permission request outside the workspace", asyn
 });
 
 test(
-  "consult/run rejects persisted execute authority again at the launch boundary",
+  "consult/run rejects execute without a recorded isolated workspace",
   { skip: !fs.existsSync("/usr/bin/bwrap") },
   async (t) => {
     const repoRoot = path.resolve(path.dirname(fakeAgentPath), "../../..");
@@ -1004,7 +1004,7 @@ test(
 
       const finalized = await finalizedPromise;
       assert.equal(finalized.stopReason, "failed");
-      assert.match(finalized.errorMessage, /AUTHORITY_EXECUTE_UNAVAILABLE/u);
+      assert.match(finalized.errorMessage, /AUTHORITY_INVALID.*recorded isolated Execution Workspace/u);
       assert.equal(updates.length, 0);
     } finally {
       await client.close();

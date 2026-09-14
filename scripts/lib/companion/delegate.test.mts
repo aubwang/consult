@@ -198,22 +198,14 @@ test("delegate validates isolated and execute opt-ins before workspace discovery
     env: { CONSULT_AGENT_SANDBOX: "bwrap" },
     deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
   });
-  const executeUnavailable = await runDelegate({
-    args: {
-      positional: ["fix"],
-      flags: { write: true, isolated: true, "allow-exec": true },
-    },
-    deps: quietDeps({ resolveWorkspaceRoot: neverResolveWorkspace }),
-  });
+
 
   assert.equal(isolatedWithoutWrite.exitCode, 2);
   assert.equal(isolatedWithoutWrite.stderr, "--isolated requires --write\n");
   assert.equal(executeWithoutIsolation.exitCode, 2);
   assert.match(executeWithoutIsolation.stderr, /^AUTHORITY_INVALID:/u);
   assert.match(executeWithoutIsolation.stderr, /--write --isolated/u);
-  assert.equal(executeUnavailable.exitCode, 2);
-  assert.match(executeUnavailable.stderr, /^AUTHORITY_EXECUTE_UNAVAILABLE:/u);
-  assert.match(executeUnavailable.stderr, /Remove --allow-exec/u);
+
 });
 
 test("delegate validates fetch confinement and emits a structured authority error", async () => {

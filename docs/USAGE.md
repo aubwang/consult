@@ -21,12 +21,13 @@ separately installed document.
 
 ## Profiles
 
-Consult ships four built-in Profile definitions:
+Consult ships five built-in Profile definitions:
 
 | Profile | Agent executable | Authentication | Confined authority |
 | --- | --- | --- | --- |
 | `claude` | `claude-agent-acp` | `CONSULT_CLAUDE_API_KEY` or `CONSULT_CLAUDE_OAUTH_TOKEN`, otherwise a stageable credentials file. Keychain-only macOS login is not staged. | Native Linux and arm64 macOS after exact preflight. |
 | `codex` | `codex-acp` | `CONSULT_OPENAI_API_KEY`, otherwise the underlying Codex CLI authentication. | Native Linux and arm64 macOS after exact preflight. |
+| `pi` | `pi` through Consult’s internal RPC bridge | Native Pi provider configuration and login; requires 0.84.4+. | Explicit `--sandbox inherit`; tools are pinned to Job mode and extensions are disabled. |
 | `opencode` | `opencode acp` | Configured opencode provider credentials. | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority. |
 | `copilot` | `copilot --acp` | Copilot CLI login (`/login`), `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` with a fine-grained PAT holding the Copilot Requests permission, or a `COPILOT_PROVIDER_*` BYOK provider (no GitHub login). | Not yet; `--sandbox inherit` is required, so the Job runs with Host-ambient authority hardened by Job-mode `--deny-tool` pins. |
 
@@ -213,10 +214,10 @@ without confined credential staging or translation, so vendor variables may
 affect the Profile's native authentication.
 
 Consult-managed confinement is implemented only for the built-in `codex` and
-`claude` Profiles. Custom, opencode, and copilot Profiles always require
+`claude` Profiles. Custom, Pi, opencode, and copilot Profiles always require
 `--sandbox inherit`: a default confined `delegate` or `review` for them fails
 preflight before any Job is created, and Consult never downgrades to
-inheritance automatically. An opencode or copilot Job is therefore never
+inheritance automatically. A Pi, opencode, or copilot Job is therefore never
 OS-sandboxed by Consult; treat it as running with the Host's own authority,
 subject only to the cooperative Job policy above and any sandboxing the agent
 runtime itself provides. For copilot, Consult additionally launches the CLI
@@ -287,13 +288,18 @@ Confined Claude on macOS requires `CONSULT_CLAUDE_API_KEY`,
 Keychain-only login is unavailable in the private Job home. Consult deliberately
 does not broker the macOS Keychain.
 
-`--allow-exec` remains unavailable while execute-specific resource limits and
-cross-Profile conformance are incomplete. A delegated Job can read and edit
-files according to its mode but cannot run commands — tests, linters, builds,
-or generators — so the Host runs verification after the Job returns. Confined
-Jobs have wall-clock and persisted-log limits, but no process-count, CPU,
-memory, disk, or global fan-out quota. The trusted Host must bound concurrent
-delegates.
+`--write --isolated --allow-exec` enables local commands for confined Codex and
+Claude Profiles on Linux with cgroup v2 and a systemd user manager. Each launch
+has 4 GiB memory, 256 tasks, 200% CPU, a 64 MiB per-file hard limit, and a
+30-minute scope lifetime. The guard checks the kernel controls before launch;
+missing controllers or tools fail closed. Fetch and execute cannot be combined.
+Total disk usage and aggregate concurrency remain Host responsibilities.
+
+Eligible ignored `node_modules` are independently copied for execute Jobs,
+limited to 1 GiB and 100000 entries. Absolute/external links and special files
+are rejected. There are no downloads or install hooks. Other dependencies and
+external services must be prepared separately. Without an execute grant, the
+Host runs tests after reviewing and applying the patch.
 
 ## Write Jobs and artifacts
 
@@ -757,3 +763,27 @@ present. A failed probe exits 1; invalid input/configuration exits 2. Inheritanc
 requirements and absent advertised models are reported explicitly. No catalogue
 cache is persisted, and prompts, Profile arguments, and environment values are
 not included in discovery output.
+
+## Batches, waiting, and Pi
+
+See `consult help workflows` for runnable worker/test/reviewer recipes and the
+batch JSON format. `consult batch tasks.json` launches 1-8 background Jobs and
+returns a durable batch id. `consult wait --batch <id> --watch --summary`
+collects the recorded Jobs. `--any` returns current states when one selected
+Job becomes terminal; remove completed ids before another wait. `--timeout`
+accepts 0-1800 seconds and leaves Jobs running. `--active` captures active Jobs
+belonging to the current Host and Host Session; it never adds later arrivals.
+
+`consult setup --install pi` installs/verifies Pi 0.84.4+. Use `--agent pi
+--sandbox inherit`, with provider authentication configured in Pi. Model ids
+are `provider/model`; `--effort` uses Pi's advertised thinking levels. The bridge
+supports text prompts, native tool events, cancellation, and resume of Pi's own
+Sessions. It disables extensions, skills, templates, themes, startup networking,
+and telemetry. Writes require `--write`; bash is disabled in every Pi Job.
+Pi Session files are retained under `CONSULT_DATA_DIR/pi-sessions` independently
+of Job history cleanup. They contain conversation data; remove them only when
+no retained Job needs resume.
+
+A Pi Host is detected through `PI_CODING_AGENT=true`. Explicit `CONSULT_HOST`
+and `CONSULT_HOST_SESSION_ID` take precedence. Otherwise the Pi Host Session is
+`default`, because the native harness does not export its Session id.

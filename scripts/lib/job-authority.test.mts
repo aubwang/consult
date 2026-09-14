@@ -99,7 +99,7 @@ test("resolveJobAuthority rejects unsafe grant composition", () => {
   }
 });
 
-test("resolveJobAuthority fails execute closed after structural validation", () => {
+test("resolveJobAuthority requires isolated writes for execute", () => {
   const missingIsolated = resolveJobAuthority({
     mode: "write",
     allowExecute: true,
@@ -115,13 +115,7 @@ test("resolveJobAuthority fails execute closed after structural validation", () 
     allowExecute: true,
     isolated: true,
   });
-  assert.equal(unavailable.ok, false);
-  if (!unavailable.ok) {
-    assert.equal(unavailable.diagnostic.code, "AUTHORITY_EXECUTE_UNAVAILABLE");
-    assert.equal(unavailable.diagnostic.reason, undefined);
-    assert.match(unavailable.diagnostic.message, /execute-specific resource containment/u);
-    assert.match(unavailable.diagnostic.remediation, /Remove --allow-exec/);
-  }
+  assert.equal(unavailable.ok, true);
 });
 
 test("validateJobAuthority parses canonical persisted and protocol values", () => {

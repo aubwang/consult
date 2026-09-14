@@ -11,6 +11,7 @@ skills-lock.json
 # The CLI is the whole product surface, so nothing under `.opencode/` is
 # product source; it is local tool state.
 .opencode/
+.pi/
 
 # Firecrawl scrape cache used during design research
 .firecrawl/

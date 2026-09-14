@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import crypto from "node:crypto";
 
 import type {
@@ -105,6 +106,14 @@ export async function startJobAgent(
   if (!boundary.ok) {
     throw authorityDiagnosticError(boundary.diagnostic);
   }
+  if (canonicalAuthority.allowExecute) {
+    const record = jobId ? await readWorkspaceJobRecord(stateWorkspaceRoot, jobId).catch((error) => { if (error.code === "ENOENT") return undefined; throw error; }) : undefined;
+    if (!record?.isolated || !record.isolatedWorkspace ||
+        await fs.realpath(cwd) !== await fs.realpath(record.isolatedWorkspace.executionRoot) ||
+        await fs.realpath(cwd) === await fs.realpath(stateWorkspaceRoot)) {
+      throw Object.assign(new Error("execute authority requires the Job's recorded isolated Execution Workspace"), { code: "AUTHORITY_INVALID" });
+    }
+  }
   const sandboxMode =
     canonicalAuthority.confinement === "inherit"
       ? "off"
@@ -156,10 +165,10 @@ export async function startJobAgent(
           request,
           mode: sessionAuthority.mode as PermissionMode,
           workspaceRoot: cwd,
-          // Execute remains unavailable in decidePermission until the runtime
-          // provides proxy-confined model transport.
+          // Runtime launch has verified confinement and execute resource limits.
           allowFetch: sessionAuthority.allowFetch,
           allowExecute: sessionAuthority.allowExecute,
+          executionReady: canonicalAuthority.confinement === "confined" && canonicalAuthority.allowExecute,
           sandbox: sandboxMode,
           confinement: sessionAuthority.confinement,
           reportExec: { consultBinPath: () => consultBin },

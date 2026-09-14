@@ -43,8 +43,8 @@ still depend on your account access; see `consult models --help` for details.
 ## Prepare a change, then verify it
 
 ```sh
-consult delegate --agent codex --write --isolated --background -- \
-  "Add exponential backoff with jitter to the 429 retry path. Add a regression test. Report what changed and what still needs verification."
+consult delegate --agent codex --write --isolated --allow-exec --background -- \
+  "Add exponential backoff with jitter to the 429 retry path. Add and run a regression test. Fix failures and report exact commands and outcomes."
 
 consult wait --summary <job-id>
 consult result <job-id> --json
@@ -53,7 +53,7 @@ consult review --agent claude --job <job-id>
 
 An isolated write Job starts from your committed, staged, unstaged, and supported untracked files in a separate Git worktree. Its result includes a patch and a touched-files manifest. Consult publishes successful completion after those artifacts are ready. If patch capture fails, it preserves the worktree and reports where to recover it.
 
-The worktree is a source snapshot. Ignored dependency directories such as `node_modules` are omitted, and Consult does not provision a development environment there.
+With `--allow-exec`, eligible installed `node_modules` are copied into the worktree independently (up to 1 GiB and 100000 entries). External or absolute dependency links are rejected. Consult does not install packages or provision external services.
 
 The Host reviews the patch, chooses whether to apply it, and runs the project's checks:
 
@@ -63,7 +63,7 @@ git apply /path/from/result/change.patch
 # Run this project's tests and inspect the resulting diff.
 ```
 
-Delegates can write test code, but Consult currently denies general command execution. A completed Job means the agent finished its turn; it does not mean tests passed or the change is correct. `--isolated` rejects unresolved merge conflicts and nested repositories that a patch cannot capture faithfully.
+On Linux, `--write --isolated --allow-exec` lets confined Codex and Claude workers run tests and repair failures within their turn. It requires cgroup v2, a working systemd user manager, and prlimit. Each execute launch is limited to 4 GiB memory, 256 tasks, 200% CPU, 64 MiB per file, and 30 minutes. Without this grant, delegates can write tests but cannot run commands. A completed Job means the agent finished its turn; it does not mean tests passed or the change is correct. `--isolated` rejects unresolved merge conflicts and nested repositories that a patch cannot capture faithfully.
 
 ## Profiles and authority
 
@@ -71,15 +71,47 @@ Delegates can write test code, but Consult currently denies general command exec
 | --- | --- | --- |
 | Codex | Linux and native arm64 macOS, subject to exact preflight | Staged Host login or `CONSULT_OPENAI_API_KEY`; reopening depends on the installed adapter |
 | Claude | Linux and native arm64 macOS, subject to exact preflight | Staged Host login, `CONSULT_CLAUDE_OAUTH_TOKEN`, or `CONSULT_CLAUDE_API_KEY`; automatic Host refresh requires claude-agent-acp 0.59.0+ |
+| Pi | Explicit `--sandbox inherit` | Native Pi 0.84.4+ via Consult’s internal RPC bridge; native provider configuration and login |
 | opencode | Explicit `--sandbox inherit` | Uses the Host environment and native authentication |
 | Copilot | Explicit `--sandbox inherit`; preview support | CLI 1.0.60+; model-turn conformance remains authentication-deferred; resume is disabled |
 | Custom ACP Profile | Explicit `--sandbox inherit` | User-configured executable and authentication; see [custom Profiles](docs/CUSTOM-PROFILES.md) |
 
-Read-only confinement is the default. Writes require `--write`; arbitrary public network access requires `--allow-fetch`. General command execution remains unavailable. Confined Jobs cannot create nested Consult Jobs.
+Read-only confinement is the default. Writes require `--write`; arbitrary public network access requires `--allow-fetch`. Execute requires `--write --isolated --allow-exec` and the supported Linux boundary; fetch and execute cannot be combined. Confined Jobs cannot create nested Consult Jobs.
 
 `--sandbox inherit` runs with the Host's ambient authority. Its permission checks are cooperative: they cannot contain an uncooperative backend or its startup hooks. Choose it explicitly when that tradeoff fits your environment. Native Windows and macOS x64 processes are unsupported. WSL2 uses the Linux path.
 
 An outer Host sandbox can prevent Consult from starting its own boundary. In particular, a successful terminal check on macOS does not establish support inside a sandboxed Codex Host. Check the [conformance reports](docs/conformance/README.md) and run `doctor` where you intend to delegate.
+
+## Parallel Jobs and practical workflows
+
+`consult help workflows` teaches worker/test/reviewer loops and bounded fan-out.
+To launch independent Jobs, put `{"jobs":[{"label":"correctness","prompt":"Review src/retry.mts for bugs."},{"label":"tests","prompt":"Review retry test coverage."}]}` in `tasks.json`, then:
+
+```sh
+consult batch tasks.json --agent claude
+consult wait --batch <batch-id> --watch --summary
+consult wait <job-a> <job-b> --any --json --timeout 60
+```
+
+A batch holds up to eight Jobs, each with independent results and cancellation.
+Partial submission failures preserve a receipt with launched Job ids. Each
+writer must explicitly set `"write": true, "isolated": true`. `--watch` prints
+status changes; `--any` returns when one selected Job finishes. A timeout leaves
+Jobs running. `wait --active` snapshots active Jobs for the current Host Session.
+
+To delegate to the Pi harness:
+
+```sh
+consult setup --install pi
+consult models --agent pi --sandbox inherit --json
+consult delegate --agent pi --sandbox inherit -- "Inspect the retry logic."
+```
+
+Configure your provider in Pi first. Consult selects Pi tools by Job mode and
+disables extensions, skills, and prompt templates. Pi currently needs explicit
+inherited authority and cannot receive an execute grant. Pi can also invoke
+Consult as a Host; set `CONSULT_HOST_SESSION_ID` to distinguish concurrent Pi
+conversations because Pi does not export a native Session id.
 
 ## Keeping the Host's context small
 

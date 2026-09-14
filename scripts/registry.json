@@ -30,6 +30,15 @@
       "supports": { "resume": false, "load": true }
     },
     {
+      "id": "pi",
+      "label": "Pi (Consult RPC bridge)",
+      "notes": "Requires Pi 0.84.4+ and a provider configured through pi. Consult bridges the native harness; no pi-acp package is needed. Use --sandbox inherit. Extensions, skills, and prompt templates are disabled; tools follow Job mode.",
+      "binary": "pi",
+      "args": [],
+      "install": { "type": "npm", "cmd": "npm install -g @earendil-works/pi-coding-agent" },
+      "supports": { "resume": true, "load": false }
+    },
+    {
       "id": "copilot",
       "label": "GitHub Copilot CLI (native ACP: copilot --acp; preview)",
       "notes": "Needs GitHub Copilot access. Run `copilot` once and use `/login`, or set COPILOT_GITHUB_TOKEN (fine-grained PAT with the Copilot Requests permission; GH_TOKEN/GITHUB_TOKEN also honored); a COPILOT_PROVIDER_* BYOK setup needs no GitHub login. Confined authority is unsupported; delegate with --sandbox inherit.",

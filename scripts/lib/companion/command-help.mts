@@ -133,7 +133,8 @@ Authority (default is read-only):
   --allow-fetch       Additionally permit public TCP/443 through the proxy. This
                       is task-specific authority, not a convenience: the Profile
                       also holds the model credential.
-  --allow-exec        Reserved; currently fails preflight.
+  --allow-exec        Run commands in an isolated write Job with Linux resource
+                      confinement. Requires --write --isolated; see authority.
 
 Background and dependencies:
   --background        Queue the Job, start a detached worker, and return now.
@@ -256,16 +257,55 @@ Examples:
   consult status <job-id> --json
 `;
 
+const batchUsage = `Usage:
+  consult batch <tasks.json> [--agent <profile>] [--json]
+
+Launch 1-8 independent background Jobs. The file contains {"jobs":[...]}.
+Each entry requires prompt and accepts label, agent, model, effort, sandbox,
+write, isolated, allow-fetch, allow-exec, include-diff, and base fields.
+Boolean fields use JSON booleans. Writers require write: true, isolated: true.
+
+Options:
+  --agent <profile>  Default Profile for entries without agent.
+  --model <id>       Default model for entries without model.
+  --effort <level>   Default effort for entries without effort.
+  --sandbox <mode>  Default confinement for entries without sandbox.
+  --host <host>      Host identity for the batch's Jobs.
+  --host-session <id>  Host Session for the batch's Jobs.
+  --json            Emit the durable batch receipt.
+  --help            Print this help.
+
+Input is capped at 1 MiB. All entries are validated before submission; launches
+then preflight sequentially and run concurrently. On partial failure, the
+receipt retains submitted Job ids; those Jobs continue running. Batches do not
+apply patches or manage a global concurrency quota.
+
+  consult batch tasks.json --agent claude
+  consult wait --batch <batch-id> --watch --summary
+
+Exit codes: 0 submitted, 1 partial submission, 2 invalid input.
+See also: consult help workflows
+`;
+
 const waitUsage = `Usage:
   consult wait <job-id> [<job-id>...] [--summary | --json]
+  consult wait --batch <batch-id> [--watch] [--any]
+  consult wait --active [--host <host>] [--host-session <id>]
 
 Block once for one or more Jobs and return their Results in submission order.
 
 Options:
+  --batch <id>     Select the Jobs recorded by consult batch.
+  --active         Snapshot active Jobs for this Host Session.
+  --any            Return when any selected Job reaches a terminal state.
+  --watch          Print changed status snapshots to stderr while waiting.
+  --timeout <sec>  Wait at most 0-1800 seconds (default 1800); leave Jobs running.
+  --host <host>    Host identity used with --active.
+  --host-session <id>  Host Session used with --active.
   --summary        One bounded line per Job with its label, transport status,
                    result or error preview, and artifact paths. Use consult
                    result for a selected full answer.
-  --json           Emit the selected terminal Jobs as JSON. Exclusive with
+  --json           Emit current states of the selected Jobs as JSON. Exclusive with
                    --summary.
   --keep-running   Stop waiting on SIGINT/SIGTERM without cancelling. By default
                    an interrupt best-effort cancels the still-active selected
@@ -540,6 +580,7 @@ For configuration-only discovery: consult capabilities --configured --json
   setup: setupUsage,
   status: statusUsage,
   steer: steerUsage,
+  batch: batchUsage,
   wait: waitUsage,
 };
 

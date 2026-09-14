@@ -467,3 +467,21 @@ for (const phase of ["prepare", "finalize"] as const) {
     await assert.rejects(prepared ? finalizeIsolatedWorkspace(prepared) : prepareIsolatedWorkspace({ workspaceRoot: root, jobId: "job-link" }), /nested repository contents/);
   });
 }
+
+test("execute dependency snapshot is independent, ignored in patches, and rejects external links", async (t) => {
+  const fixture = await makeRepository(t);
+  const source = path.join(fixture.workspaceRoot, "node_modules");
+  await fs.appendFile(path.join(fixture.workspaceRoot, ".gitignore"), "\nnode_modules/\n");
+  await fs.mkdir(source);
+  await fs.writeFile(path.join(source, "dependency.js"), "original");
+  await fs.symlink("dependency.js", path.join(source, "alias.js"));
+  const prepared = await prepareIsolatedWorkspace({ workspaceRoot: fixture.workspaceRoot, jobId: "job-deps", includeDependencies: true });
+  fixture.prepared.push(prepared);
+  await fs.writeFile(path.join(prepared.executionRoot, "node_modules", "dependency.js"), "worker changed");
+  assert.equal(await fs.readFile(path.join(source, "dependency.js"), "utf8"), "original");
+  assert.equal(await fs.readFile(path.join(prepared.executionRoot, "node_modules", "alias.js"), "utf8"), "worker changed");
+  const finalized = await finalizeIsolatedWorkspace(prepared);
+  assert.deepEqual(finalized.touchedFiles, []);
+  await fs.symlink("../staged.txt", path.join(source, "outside.js"));
+  await assert.rejects(prepareIsolatedWorkspace({ workspaceRoot: fixture.workspaceRoot, jobId: "job-deps-escape", includeDependencies: true }), /outside its tree/);
+});

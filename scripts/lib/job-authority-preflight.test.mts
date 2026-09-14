@@ -61,10 +61,10 @@ test("preflight rejects macOS x64 processes including inheritance", async () => 
   }
 });
 
-test("runtime boundary rejects persisted execute grants and native Windows", () => {
+test("runtime boundary limits execute to Linux and rejects native Windows", () => {
   const execute = validateJobAuthorityRuntimeBoundary({
     authority: { ...CONFINED, mode: "write", allowExecute: true },
-    platform: "linux",
+    platform: "darwin", arch: "arm64",
   });
   assert.equal(execute.ok, false);
   if (!execute.ok) {

@@ -42,6 +42,11 @@ export function resolveHostIdentity({
 }
 
 function detectHostIdentity(env: Record<string, string | undefined>): HostIdentity | null {
+  // Pi identifies its subprocesses but does not export a stable Session id.
+  // Hosts may supply CONSULT_HOST_SESSION_ID for independent resume scopes.
+  if (env.PI_CODING_AGENT === "true") {
+    return { host: "pi", hostSessionId: DEFAULT_HOST_SESSION_ID };
+  }
   const opencodeSessionId = nonEmpty(env.OPENCODE_SESSION_ID) ?? nonEmpty(env.OPENCODE_RUN_ID);
   if (opencodeSessionId) {
     return { host: "opencode", hostSessionId: opencodeSessionId };
