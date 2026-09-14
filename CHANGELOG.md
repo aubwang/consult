@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/aubwang/consult/compare/v1.5.2...v1.6.0) (2026-09-14)
+
+
+### Features
+
+* add bounded worker execution, job batches, and Pi support ([ad6e05e](https://github.com/aubwang/consult/commit/ad6e05eb266af69d1b1dd01872867632846aa3ef))
+
 ## [1.5.2](https://github.com/aubwang/consult/compare/v1.5.1...v1.5.2) (2026-09-09)
 
 
