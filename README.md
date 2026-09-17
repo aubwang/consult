@@ -3,15 +3,13 @@
 [![npm](https://img.shields.io/npm/v/%40aubwang%2Fconsult?color=cb3837&logo=npm)](https://www.npmjs.com/package/@aubwang/consult)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Consult lets a coding agent delegate work to another agent through a CLI. Your current session can keep its context for planning and review while another agent investigates a question or prepares a patch.
+Consult lets a coding agent delegate work to another agent through a CLI. The main session is "protected" from the subagent's working context and scratchpad, and only sees the subagent's report or end results.
 
-The current environment is the **Host**. A configured agent is a **Profile**. Each delegation creates a **Job** with its own status, output, and activity log. Consult uses the [Agent Client Protocol](https://agentclientprotocol.com) and your installed agents.
+This way, your current session can preserve its context for planning and review while another agent investigates a question or prepares a patch. If needed, the main agent can access the subagent's context through the CLI, or reprompt the subagent. 
 
-Delegation separates working context. It can also add tokens, elapsed time, and review work. Use it for a bounded task that can proceed independently, and treat another agent's review as evidence to check.
+Consult uses the [Agent Client Protocol](https://agentclientprotocol.com) and your installed agents. 
 
 ## Quick start
-
-You need Node.js 22.18 or newer on Linux or native Apple Silicon macOS. Linux confinement also needs bubblewrap, socat, and ripgrep. See the [installation guide](docs/INSTALL.md) for system requirements and namespace restrictions.
 
 ```sh
 npm install --global @aubwang/consult
@@ -22,7 +20,13 @@ consult delegate --agent claude --read-only -- \
   "Inspect the retry logic. Report edge cases with file paths; do not edit."
 ```
 
-Run these commands inside a Git repository. `doctor` checks the selected Profile in your current Host environment. A failure does not silently switch to broader permissions.
+The CLI supports Node.js 22.18+ on Linux or Apple Silicon macOS. Linux confinement also needs bubblewrap, socat, and ripgrep. See the [installation guide](docs/INSTALL.md) for system requirements and namespace restrictions.
+
+Some terminology:
+
+The current environment is the **Host**. A configured agent is a **Profile**. Each delegation creates a **Job** with its own status, output, and activity log.
+
+Consult requires that a Git repo is initiated in your current directory. `doctor` checks for which Profiles are configured in your current Host environment.
 
 A Host can discover configured routes and exact model IDs without reading all
 the help topics:
@@ -32,13 +36,9 @@ consult capabilities --configured --json
 consult models --match grok --json
 ```
 
-The configured summary starts no agents. Model discovery may initialize a
-Profile or run its catalogue command, but sends no model prompt. Its JSON
-includes exact launch arguments and authority requirements. Claude and OpenAI
-models use their native adapters by default; opencode serves other providers
+Claude and OpenAI models use their native adapters by default; opencode serves other providers
 unless explicitly selected. Native auth failures are reported without rerouting.
-Advertised models
-still depend on your account access; see `consult models --help` for details.
+Advertised models still depend on your account access; see `consult models --help` for details.
 
 ## Prepare a change, then verify it
 
@@ -53,8 +53,6 @@ consult review --agent claude --job <job-id>
 
 An isolated write Job starts from your committed, staged, unstaged, and supported untracked files in a separate Git worktree. Its result includes a patch and a touched-files manifest. Consult publishes successful completion after those artifacts are ready. If patch capture fails, it preserves the worktree and reports where to recover it.
 
-With `--allow-exec`, eligible installed `node_modules` are copied into the worktree independently (up to 1 GiB and 100000 entries). External or absolute dependency links are rejected. Consult does not install packages or provision external services.
-
 The Host reviews the patch, chooses whether to apply it, and runs the project's checks:
 
 ```sh
@@ -63,7 +61,9 @@ git apply /path/from/result/change.patch
 # Run this project's tests and inspect the resulting diff.
 ```
 
-On Linux, `--write --isolated --allow-exec` lets confined Codex and Claude workers run tests and repair failures within their turn. It requires cgroup v2, a working systemd user manager, and prlimit. Each execute launch is limited to 4 GiB memory, 256 tasks, 200% CPU, 64 MiB per file, and 30 minutes. Without this grant, delegates can write tests but cannot run commands. A completed Job means the agent finished its turn; it does not mean tests passed or the change is correct. `--isolated` rejects unresolved merge conflicts and nested repositories that a patch cannot capture faithfully.
+On Linux, `--write --isolated --allow-exec` lets confined Codex and Claude workers run tests and repair failures within their turn. Eligible installed `node_modules` are copied into the worktree independently (up to 1 GiB and 100000 entries). It requires cgroup v2, a working systemd user manager, and prlimit. By default, each execute launch is limited to 4 GiB memory, 256 tasks, 200% CPU, 64 MiB per file, and 30 minutes. 
+
+Without this grant, delegates can write tests but cannot run commands. A completed Job means the agent finished its turn; it does not mean tests passed or the change is correct. `--isolated` rejects unresolved merge conflicts and nested repositories that a patch cannot capture faithfully.
 
 ## Profiles and authority
 
@@ -76,9 +76,9 @@ On Linux, `--write --isolated --allow-exec` lets confined Codex and Claude worke
 | Copilot | Explicit `--sandbox inherit`; preview support | CLI 1.0.60+; model-turn conformance remains authentication-deferred; resume is disabled |
 | Custom ACP Profile | Explicit `--sandbox inherit` | User-configured executable and authentication; see [custom Profiles](docs/CUSTOM-PROFILES.md) |
 
-Read-only confinement is the default. Writes require `--write`; arbitrary public network access requires `--allow-fetch`. Execute requires `--write --isolated --allow-exec` and the supported Linux boundary; fetch and execute cannot be combined. Confined Jobs cannot create nested Consult Jobs.
+Read-only confinement is the default. Writes require `--write`; arbitrary public network access requires `--allow-fetch`. Execute requires `--write --isolated --allow-exec` and the supported Linux boundary; Confined Jobs cannot create nested Consult Jobs.
 
-`--sandbox inherit` runs with the Host's ambient authority. Its permission checks are cooperative: they cannot contain an uncooperative backend or its startup hooks. Choose it explicitly when that tradeoff fits your environment. Native Windows and macOS x64 processes are unsupported. WSL2 uses the Linux path.
+`--sandbox inherit` runs with the Host's ambient authority. Its permission checks are cooperative: they cannot contain an uncooperative backend or its startup hooks. Choose it explicitly when that tradeoff fits your environment.
 
 An outer Host sandbox can prevent Consult from starting its own boundary. In particular, a successful terminal check on macOS does not establish support inside a sandboxed Codex Host. Check the [conformance reports](docs/conformance/README.md) and run `doctor` where you intend to delegate.
 
@@ -99,25 +99,12 @@ writer must explicitly set `"write": true, "isolated": true`. `--watch` prints
 status changes; `--any` returns when one selected Job finishes. A timeout leaves
 Jobs running. `wait --active` snapshots active Jobs for the current Host Session.
 
-To delegate to the Pi harness:
-
-```sh
-consult setup --install pi
-consult models --agent pi --sandbox inherit --json
-consult delegate --agent pi --sandbox inherit -- "Inspect the retry logic."
-```
-
-Configure your provider in Pi first. Consult selects Pi tools by Job mode and
-disables extensions, skills, and prompt templates. Pi currently needs explicit
-inherited authority and cannot receive an execute grant. Pi can also invoke
-Consult as a Host; set `CONSULT_HOST_SESSION_ID` to distinguish concurrent Pi
-conversations because Pi does not export a native Session id.
 
 ## Keeping the Host's context small
 
 Background Jobs return an id immediately. `wait --summary` prints an output preview and artifact paths; `result` returns the stored agent text. Previews use the end of the available output and are not a separately verified final report. Foreground Jobs stream agent messages and tool progress. Full activity is available through `logs`.
 
-The Host chooses how much work to launch. Consult has no global concurrency quota, and Jobs waiting on dependencies still occupy workers.
+The Host chooses how much work to launch. Consult has no global concurrency quota, and Jobs waiting on dependencies will still occupy workers.
 
 ```sh
 consult status
