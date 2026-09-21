@@ -1733,6 +1733,7 @@ async function assertClaudeOauthNotExpired(
 export type ClaudeHostOauthState =
   | "explicit-consult-credential"
   | "absent"
+  | "denied"
   | "unreadable"
   | "valid"
   | "expiring"
@@ -1771,7 +1772,14 @@ export async function inspectClaudeHostOauth(
   let result: ClaudeOauthReadResult;
   try {
     result = await readClaudeOauthExpiresAt(credentialFile);
-  } catch {
+  } catch (error) {
+    // A denied read is not a broken credential. A sandbox policy or file ACL
+    // can hide an intact Host login from this process, and that has a wholly
+    // different remedy than re-authenticating, so it gets its own state.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EACCES" || code === "EPERM") {
+      return { state: "denied", expiresAt: null, skewMs };
+    }
     return { state: "unreadable", expiresAt: null, skewMs };
   }
   if (!result.present) return { state: "absent", expiresAt: null, skewMs };

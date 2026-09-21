@@ -300,6 +300,35 @@ test("doctor reports an expiring Claude OAuth credential without blocking delega
   assert.match(humanResult.stdout, /claude setup-token/u);
 });
 
+test("doctor distinguishes a denied Claude OAuth read from an unparsable one", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "claude",
+    hostDefaults: {},
+    profiles: { claude: profile("claude") },
+  });
+
+  const result = await runDoctor({
+    args: { positional: [], flags: {} },
+    env: { CONSULT_HOST: "terminal", PATH: "/bin" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "linux",
+      probeConfined: async ({ authority }) => ({ ok: true, authority }),
+      inspectClaudeHostOauth: async () => ({
+        state: "denied",
+        expiresAt: null,
+        skewMs: 120_000,
+      }),
+    },
+  });
+  assert.match(result.stdout, /claude oauth: denied/u);
+  assert.match(result.stdout, /sandbox policy or file ACL/u);
+  assert.doesNotMatch(result.stdout, /claude oauth: unreadable/u);
+});
+
 test("doctor omits the Claude OAuth line for a non-claude profile", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);
