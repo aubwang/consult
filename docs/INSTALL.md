@@ -191,7 +191,9 @@ once and retry. Alternatively, supply `CONSULT_CLAUDE_OAUTH_TOKEN` or
 `CONSULT_CLAUDE_API_KEY` to the Host environment; the Consult-specific
 credential takes precedence over the expired file. Ambient
 `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` variables are not selected as
-confined Profile credentials. Consult never retries with inherited authority.
+confined Profile credentials; when nothing else can be staged, `consult doctor`
+names them on a `claude oauth ambient` line so an opted-out credential is not
+mistaken for a missing one. Consult never retries with inherited authority.
 
 ## Copilot Profile and the GitHub Copilot CLI
 

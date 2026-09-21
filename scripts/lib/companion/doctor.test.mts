@@ -329,6 +329,36 @@ test("doctor distinguishes a denied Claude OAuth read from an unparsable one", a
   assert.doesNotMatch(result.stdout, /claude oauth: unreadable/u);
 });
 
+test("doctor explains an ambient Claude credential it will not select", async (t) => {
+  const { workspaceRoot, dataDir } = await makeWorkspace();
+  withDataDir(t, dataDir);
+  await writeProfiles({
+    schemaVersion: 1,
+    default: "claude",
+    hostDefaults: {},
+    profiles: { claude: profile("claude") },
+  });
+
+  const result = await runDoctor({
+    args: { positional: [], flags: {} },
+    env: { CONSULT_HOST: "terminal", PATH: "/bin" },
+    deps: {
+      resolveWorkspaceRoot: async () => workspaceRoot,
+      platform: "linux",
+      probeConfined: async ({ authority }) => ({ ok: true, authority }),
+      inspectClaudeHostOauth: async () => ({
+        state: "absent",
+        expiresAt: null,
+        skewMs: 120_000,
+        ambientIgnored: ["CLAUDE_CODE_OAUTH_TOKEN"],
+      }),
+    },
+  });
+  assert.match(result.stdout, /claude oauth: absent/u);
+  assert.match(result.stdout, /CLAUDE_CODE_OAUTH_TOKEN set but not used/u);
+  assert.match(result.stdout, /export the same value under one of those names/u);
+});
+
 test("doctor omits the Claude OAuth line for a non-claude profile", async (t) => {
   const { workspaceRoot, dataDir } = await makeWorkspace();
   withDataDir(t, dataDir);

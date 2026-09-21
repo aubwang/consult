@@ -572,6 +572,17 @@ function renderDoctor(report: DoctorReport): string {
 
 function claudeOauthLines(status: ClaudeHostOauthStatus | null): string[] {
   if (!status) return [];
+  const lines = claudeOauthStateLines(status);
+  if (status.ambientIgnored && status.ambientIgnored.length > 0) {
+    lines.push(
+      `  claude oauth ambient: ${status.ambientIgnored.join(", ")} set but not used`,
+      "  claude oauth ambient hint: Consult selects only CONSULT_CLAUDE_OAUTH_TOKEN or CONSULT_CLAUDE_API_KEY so a Job never inherits ambient Host authority; export the same value under one of those names to opt in",
+    );
+  }
+  return lines;
+}
+
+function claudeOauthStateLines(status: ClaudeHostOauthStatus): string[] {
   const durableHint =
     "set a long-lived CONSULT_CLAUDE_OAUTH_TOKEN via `claude setup-token` (or CONSULT_CLAUDE_API_KEY) to avoid repeated auth expiry";
   switch (status.state) {

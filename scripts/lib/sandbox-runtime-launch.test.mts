@@ -1368,6 +1368,48 @@ test("inspectClaudeHostOauth separates a denied read from an unparsable one", as
   assert.equal((await inspectClaudeHostOauth({ env, now })).state, "unreadable");
 });
 
+test("inspectClaudeHostOauth flags an ambient credential it will not select", async (t) => {
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const credential = path.join(fixture.home, ".claude", ".credentials.json");
+  const base = { PATH: "/usr/bin:/bin" };
+
+  // The ecosystem-standard variable with nothing stageable: the operator did
+  // set a credential, so "absent" alone would be actively misleading.
+  const ambient = await inspectClaudeHostOauth({
+    env: { ...base, CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-stub" },
+    now,
+  });
+  assert.equal(ambient.state, "absent");
+  assert.deepEqual(ambient.ambientIgnored, ["CLAUDE_CODE_OAUTH_TOKEN"]);
+
+  const both = await inspectClaudeHostOauth({
+    env: { ...base, CLAUDE_CODE_OAUTH_TOKEN: "t", ANTHROPIC_API_KEY: "k" },
+    now,
+  });
+  assert.deepEqual(both.ambientIgnored, ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]);
+
+  // A working Host stays quiet: nothing is being ignored that would help.
+  await privateFile(
+    credential,
+    JSON.stringify({ claudeAiOauth: { accessToken: "REDACTED", expiresAt: now + 10 * 60_000 } }),
+  );
+  const valid = await inspectClaudeHostOauth({
+    env: { ...base, CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-stub" },
+    now,
+  });
+  assert.equal(valid.state, "valid");
+  assert.equal(valid.ambientIgnored, undefined);
+
+  // An explicit opt-in is not an ignored credential either.
+  const explicit = await inspectClaudeHostOauth({
+    env: { ...base, CONSULT_CLAUDE_OAUTH_TOKEN: "t", CLAUDE_CODE_OAUTH_TOKEN: "t" },
+    now,
+  });
+  assert.equal(explicit.state, "explicit-consult-credential");
+  assert.equal(explicit.ambientIgnored, undefined);
+});
+
 test("a new confined launch sweeps an old root whose owner is gone", async (t) => {
   const fixture = await makeFixture(t);
   const staleRoot = await fsp.mkdtemp("/tmp/consult-srt-job-stale-");
