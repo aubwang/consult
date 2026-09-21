@@ -1337,6 +1337,37 @@ test("inspectClaudeHostOauth classifies stageable Host credential states", async
   assert.equal(explicit.state, "explicit-consult-credential");
 });
 
+test("inspectClaudeHostOauth separates a denied read from an unparsable one", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("root ignores the mode bits this test relies on");
+    return;
+  }
+  const fixture = await makeFixture(t);
+  const now = 2_000_000_000_000;
+  const credential = path.join(fixture.home, ".claude", ".credentials.json");
+  const env = { PATH: "/usr/bin:/bin" };
+
+  await privateFile(
+    credential,
+    JSON.stringify({ claudeAiOauth: { accessToken: "REDACTED", expiresAt: now + 10 * 60_000 } }),
+  );
+  assert.equal((await inspectClaudeHostOauth({ env, now })).state, "valid");
+
+  // Only the mode changes: the credential behind it stays valid, so the state
+  // has to say "hidden from this process", not "broken".
+  await fsp.chmod(credential, 0o000);
+  t.after(async () => {
+    await fsp.chmod(credential, 0o600).catch(() => {});
+  });
+  const denied = await inspectClaudeHostOauth({ env, now });
+  assert.equal(denied.state, "denied");
+  assert.equal(denied.expiresAt, null);
+
+  await fsp.chmod(credential, 0o600);
+  await privateFile(credential, "{ not json");
+  assert.equal((await inspectClaudeHostOauth({ env, now })).state, "unreadable");
+});
+
 test("a new confined launch sweeps an old root whose owner is gone", async (t) => {
   const fixture = await makeFixture(t);
   const staleRoot = await fsp.mkdtemp("/tmp/consult-srt-job-stale-");

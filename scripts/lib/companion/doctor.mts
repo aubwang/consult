@@ -594,9 +594,14 @@ function claudeOauthLines(status: ClaudeHostOauthStatus | null): string[] {
         "  claude oauth: absent (no stageable credential; Keychain-only login or logged out)",
         `  claude oauth hint: ${durableHint}`,
       ];
+    case "denied":
+      return [
+        "  claude oauth: denied (credential file exists but this process cannot read it)",
+        "  claude oauth hint: a sandbox policy or file ACL is hiding the credential from Consult, so the Host login itself may be intact; allow the credential path for this process, or bypass the file with an explicit CONSULT_CLAUDE_* credential",
+      ];
     case "unreadable":
       return [
-        "  claude oauth: unreadable (credential file is unparsable or inaccessible)",
+        "  claude oauth: unreadable (credential file is unparsable)",
         `  claude oauth hint: ${durableHint}`,
       ];
   }

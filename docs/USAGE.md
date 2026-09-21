@@ -638,13 +638,17 @@ consult brokers --cleanup
 ```
 
 If authentication fails, sign in with the Profile's native CLI first, then
-rerun `consult doctor --agent <profile>`. For a Claude Profile, `consult doctor`
-reports a `claude oauth` line — `valid`, `expiring`, `expired`, `absent`,
-`unreadable`, or `explicit CONSULT_CLAUDE_* credential` — and points at the
-durable-token fix when the stageable credential needs attention; the check is
-observational and never refreshes. For an expired or soon-to-expire Claude
-OAuth file, an explicit `CONSULT_CLAUDE_OAUTH_TOKEN` (from `claude setup-token`)
-or `CONSULT_CLAUDE_API_KEY` bypasses the file and avoids repeated expiry. A
+rerun `consult doctor --agent <profile>`. For a Claude Profile, `consult
+doctor` reports a `claude oauth` line — `valid`, `expiring`, `expired`,
+`absent`, `denied`, `unreadable`, or `explicit CONSULT_CLAUDE_* credential` —
+and points at the durable-token fix when the stageable credential needs
+attention; the check is observational and never refreshes. `denied` means the
+credential file exists but the Consult process cannot read it; a sandbox policy
+or file ACL can hide an otherwise valid Host login that way, so it is reported
+separately from `unreadable` because re-authenticating does not clear it. For
+an expired or soon-to-expire Claude OAuth file, an explicit
+`CONSULT_CLAUDE_OAUTH_TOKEN` (from `claude setup-token`) or
+`CONSULT_CLAUDE_API_KEY` bypasses the file and avoids repeated expiry. A
 trusted root Claude `delegate` or `review` automatically tries one Host refresh
 and reruns exact preflight; Doctor and nested Jobs remain diagnostic-only.
 Consult never retries with ambient inheritance automatically.
