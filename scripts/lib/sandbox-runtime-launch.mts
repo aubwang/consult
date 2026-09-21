@@ -1745,7 +1745,32 @@ export interface ClaudeHostOauthStatus {
   expiresAt: number | null;
   /** Refresh skew applied when classifying `expiring`. */
   skewMs: number;
+  /**
+   * Ambient Claude credential variables that are set but deliberately not
+   * selected for a confined Profile. Populated only when the stageable
+   * credential is unusable, so a working Host stays quiet, and an operator who
+   * exported the ecosystem-standard variable is not told it is missing.
+   */
+  ambientIgnored?: readonly string[];
 }
+
+/**
+ * Credential variables the wider Claude tooling uses that Consult does not
+ * adopt for a confined Profile. Consult requires an explicit CONSULT_CLAUDE_*
+ * opt-in so a Job never inherits ambient Host authority by accident.
+ */
+const AMBIENT_CLAUDE_CREDENTIAL_ENV: readonly string[] = Object.freeze([
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+]);
+
+/** States where no credential can be staged, so an ignored ambient one matters. */
+const UNUSABLE_CLAUDE_OAUTH_STATES: ReadonlySet<ClaudeHostOauthState> = new Set([
+  "absent",
+  "denied",
+  "unreadable",
+  "expired",
+]);
 
 /**
  * Observationally classifies the Host's stageable Claude OAuth credential
@@ -1754,6 +1779,16 @@ export interface ClaudeHostOauthStatus {
  */
 export async function inspectClaudeHostOauth(
   options: { env?: NodeJS.ProcessEnv; now?: number } = {},
+): Promise<ClaudeHostOauthStatus> {
+  const env = options.env ?? process.env;
+  const status = await classifyClaudeHostOauth(options);
+  if (!UNUSABLE_CLAUDE_OAUTH_STATES.has(status.state)) return status;
+  const ambientIgnored = AMBIENT_CLAUDE_CREDENTIAL_ENV.filter((name) => env[name]);
+  return ambientIgnored.length > 0 ? { ...status, ambientIgnored } : status;
+}
+
+async function classifyClaudeHostOauth(
+  options: { env?: NodeJS.ProcessEnv; now?: number },
 ): Promise<ClaudeHostOauthStatus> {
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now();
