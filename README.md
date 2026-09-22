@@ -3,129 +3,169 @@
 [![npm](https://img.shields.io/npm/v/%40aubwang%2Fconsult?color=cb3837&logo=npm)](https://www.npmjs.com/package/@aubwang/consult)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Consult lets a coding agent delegate work to another agent through a CLI. The main session is "protected" from the subagent's working context and scratchpad, and only sees the subagent's report or end results.
+Consult lets your coding agent hand work to another coding agent and get back just the result.
 
-This way, your current session can preserve its context for planning and review while another agent investigates a question or prepares a patch. If needed, the main agent can access the subagent's context through the CLI, or reprompt the subagent. 
+When an agent investigates something itself, every file it opens and every command it runs lands in its context and stays there. With Consult, it can run `consult delegate` instead. A second agent takes a self-contained task, works through it in a fresh context, and returns a report, or a patch if the task was a code change. Your session gets the answer without the twenty files behind it, and keeps its context for planning and review. The work isn't hidden from you: you can read the second agent's log, or reopen its conversation and ask a follow-up.
 
-Consult uses the [Agent Client Protocol](https://agentclientprotocol.com) and your installed agents. 
+The second agent doesn't have to match the first. Codex can ask Claude for a second opinion, Claude Code can hand an implementation to Codex, and routine work can go to a cheaper model. Through opencode you can reach other providers too. Consult talks to each agent over the [Agent Client Protocol](https://agentclientprotocol.com) and uses the logins you already have.
 
-## Quick start
+Delegated agents start read-only. Claude and Codex run inside an OS sandbox, and code changes can come back as a patch for you to review before anything touches your checkout.
 
-```sh
-npm install --global @aubwang/consult
-consult setup --install claude
-consult doctor --agent claude
-
-consult delegate --agent claude --read-only -- \
-  "Inspect the retry logic. Report edge cases with file paths; do not edit."
-```
-
-The CLI supports Node.js 22.18+ on Linux or Apple Silicon macOS. Linux confinement also needs bubblewrap, socat, and ripgrep. See the [installation guide](docs/INSTALL.md) for system requirements and namespace restrictions.
-
-Some terminology:
-
-The current environment is the **Host**. A configured agent is a **Profile**. Each delegation creates a **Job** with its own status, output, and activity log.
-
-Consult requires that a Git repo is initiated in your current directory. `doctor` checks for which Profiles are configured in your current Host environment.
-
-A Host can discover configured routes and exact model IDs without reading all
-the help topics:
+## What it looks like
 
 ```sh
-consult capabilities --configured --json
-consult models --match grok --json
-```
+# Ask a question. Claude can read the repository but not change it.
+consult delegate --agent claude -- \
+  "Why does test/queue.test.ts fail intermittently? Find the root cause and cite file:line evidence."
 
-Claude and OpenAI models use their native adapters by default; opencode serves other providers
-unless explicitly selected. Native auth failures are reported without rerouting.
-Advertised models still depend on your account access; see `consult models --help` for details.
+# Hand off a change. Codex works in a separate worktree and returns a patch.
+consult delegate --agent codex --write --isolated --background -- \
+  "Add jitter to the retry backoff in src/queue/retry.ts, with a regression test. Report the files you changed and anything you couldn't verify."
 
-## Prepare a change, then verify it
-
-```sh
-consult delegate --agent codex --write --isolated --allow-exec --background -- \
-  "Add exponential backoff with jitter to the 429 retry path. Add and run a regression test. Fix failures and report exact commands and outcomes."
-
+# Keep working. Later, collect the result and have Claude review the patch.
 consult wait --summary <job-id>
-consult result <job-id> --json
 consult review --agent claude --job <job-id>
 ```
 
-An isolated write Job starts from your committed, staged, unstaged, and supported untracked files in a separate Git worktree. Its result includes a patch and a touched-files manifest. Consult publishes successful completion after those artifacts are ready. If patch capture fails, it preserves the worktree and reports where to recover it.
+The first command streams Claude's progress and ends with its answer. The second prints a job id and returns right away. Your checkout doesn't change until you apply the patch.
 
-The Host reviews the patch, chooses whether to apply it, and runs the project's checks:
+You won't usually type these yourself. Once your agent [knows about Consult](#teach-your-agent-to-use-it), you ask for a review or a handoff in plain words and it runs the commands.
+
+## Install
 
 ```sh
-git apply --check /path/from/result/change.patch
-git apply /path/from/result/change.patch
-# Run this project's tests and inspect the resulting diff.
+npm install --global @aubwang/consult
+consult setup --install claude     # or codex, opencode, pi, copilot
+consult doctor --agent claude
 ```
 
-On Linux, `--write --isolated --allow-exec` lets confined Codex and Claude workers run tests and repair failures within their turn. Eligible installed `node_modules` are copied into the worktree independently (up to 1 GiB and 100000 entries). It requires cgroup v2, a working systemd user manager, and prlimit. By default, each execute launch is limited to 4 GiB memory, 256 tasks, 200% CPU, 64 MiB per file, and 30 minutes. 
+Log in to the agent itself first (for example `codex login`, or `/login` inside `claude`). `setup --install` installs the agent or its ACP adapter and registers it with Consult. `doctor` launches it the way a real job would, without sending a prompt, and tells you what's wrong if that fails. Run `doctor` from wherever you'll delegate, because your agent's own sandbox can change the result.
 
-Without this grant, delegates can write tests but cannot run commands. A completed Job means the agent finished its turn; it does not mean tests passed or the change is correct. `--isolated` rejects unresolved merge conflicts and nested repositories that a patch cannot capture faithfully.
+You'll need:
 
-## Profiles and authority
+- Node.js 22.18 or newer
+- Linux (WSL2 works) or an Apple Silicon Mac; native Windows isn't supported
+- `bubblewrap`, `socat`, and `ripgrep` on Linux, for the sandbox
+- a Git repository to work in
 
-| Profile | Consult confinement | Authentication and current limits |
-| --- | --- | --- |
-| Codex | Linux and native arm64 macOS, subject to exact preflight | Staged Host login or `CONSULT_OPENAI_API_KEY`; reopening depends on the installed adapter |
-| Claude | Linux and native arm64 macOS, subject to exact preflight | Staged Host login, `CONSULT_CLAUDE_OAUTH_TOKEN`, or `CONSULT_CLAUDE_API_KEY`; automatic Host refresh requires claude-agent-acp 0.59.0+ |
-| Pi | Explicit `--sandbox inherit` | Native Pi 0.84.4+ via Consult’s internal RPC bridge; native provider configuration and login |
-| opencode | Explicit `--sandbox inherit` | Uses the Host environment and native authentication |
-| Copilot | Explicit `--sandbox inherit`; preview support | CLI 1.0.60+; model-turn conformance remains authentication-deferred; resume is disabled |
-| Custom ACP Profile | Explicit `--sandbox inherit` | User-configured executable and authentication; see [custom Profiles](docs/CUSTOM-PROFILES.md) |
+The [install guide](docs/INSTALL.md) covers Ubuntu's user-namespace restrictions, macOS credentials, and duplicate installs across Node version managers.
 
-Read-only confinement is the default. Writes require `--write`; arbitrary public network access requires `--allow-fetch`. Execute requires `--write --isolated --allow-exec` and the supported Linux boundary; Confined Jobs cannot create nested Consult Jobs.
+## Teach your agent to use it
 
-`--sandbox inherit` runs with the Host's ambient authority. Its permission checks are cooperative: they cannot contain an uncooperative backend or its startup hooks. Choose it explicitly when that tradeoff fits your environment.
+There's no plugin, skill, or MCP server to install. Add a line like this to the instructions your agent already reads (`AGENTS.md`, `CLAUDE.md`, or a system prompt):
 
-An outer Host sandbox can prevent Consult from starting its own boundary. In particular, a successful terminal check on macOS does not establish support inside a sandboxed Codex Host. Check the [conformance reports](docs/conformance/README.md) and run `doctor` where you intend to delegate.
+> For second opinions, delegated implementation, or cold review, use Consult. Run `consult help` first.
 
-## Parallel Jobs and practical workflows
+`consult help` fits on one screen and points to topics the agent can read when it needs them. `consult help delegation` covers when a handoff is worth it and how to write a prompt that stands on its own; `consult help workflows` covers worker, test, and reviewer loops. The guidance ships inside the binary, so it always matches the version you have installed. Most commands also take `--json`, and `consult capabilities --configured --json` tells an agent which agents are set up and the exact arguments to launch each one.
 
-`consult help workflows` teaches worker/test/reviewer loops and bounded fan-out.
-To launch independent Jobs, put `{"jobs":[{"label":"correctness","prompt":"Review src/retry.mts for bugs."},{"label":"tests","prompt":"Review retry test coverage."}]}` in `tasks.json`, then:
+Then ask in plain words: "have Claude review this before we commit," "give the migration to Codex in the background," "get two independent opinions on whether this lock is safe."
+
+## Getting results back
+
+A foreground `delegate` streams the other agent's messages as it works, with a one-line note for each tool call. It doesn't dump the files the agent read or the output of commands it ran. For longer work, add `--background`: you get a job id immediately and collect the result when you want it.
 
 ```sh
-consult batch tasks.json --agent claude
+consult wait --summary <job-id>    # block until done; one line with an answer preview and any patch path
+consult result <job-id>            # the full final answer
+consult logs <job-id> --tail 20    # what it did, step by step
+consult status                     # recent jobs in this repository
+```
+
+Interrupting `wait` cancels the jobs it was waiting on. Pass `--keep-running` if you only want to stop waiting.
+
+To ask a follow-up after a job finishes, reopen its conversation. The agent still has everything it read:
+
+```sh
+consult delegate --agent claude --resume-job <job-id> -- "Which of those would you fix first, and why?"
+```
+
+While a background job is running, `consult steer <job-id> -- "the schema is frozen; skip the migration"` redirects it without starting over, and `consult cancel <job-id>` stops it.
+
+Job history (prompts, logs, and patches) stays on your machine. `consult clean` lists jobs older than 30 days, and `consult clean --apply` removes them.
+
+## Code changes come back as patches
+
+`--write` lets an agent edit your checkout directly. `--write --isolated` is usually the better choice: the agent works in a separate Git worktree that starts from your current state, including uncommitted changes and untracked files that aren't ignored. When it finishes, Consult saves a patch and a list of touched files, removes the worktree, and leaves your checkout alone.
+
+```sh
+consult wait --summary <job-id>                # includes the patch path
+consult review --agent claude --job <job-id>   # a second agent reviews the patch
+git apply <patch-path>                         # once you're satisfied
+```
+
+`review --job` gives the reviewer the original task, the worker's report, and the patch, so your session doesn't have to load the diff to get it reviewed. Reviewing with a different model than the one that wrote the change avoids shared blind spots. The same command reviews your own work: `consult review --agent codex` looks at your uncommitted changes, and `--base main` at everything since you branched.
+
+On Linux, add `--allow-exec` so the worker can run tests and fix its own failures before it reports back. Its commands run without network access, under per-job memory, CPU, process, and time limits (`consult help authority` lists them). It can use the `node_modules` you've already installed but won't install packages. This needs cgroup v2 and a systemd user manager. Without `--allow-exec`, the worker can write tests, but you run them.
+
+A completed job means the agent finished its turn. It doesn't mean the tests pass or the change is right, so read the report and check.
+
+## Several jobs at once
+
+A batch file starts up to eight background jobs in one call. Each entry can pick its own agent, model, and permissions:
+
+```json
+{
+  "jobs": [
+    { "label": "correctness", "agent": "claude", "prompt": "Review src/queue/retry.ts for bugs." },
+    { "label": "tests", "agent": "codex", "prompt": "List the untested paths in src/queue/retry.ts." }
+  ]
+}
+```
+
+```sh
+consult batch tasks.json
 consult wait --batch <batch-id> --watch --summary
-consult wait <job-a> <job-b> --any --json --timeout 60
 ```
 
-A batch holds up to eight Jobs, each with independent results and cancellation.
-Partial submission failures preserve a receipt with launched Job ids. Each
-writer must explicitly set `"write": true, "isolated": true`. `--watch` prints
-status changes; `--any` returns when one selected Job finishes. A timeout leaves
-Jobs running. `wait --active` snapshots active Jobs for the current Host Session.
+`consult wait <job-id> <job-id> --any` returns as soon as one of them finishes. `--after <job-id>` queues a job that starts only if another one succeeds, with the earlier answer added to its prompt. Consult doesn't cap how many jobs you run, so that part is up to you. Two independent reviewers usually tell you more than eight overlapping ones.
 
+## Permissions
 
-## Keeping the Host's context small
+Every job starts read-only: the agent can read and search the repository but can't change it. Anything more is granted per job:
 
-Background Jobs return an id immediately. `wait --summary` prints an output preview and artifact paths; `result` returns the stored agent text. Previews use the end of the available output and are not a separately verified final report. Foreground Jobs stream agent messages and tool progress. Full activity is available through `logs`.
+| Flags | What the agent can do |
+| --- | --- |
+| none, or `--read-only` | Read and search the repository |
+| `--write` | Edit files in your checkout |
+| `--write --isolated` | Edit a separate worktree and return a patch |
+| `--write --isolated --allow-exec` | Also run tests and builds (Linux only) |
+| `--allow-fetch` | Also reach public HTTPS sites, for web research |
+| `--sandbox inherit` | Run as your user, without Consult's sandbox |
 
-The Host chooses how much work to launch. Consult has no global concurrency quota, and Jobs waiting on dependencies will still occupy workers.
+Claude and Codex run in an OS sandbox (bubblewrap on Linux, Seatbelt on macOS) with a private home directory, only the credential they need, and a proxy that passes traffic to their model provider and nowhere else. `--allow-fetch` and `--allow-exec` are only available to them. opencode, Pi, Copilot, and custom agents can't be confined this way yet, so Consult makes you pass `--sandbox inherit` for them. Consult still checks their requests against the job's permissions, but nothing at the OS level stops an agent that ignores those checks.
+
+If a sandbox can't start, the job fails before it begins. Consult never retries with looser permissions.
+
+Be deliberate with `--allow-fetch`. The agent holds a model credential, so a prompt injection in a page it reads could send your data somewhere else. Grant it only when the job needs the web. [SECURITY.md](SECURITY.md) describes the full trust model.
+
+## Supported agents
+
+| Agent | Sandboxed | Signs in with |
+| --- | --- | --- |
+| `claude` | Yes | Your Claude Code login, or `CONSULT_CLAUDE_OAUTH_TOKEN` or `CONSULT_CLAUDE_API_KEY` |
+| `codex` | Yes | Your Codex login, or `CONSULT_OPENAI_API_KEY` |
+| `opencode` | No | The providers configured in opencode |
+| `pi` | No | The providers configured in Pi (0.84.4 or newer) |
+| `copilot` (preview) | No | Your Copilot CLI login, or a GitHub token |
+| Any ACP agent | No | Its own; see [custom profiles](docs/CUSTOM-PROFILES.md) |
+
+On macOS, Claude Code keeps its login in the Keychain, which Consult doesn't pass into the sandbox. Run `claude setup-token` and export the token it prints as `CONSULT_CLAUDE_OAUTH_TOKEN`.
+
+Use `claude` for Anthropic models, `codex` for OpenAI models, and opencode for everything else.
 
 ```sh
-consult status
-consult logs <job-id> --tail 20
-consult logs <job-id> --follow
-consult cancel <job-id>
-consult clean --older-than 30d          # preview old history cleanup
-consult clean --older-than 30d --apply  # remove eligible history and artifacts
+consult models --match grok     # find exact model ids across your agents
+consult agents --set claude     # set a default so you can leave out --agent
 ```
 
-Interrupting `consult wait` cancels its active Jobs by default. Use `--keep-running` when you want interruption to stop waiting while work continues.
+## Documentation
 
-Job history stays on your machine until you remove it. Logs, prompts, saved sessions, and patches may contain private project data. Cleanup preserves recovery worktrees and dependencies needed by retained Jobs. See [security and trust boundaries](SECURITY.md).
+`consult help` is the reference, and it always matches your installed version. `consult help <topic>` and `consult <command> --help` go deeper. The help and docs use a few terms precisely: the agent or terminal you're working in is the *Host*, an agent you delegate to is a *Profile*, and each delegation is a *Job*.
 
-## More detail
-
-`consult help` gives the overview. `consult help delegate`, `consult help authority`, and the other help topics carry the operating guidance that an agent Host needs; no Host plugin or skill installation is required.
-
-- [Usage and contracts](docs/USAGE.md)
-- [Install and troubleshoot](docs/INSTALL.md)
-- [Domain glossary](CONTEXT.md) and [architecture decisions](docs/adr/)
-- [Contributing](CONTRIBUTING.md), [security reporting](SECURITY.md), and [roadmap](docs/ROADMAP.md)
+- [Usage reference](docs/USAGE.md): every command and option in long form
+- [Install and troubleshooting](docs/INSTALL.md)
+- [Security model](SECURITY.md) and [conformance reports](docs/conformance/README.md)
+- [Glossary](CONTEXT.md), [architecture decisions](docs/adr/), and [roadmap](docs/ROADMAP.md)
+- [Contributing](CONTRIBUTING.md)
 
 Consult is licensed under [Apache 2.0](LICENSE).
