@@ -214,7 +214,10 @@ implicitly, and never retries a failed preflight with weaker confinement.
 
 ## Modes
 
-- Default, or --read-only: inspect only; edits, fetch, and execute are denied.
+- Default, or --read-only: inspect only; edits and fetch are denied.
+  Confined codex may run shell commands to read files, because the Workspace
+  is mounted read-only and only model hosts are reachable; see consult help
+  profiles. Every other read-only Job is denied execute.
 - --write: permit Workspace-confined edits in the current checkout.
 - --write --isolated: seed a detached worktree from current staged, unstaged,
   and safe nonignored untracked state. Gitignored files are not captured.
@@ -264,7 +267,8 @@ the trusted Host must bound its own concurrency.
   Without it, request code and test changes with an explicit report of checks
   still needed. The Host runs those checks after applying the reviewed patch.
   Without --allow-exec, say "do not run tests, builds, or verification commands;
-  read files freely" so shell-mediated file reads are not discouraged.
+  read files freely". Confined read-only codex reads files through its shell,
+  so do not forbid shell use outright.
 - Use inheritance only when the trusted Host deliberately accepts its ambient
   boundary, and say so in the prompt.
 
@@ -334,6 +338,12 @@ through opencode. Default model discovery follows this same preference.
   CONSULT_OPENAI_API_KEY when set.
 - Codex may serve consult review through its verified native review command;
   the public Job Result contract is identical either way.
+- Codex reads files only through shell commands. A confined read-only Job runs
+  them without Codex's own command sandbox: Consult's confinement keeps the
+  Workspace read-only and blocks direct networking, and the Job wall-clock
+  limit applies, but the --allow-exec resource bounds do not.
+- With --allow-fetch, a read-only Job keeps Codex's own sandbox, which cannot
+  start inside a read-only Workspace on Linux, so shell reads fail there.
 
 ## opencode
 

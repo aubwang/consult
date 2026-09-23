@@ -516,6 +516,9 @@ export async function acquireConfinedSandboxRuntimeLaunch(
       profile,
       profileRegistryId: input.profileRegistryId,
       mode: input.mode,
+      // The outer boundary is read-only and proxy-held only while the Job has
+      // no fetch grant; with fetch, executed commands could reach public hosts.
+      outerReadOnlyBoundary: input.authority.mode === "read-only" && input.authority.allowFetch !== true,
       home,
       temp,
       bin,
@@ -900,6 +903,7 @@ function sanitizedChildEnv(input: {
   profile: ConfinedProfilePolicy;
   profileRegistryId?: string;
   mode?: string;
+  outerReadOnlyBoundary: boolean;
   home: string;
   temp: string;
   bin: string;
@@ -923,7 +927,9 @@ function sanitizedChildEnv(input: {
     XDG_DATA_HOME: input.data,
     IS_SANDBOX: "1",
     [input.profile.childConfigEnv]: input.stagedConfig,
-    ...profileSessionModeEnv(input.profileRegistryId, input.mode),
+    ...profileSessionModeEnv(input.profileRegistryId, input.mode, {
+      outerReadOnlyBoundary: input.outerReadOnlyBoundary,
+    }),
     ...profileCodexPathEnv(input.profileRegistryId, input.codexPath),
     ...input.credentialEnv,
   };

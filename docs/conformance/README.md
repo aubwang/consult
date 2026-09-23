@@ -182,10 +182,11 @@ Whole Host config is not staged: Codex `config.toml` and Claude `settings.json`
 are absent. Exact Profile initialization happens before Job creation, and
 `consult doctor` runs that same live check. Codex sessions additionally pin
 Codex's own approval/sandbox preset to the Job mode via `INITIAL_AGENT_MODE`
-(ADR-0035): read-only Jobs run Codex's `read-only` preset, which both prevents
-auto-approved edits at the source and keeps Codex's Linux bubblewrap
-per-command sandbox from needing to create `.git`/`.agents`/`.codex`
-mount points inside the read-only Workspace mount. Where the codex adapter
+(ADR-0035, ADR-0046): write Jobs run `agent`; confined read-only Jobs without
+fetch run `agent-full-access`, so Codex's shell reads execute directly inside the
+read-only Workspace mount and model-host-only proxy instead of in a Linux
+bubblewrap sandbox that cannot create its `.git`/`.agents`/`.codex` mount points
+there; every other read-only launch runs the `read-only` preset. Where the codex adapter
 cannot resolve a bundled Codex, setup pins the detected Codex CLI on the Profile
 record and every launch derives `CODEX_PATH` from that recorded value (ADR-0036):
 an ambient `CODEX_PATH` never crosses the confinement boundary, and the pinned
