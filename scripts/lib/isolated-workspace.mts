@@ -118,7 +118,7 @@ export async function prepareIsolatedWorkspace({
   await fs.mkdir(artifactsDir);
 
   try {
-    const headCommit = await resolveHeadCommit(originalRoot, maxBufferBytes);
+    const headCommit = await resolveHeadCommit(originalRoot, artifactsDir, maxBufferBytes);
     await assertSubmodulesUnsupported(originalRoot);
     await assertSupportedIndex(originalRoot, maxBufferBytes);
     const stagedPatch = (await runGit(originalRoot, [
@@ -365,20 +365,80 @@ async function resolveGitWorkspaceRoot(
 
 async function resolveHeadCommit(
   workspaceRoot: string,
+  artifactsDir: string,
   maxBufferBytes: number,
 ): Promise<string> {
   try {
-    return (await runGit(workspaceRoot, ["rev-parse", "--verify", "HEAD"], {
+    return (await runGit(workspaceRoot, ["rev-parse", "--verify", "HEAD^{commit}"], {
       maxBufferBytes,
     })).stdout.toString("utf8").trim();
   } catch (error) {
-    throw isolatedWorkspaceError(
-      "ISOLATED_WORKSPACE_REQUIRES_COMMIT",
-      "isolated write Jobs require a repository with at least one commit",
-      error,
-    );
+    if (!(await isUnbornHead(workspaceRoot, maxBufferBytes))) {
+      throw isolatedWorkspaceError(
+        "ISOLATED_WORKSPACE_REQUIRES_COMMIT",
+        "isolated write Jobs need a readable HEAD commit or a repository with no commits yet",
+        error,
+      );
+    }
+    return await emptyBaseCommit(workspaceRoot, artifactsDir, maxBufferBytes);
   }
 }
+
+// HEAD names a branch that has no ref yet: a freshly initialized repository.
+// A branch ref that exists but does not resolve is damage, not an unborn HEAD.
+async function isUnbornHead(workspaceRoot: string, maxBufferBytes: number): Promise<boolean> {
+  let branch: string;
+  try {
+    branch = (await runGit(workspaceRoot, ["symbolic-ref", "-q", "HEAD"], {
+      maxBufferBytes,
+    })).stdout.toString("utf8").trim();
+  } catch {
+    return false;
+  }
+  try {
+    // Resolves the ref name alone, so a ref naming a missing object still exists.
+    await runGit(workspaceRoot, ["rev-parse", "--verify", "-q", branch], { maxBufferBytes });
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+// A repository with no commits still seeds from its staged, unstaged, and
+// untracked state. The detached worktree needs a commit to start from, so
+// Consult writes an unreferenced commit of the empty tree into the object
+// store. No ref, index, or working-tree file in the original checkout changes,
+// and a fixed identity and date keep the commit identical across Jobs.
+async function emptyBaseCommit(
+  workspaceRoot: string,
+  artifactsDir: string,
+  maxBufferBytes: number,
+): Promise<string> {
+  const indexPath = temporaryIndexPath(artifactsDir, "empty");
+  try {
+    const emptyTree = (await runGit(workspaceRoot, ["write-tree"], {
+      env: gitIndexEnvironment(indexPath),
+      maxBufferBytes,
+    })).stdout.toString("utf8").trim();
+    return (await runGit(workspaceRoot, [
+      "commit-tree",
+      emptyTree,
+      "-m",
+      "consult: empty base for isolated Job",
+    ], { env: EMPTY_BASE_IDENTITY, maxBufferBytes })).stdout.toString("utf8").trim();
+  } finally {
+    await fs.rm(indexPath, { force: true }).catch(() => {});
+  }
+}
+
+const EMPTY_BASE_IDENTITY: NodeJS.ProcessEnv = {
+  GIT_AUTHOR_NAME: "Consult",
+  GIT_AUTHOR_EMAIL: "consult@localhost",
+  GIT_AUTHOR_DATE: "1970-01-01T00:00:00Z",
+  GIT_COMMITTER_NAME: "Consult",
+  GIT_COMMITTER_EMAIL: "consult@localhost",
+  GIT_COMMITTER_DATE: "1970-01-01T00:00:00Z",
+};
 
 async function assertSubmodulesUnsupported(workspaceRoot: string): Promise<void> {
   try {
