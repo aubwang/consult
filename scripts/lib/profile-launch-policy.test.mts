@@ -63,6 +63,19 @@ test("profileSessionModeEnv pins the codex session preset to the Job mode", () =
   });
 });
 
+test("profileSessionModeEnv drops the codex inner sandbox only behind the outer read-only boundary", () => {
+  assert.deepEqual(profileSessionModeEnv("codex", "read-only", { outerReadOnlyBoundary: true }), {
+    INITIAL_AGENT_MODE: "agent-full-access",
+  });
+  assert.deepEqual(profileSessionModeEnv("codex", "read-only", { outerReadOnlyBoundary: false }), {
+    INITIAL_AGENT_MODE: "read-only",
+  });
+  assert.deepEqual(profileSessionModeEnv("codex", "write", { outerReadOnlyBoundary: true }), {
+    INITIAL_AGENT_MODE: "agent",
+  });
+  assert.deepEqual(profileSessionModeEnv("claude", "read-only", { outerReadOnlyBoundary: true }), {});
+});
+
 test("profileSessionModeEnv stays inert for other profiles and unknown modes", () => {
   assert.deepEqual(profileSessionModeEnv("claude", "read-only"), {});
   assert.deepEqual(profileSessionModeEnv("opencode", "read-only"), {});

@@ -61,27 +61,44 @@ export function profileRuntimeMounts(
   ];
 }
 
+export interface ProfileSessionModeOptions {
+  /**
+   * Set only by the confined sandbox-runtime launch when the Job has no fetch
+   * grant: the outer boundary mounts the Workspace read-only and routes every
+   * connection through the egress proxy restricted to the Profile's model hosts.
+   */
+  outerReadOnlyBoundary?: boolean;
+}
+
 /**
  * Environment that pins a delegated Profile session's own sandbox preset to
  * the Job mode. codex-acp reads `INITIAL_AGENT_MODE` when it creates a
  * session; without it every Job runs Codex's default `agent` preset
- * (workspace-write). That preset's Linux bubblewrap sandbox must mount
- * read-only protections over `.git`/`.agents`/`.codex` beneath each writable
- * root, creating any missing mount point first — and a read-only Job mounts
- * the Workspace read-only, so that mkdir fails with EROFS and every
- * shell-mediated command dies before it runs. Pinning the preset to the Job
- * mode keeps the inner sandbox aligned with Job Authority instead of wider
- * than it.
+ * (workspace-write). A write Job pins `agent`.
+ *
+ * A read-only Job pins `read-only`, except inside the confined launch without
+ * fetch (ADR-0046). Since codex-acp 1.7.0 the `read-only` preset is a
+ * workspace-write sandbox with no extra roots, and on Linux that sandbox must
+ * mount read-only covers over `.git`/`.agents`/`.codex` beneath the Workspace,
+ * creating any missing mount point first. The confined launch mounts the
+ * Workspace read-only, so that mkdir fails with EROFS, every shell-mediated
+ * read dies before it runs, and the model's escalation request can only be
+ * refused with an option that ends the turn. There the outer boundary already
+ * is the read-only perimeter, so Codex runs `agent-full-access`: no inner
+ * sandbox and no approval round-trips, with every command held by the confined
+ * Workspace and egress proxy. Legacy bubblewrap and ambient launches share the
+ * Host network and keep the `read-only` preset.
  */
 export function profileSessionModeEnv(
   registryId: string | undefined,
   mode: string | undefined,
+  { outerReadOnlyBoundary = false }: ProfileSessionModeOptions = {},
 ): Record<string, string> {
   if (registryId !== "codex") {
     return {};
   }
   if (mode === "read-only") {
-    return { INITIAL_AGENT_MODE: "read-only" };
+    return { INITIAL_AGENT_MODE: outerReadOnlyBoundary ? "agent-full-access" : "read-only" };
   }
   if (mode === "write") {
     return { INITIAL_AGENT_MODE: "agent" };

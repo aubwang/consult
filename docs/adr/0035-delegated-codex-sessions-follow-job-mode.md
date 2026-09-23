@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by ADR-0046: confined read-only Jobs without a fetch grant
+run Codex's `agent-full-access` preset, because codex-acp 1.7.0+ turned the
+`read-only` preset into a workspace-write sandbox.
 
 ## Decision
 

@@ -318,7 +318,9 @@ test("confined Codex launch keeps auth.json when OPENAI_API_KEY is only ambient"
     assert.equal(lease.launch.env.HTTP_PROXY, `http://consult:${TOKEN}@127.0.0.1:3128`);
     assert.equal(lease.launch.env.CONSULT_PARENT_JOB, "parent-job");
     assert.equal(lease.launch.env.HOME, lease.launch.env.CODEX_HOME?.replace(/\/\.codex$/u, ""));
-    assert.equal(lease.launch.env.INITIAL_AGENT_MODE, "read-only");
+    // ADR-0046: the confined read-only boundary replaces Codex's inner sandbox,
+    // and the value is computed, never the ambient one.
+    assert.equal(lease.launch.env.INITIAL_AGENT_MODE, "agent-full-access");
     assert.ok(
       lease.launch.args.every((argument) => !argument.includes(TOKEN)),
     );
@@ -630,6 +632,31 @@ test("write and fetch authority only broaden Workspace writes and public TCP/443
       fs.realpathSync(fixture.workspace),
     ]);
     assert.equal(lease.launch.env.INITIAL_AGENT_MODE, "agent");
+  } finally {
+    await lease.release();
+  }
+});
+
+test("confined read-only Codex keeps its inner read-only preset once fetch is granted", async (t) => {
+  const fixture = await makeFixture(t);
+  const harness = fakeRuntime();
+  const lease = await acquireConfinedSandboxRuntimeLaunch({
+    authority: authority({ allowFetch: true }),
+    binary: "/usr/bin/true",
+    cwd: fixture.workspace,
+    env: {
+      PATH: `${fixture.bin}:/usr/bin:/bin`,
+      CODEX_HOME: path.join(fixture.home, ".codex"),
+      CONSULT_OPENAI_API_KEY: "selected-key",
+    },
+    workspaceRoot: fixture.workspace,
+    mode: "read-only",
+    profileRegistryId: "codex",
+  }, harness.deps);
+
+  try {
+    assert.equal(harness.proxyOptions[0].allowPublicHosts, true);
+    assert.equal(lease.launch.env.INITIAL_AGENT_MODE, "read-only");
   } finally {
     await lease.release();
   }
