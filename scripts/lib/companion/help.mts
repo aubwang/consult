@@ -220,7 +220,8 @@ implicitly, and never retries a failed preflight with weaker confinement.
   profiles. Every other read-only Job is denied execute.
 - --write: permit Workspace-confined edits in the current checkout.
 - --write --isolated: seed a detached worktree from current staged, unstaged,
-  and safe nonignored untracked state. Gitignored files are not captured.
+  and safe nonignored untracked state, including in a repository with no
+  commits yet. Gitignored files are not captured.
   The original checkout stays unchanged and the Job's artifacts carry
   the Profile-only binary patch and touched-files list.
 - --allow-fetch: additionally permit arbitrary public TCP/443 through the

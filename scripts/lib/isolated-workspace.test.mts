@@ -249,7 +249,7 @@ test("prepare seeds against the pinned commit when HEAD advances after resolutio
   const realGit = gitPathOutput.trim();
   await fs.writeFile(wrapperPath, `#!/bin/sh
 case " $* " in
-  *" rev-parse --verify HEAD "*)
+  *" rev-parse --verify HEAD^{commit} "*)
     if [ ! -e ${JSON.stringify(markerPath)} ]; then
       ${JSON.stringify(realGit)} "$@" > ${JSON.stringify(`${markerPath}.head`)} || exit $?
       : > ${JSON.stringify(markerPath)}
@@ -351,28 +351,60 @@ test("different job ids own independent worktrees and duplicate ids fail closed"
   );
 });
 
-test("prepare explains that isolated write Jobs require an initial commit", async (t) => {
+test("prepare seeds a repository with no commits from its working state", async (t) => {
   const fixture = await makeRepository(t, { commit: false });
+  const root = fixture.workspaceRoot;
+  await git(root, "add", "staged.txt", "tracked.bin");
+  await fs.writeFile(path.join(root, "staged.txt"), "staged then edited\n");
+  const refsBefore = await gitText(root, "for-each-ref");
+  const statusBefore = await gitText(root, "status", "--porcelain=v1", "-z");
 
-  await assert.rejects(
-    prepareIsolatedWorkspace({
-      workspaceRoot: fixture.workspaceRoot,
-      jobId: "job-unborn",
-    }),
-    (error: IsolatedWorkspaceError) => {
-      assert.equal(error.code, "ISOLATED_WORKSPACE_REQUIRES_COMMIT");
-      assert.equal(
-        error.message,
-        "isolated write Jobs require a repository with at least one commit",
-      );
-      return true;
-    },
+  const prepared = await prepareIsolatedWorkspace({ workspaceRoot: root, jobId: "job-unborn" });
+  fixture.prepared.push(prepared);
+
+  assert.equal(
+    (await gitText(root, "rev-parse", `${prepared.headCommit}^{tree}`)).trim(),
+    (await gitText(root, "hash-object", "-t", "tree", "/dev/null")).trim(),
   );
-  await assert.rejects(
-    fs.access(isolatedTransactionRoot(fixture.workspaceRoot, "job-unborn")),
+  // Fixed identity and date: every Job in the repository shares one base.
+  const again = await prepareIsolatedWorkspace({ workspaceRoot: root, jobId: "job-unborn-2" });
+  fixture.prepared.push(again);
+  assert.equal(again.headCommit, prepared.headCommit);
+
+  assert.equal(await fs.readFile(path.join(prepared.executionRoot, "staged.txt"), "utf8"), "staged then edited\n");
+  assert.equal(await fs.readFile(path.join(prepared.executionRoot, "unstaged.txt"), "utf8"), "base unstaged\n");
+  assert.deepEqual(
+    await gitPathList(prepared.executionRoot, "diff", "--cached", "--name-only", "-z"),
+    ["staged.txt", "tracked.bin"],
   );
+  assert.deepEqual(prepared.seeded.untrackedFiles, [".gitignore", "unstaged.txt"]);
+
+  // The original checkout keeps no commits, no new refs, and the same status.
+  await assert.rejects(git(root, "rev-parse", "--verify", "HEAD"));
+  assert.equal(await gitText(root, "for-each-ref"), refsBefore);
+  assert.equal(await gitText(root, "status", "--porcelain=v1", "-z"), statusBefore);
+
+  await fs.writeFile(path.join(prepared.executionRoot, "unstaged.txt"), "agent edit\n");
+  await fs.writeFile(path.join(prepared.executionRoot, "added.txt"), "agent added\n");
+  const finalized = await finalizeIsolatedWorkspace(prepared);
+  assert.deepEqual(finalized.touchedFiles, ["added.txt", "unstaged.txt"]);
+  await git(root, "apply", "--binary", finalized.patchPath);
+  assert.equal(await fs.readFile(path.join(root, "unstaged.txt"), "utf8"), "agent edit\n");
+  assert.equal(await fs.readFile(path.join(root, "added.txt"), "utf8"), "agent added\n");
 });
 
+test("prepare refuses a HEAD branch ref that exists but does not resolve", async (t) => {
+  const fixture = await makeRepository(t);
+  const root = fixture.workspaceRoot;
+  const branch = (await gitText(root, "symbolic-ref", "HEAD")).trim();
+  await fs.writeFile(path.join(root, ".git", branch), `${"0".repeat(40)}\n`);
+
+  await assert.rejects(
+    prepareIsolatedWorkspace({ workspaceRoot: root, jobId: "job-broken-head" }),
+    (error: IsolatedWorkspaceError) => error.code === "ISOLATED_WORKSPACE_REQUIRES_COMMIT",
+  );
+  await assert.rejects(fs.access(isolatedTransactionRoot(root, "job-broken-head")));
+});
 interface RepositoryFixture {
   root: string;
   workspaceRoot: string;

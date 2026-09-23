@@ -417,8 +417,9 @@ The patch represents only the delegate's delta, not the user's pre-existing
 dirty state. Artifacts remain after worktree cleanup. Applying a patch to the
 active checkout is intentionally a separate, user-controlled operation.
 Gitignored files are neither seeded nor captured, including ignored files the
-Profile creates, and the repository must have at least one commit to supply the
-detached-worktree base.
+Profile creates. A repository with no commits yet gets an unreferenced
+empty-tree commit as the detached-worktree base; its refs, index, and working
+tree are untouched.
 
 In-place `--write` remains for compatibility. `--isolated` requires
 `--write`; the flag is explicit while the behavior gains field experience.

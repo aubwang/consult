@@ -40,8 +40,9 @@ permission is enabled.
   untracked files are copied. Ignored files are skipped; symlinks, traversal,
   special files, and invalid path encodings are rejected.
 - Gitignored files are intentionally absent from both the seed and final
-  artifact. Output written to ignored paths is not captured. A repository must
-  have at least one commit to provide the detached-worktree base.
+  artifact. Output written to ignored paths is not captured. A repository with
+  no commits yet uses an unreferenced empty-tree commit, with a fixed identity
+  and date, as the detached-worktree base; no ref in the checkout changes.
 - Isolated background Jobs may run the shared inline runtime inside their
   detached worker so one process owns both the Execution Workspace and Job
   lifetime. Cancellation uses the recorded runner pid.

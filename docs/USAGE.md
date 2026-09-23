@@ -320,8 +320,9 @@ An isolated Job seeds a detached Git worktree from current staged, unstaged,
 and safe nonignored untracked state. Gitignored files are neither seeded nor
 captured. When the Job ends, Consult records an agent-only binary patch and a
 touched-files manifest, removes the temporary worktree, and leaves the original
-checkout unchanged. The repository needs at least one commit to provide a
-stable base.
+checkout unchanged. A repository with no commits yet works too: Consult bases
+the worktree on an unreferenced empty commit and leaves the repository's refs
+alone.
 
 The isolated worktree is a transactional boundary separate from native process
 confinement. Confined Job Authority still applies by default, and execute
