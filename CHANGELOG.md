@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0](https://github.com/aubwang/consult/compare/v1.6.0...v1.7.0) (2026-09-23)
+
+
+### Features
+
+* seed isolated write Jobs in repositories with no commits ([9e3ddca](https://github.com/aubwang/consult/commit/9e3ddcad7988ccfdab2bd9ed7633de1883de4c53))
+
+
+### Bug Fixes
+
+* let confined read-only Codex Jobs read files through the shell ([7379e6e](https://github.com/aubwang/consult/commit/7379e6eaa8668740d4e28ac0d32626acdf688596))
+* name an ambient Claude credential doctor will not select ([3747e4c](https://github.com/aubwang/consult/commit/3747e4cddc37a181111bcb8d83b301801ade1016))
+* report a denied Claude OAuth read as its own doctor state ([efd2aa2](https://github.com/aubwang/consult/commit/efd2aa25701177669ebe0418af5070915de22856))
+
 ## [1.6.0](https://github.com/aubwang/consult/compare/v1.5.2...v1.6.0) (2026-09-14)
 
 
