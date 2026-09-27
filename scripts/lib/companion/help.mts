@@ -309,9 +309,10 @@ through opencode. Default model discovery follows this same preference.
 
   consult delegate --agent claude --read-only -- "<prompt>"
 
-- Model aliases opus, sonnet, haiku, and fable resolve to the newest advertised
-  id. Prefer a mid-tier alias when the question does not need the strongest
-  model.
+- Model aliases opus, sonnet, haiku, and fable always mean the newest model in
+  that family, as resolved by the installed claude-agent-acp. Update the
+  adapter to pick up new models. Prefer a mid-tier alias when the question does
+  not need the strongest model.
 - Versioned shorthand such as --model 'fable 5.1' expands to claude-fable-5-1.
   Explicit claude-* IDs reach the confined adapter at startup even if omitted
   from its default catalogue. An explicit version never selects a newer one.

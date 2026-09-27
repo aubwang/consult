@@ -145,7 +145,18 @@ start, with built-in shorthand for Claude and Codex. Omitting `--model` uses
 the confined Profile runtime's default; Host configuration files are not
 copied into confinement.
 
-For Claude, versioned shorthand such as `--model 'fable 5.1'` or
+For Claude, the bare family aliases `opus`, `sonnet`, `haiku`, and `fable`
+(also `opus[1m]` and `claude-opus`-style spellings) always mean the newest
+model in that family. Consult passes the alias itself to the confined adapter,
+whose bundled Claude Code resolves it, so no Consult release is needed when a
+new model ships. "Newest" is therefore as new as the installed adapter; update
+it to pick up new models:
+
+```sh
+npm install --global @agentclientprotocol/claude-agent-acp@latest
+```
+
+Versioned shorthand such as `--model 'fable 5.1'` or
 `--model fable-5.1` expands to `claude-fable-5-1`. Explicit native IDs are
 passed to the confined adapter at startup even when its default catalogue
 omits them. Version pins never select a newer version. A catalogue omission

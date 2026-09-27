@@ -265,7 +265,7 @@ function versionSegments(id: string): number[] {
 export function normalizeModelControl(profile: string, model: string): string {
   const normalized = model.toLowerCase().replaceAll("_", "-");
   if (profile === "claude") {
-    return knownClaudeModelControl(model) ?? model;
+    return CLAUDE_MODEL_ALIASES[normalized] ?? knownClaudeModelControl(model) ?? model;
   }
   if (profile === "codex") {
     return CODEX_MODEL_ALIASES[normalized] ?? model;
@@ -275,6 +275,10 @@ export function normalizeModelControl(profile: string, model: string): string {
 
 export function knownClaudeModelControl(model: string): string | null {
   const normalized = model.trim().toLowerCase().replaceAll("_", "-");
+  // A bare family alias means "newest". Pass it through so the adapter's own
+  // Claude Code resolves it; a hardcoded ID here goes stale on each release.
+  const family = /^(?:claude-)?(opus|sonnet|haiku|fable)(\[[a-z0-9]+\])?$/u.exec(normalized);
+  if (family) return `${family[1]}${family[2] ?? ""}`;
   const alias = CLAUDE_MODEL_ALIASES[normalized];
   if (alias) return alias;
   // Explicit native IDs must reach the adapter at startup, even when its
@@ -288,6 +292,8 @@ export function knownClaudeModelControl(model: string): string | null {
     : null;
 }
 
+// Bare family entries are only the fallback when the adapter advertises no
+// catalogue; with a catalogue they resolve to its alias row instead.
 const CLAUDE_MODEL_ALIASES: Record<string, string> = {
   opus: "claude-opus-5-5",
   "claude-opus": "claude-opus-5-5",
@@ -313,8 +319,8 @@ const CLAUDE_MODEL_ALIASES: Record<string, string> = {
   "haiku-4-5": "claude-haiku-4-5",
   "claude-haiku-4.5": "claude-haiku-4-5",
   "claude-haiku-4-5": "claude-haiku-4-5",
-  fable: "claude-fable-5",
-  "claude-fable": "claude-fable-5",
+  fable: "claude-fable-5-1",
+  "claude-fable": "claude-fable-5-1",
   "fable-5": "claude-fable-5",
   "claude-fable-5": "claude-fable-5",
 };

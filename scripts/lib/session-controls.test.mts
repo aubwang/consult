@@ -136,7 +136,8 @@ test("normalizeModelControl maps built-in Profile shorthand", () => {
   assert.equal(normalizeModelControl("claude", "opus-4.8"), "claude-opus-4-8");
   assert.equal(normalizeModelControl("claude", "sonnet"), "claude-sonnet-5");
   assert.equal(normalizeModelControl("claude", "haiku"), "claude-haiku-4-5");
-  assert.equal(normalizeModelControl("claude", "fable"), "claude-fable-5");
+  assert.equal(normalizeModelControl("claude", "fable"), "claude-fable-5-1");
+  assert.equal(normalizeModelControl("claude", "fable-5"), "claude-fable-5");
   assert.equal(normalizeModelControl("claude", "custom-model"), "custom-model");
   assert.equal(normalizeModelControl("codex", "sol"), "gpt-5.6-sol");
   assert.equal(normalizeModelControl("codex", "terra"), "gpt-5.6-terra");
@@ -153,10 +154,50 @@ test("Claude version pins reach startup without requiring a built-in catalogue e
     assert.equal(knownClaudeModelControl(id), id);
     assert.equal(normalizeModelControl("claude", id), id);
   }
+  assert.equal(knownClaudeModelControl("fable 5"), "claude-fable-5");
+  assert.equal(knownClaudeModelControl("opus 4.8"), "claude-opus-4-8");
   assert.equal(knownClaudeModelControl("default"), null);
   assert.equal(knownClaudeModelControl("unknown model"), null);
   assert.equal(knownClaudeModelControl("fable 5.1 or opus"), null);
   assert.equal(normalizeModelControl("opencode", "fable 5.1"), "fable 5.1");
+});
+
+test("bare Claude family aliases reach startup unpinned so the adapter picks its newest", () => {
+  for (const [name, alias] of [
+    ["opus", "opus"],
+    ["Opus", "opus"],
+    ["claude-opus", "opus"],
+    ["sonnet", "sonnet"],
+    ["haiku", "haiku"],
+    ["fable", "fable"],
+    ["claude_fable", "fable"],
+    ["opus[1m]", "opus[1m]"],
+  ]) {
+    assert.equal(knownClaudeModelControl(name), alias);
+  }
+});
+
+test("applySessionControls keeps a bare Claude alias on the adapter's alias row", async () => {
+  const calls: unknown[] = [];
+  const connection = {
+    async unstable_setSessionModel(params: unknown) {
+      calls.push(params);
+    },
+  } as unknown as AcpConnection;
+
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState: {
+      models: {
+        availableModels: [modelInfo("default"), modelInfo("opus"), modelInfo("opus[1m]"), modelInfo("sonnet")],
+        currentModelId: "opus",
+      },
+    },
+    model: "opus",
+    profile: "claude",
+  });
+
+  assert.deepEqual(calls, [{ sessionId: "session-1", modelId: "opus" }]);
 });
 
 test("applySessionControls resolves family aliases to the newest advertised model", async () => {
