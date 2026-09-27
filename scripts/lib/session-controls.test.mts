@@ -124,11 +124,15 @@ test("applySessionControls expands current Claude model aliases", async () => {
   });
 
   assert.deepEqual(calls, [
-    { sessionId: "session-1", modelId: "claude-opus-4-8" },
+    { sessionId: "session-1", modelId: "claude-opus-5-5" },
   ]);
 });
 
 test("normalizeModelControl maps built-in Profile shorthand", () => {
+  assert.equal(normalizeModelControl("claude", "opus"), "claude-opus-5-5");
+  assert.equal(normalizeModelControl("claude", "opus 5.5"), "claude-opus-5-5");
+  assert.equal(normalizeModelControl("claude", "opus-5.5"), "claude-opus-5-5");
+  assert.equal(normalizeModelControl("claude", "claude-opus-5.5"), "claude-opus-5-5");
   assert.equal(normalizeModelControl("claude", "opus-4.8"), "claude-opus-4-8");
   assert.equal(normalizeModelControl("claude", "sonnet"), "claude-sonnet-5");
   assert.equal(normalizeModelControl("claude", "haiku"), "claude-haiku-4-5");
@@ -170,6 +174,7 @@ test("applySessionControls resolves family aliases to the newest advertised mode
         modelInfo("claude-haiku-4-5"),
         modelInfo("claude-haiku-4-5-20251001"),
         modelInfo("claude-opus-4-8"),
+        modelInfo("claude-opus-5-5"),
       ],
       currentModelId: "claude-sonnet-5",
     },
@@ -187,10 +192,17 @@ test("applySessionControls resolves family aliases to the newest advertised mode
     model: "haiku",
     profile: "claude",
   });
+  await applySessionControls(connection, {
+    sessionId: "session-1",
+    sessionState,
+    model: "opus",
+    profile: "claude",
+  });
 
   assert.deepEqual(calls, [
     { sessionId: "session-1", modelId: "claude-sonnet-5" },
     { sessionId: "session-1", modelId: "claude-haiku-4-5-20251001" },
+    { sessionId: "session-1", modelId: "claude-opus-5-5" },
   ]);
 });
 
