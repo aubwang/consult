@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.0](https://github.com/aubwang/consult/compare/v1.7.0...v1.8.0) (2026-09-27)
+
+
+### Features
+
+* let bare Claude family aliases follow the installed adapter ([7bf9a82](https://github.com/aubwang/consult/commit/7bf9a821e8a9798933237f40384512c1970b515d))
+* resolve the Claude opus alias to Opus 5.5 ([3631c9e](https://github.com/aubwang/consult/commit/3631c9e8d09b469099a8ab776167a3a82819435a))
+
 ## [1.7.0](https://github.com/aubwang/consult/compare/v1.6.0...v1.7.0) (2026-09-23)
 
 
